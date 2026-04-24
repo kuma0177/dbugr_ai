@@ -1,0 +1,17 @@
+{
+  "name": "feedbackagent",
+  "version": "0.0.1",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter './apps/*' dev",
+    "build": "pnpm --filter './packages/*' build && pnpm --filter './apps/*' build",
+    "db:generate": "pnpm --filter @feedbackagent/db generate",
+    "db:push": "pnpm --filter @feedbackagent/db db:push",
+    "db:migrate": "pnpm --filter @feedbackagent/db migrate"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@feedbackagent/api",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@feedbackagent/db": "workspace:*",
+    "@feedbackagent/shared": "workspace:*",
+    "cors": "^2.8.5",
+    "express": "^4.19.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.12.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.4.0"
+  }
+}

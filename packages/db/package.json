@@ -1,0 +1,21 @@
+{
+  "name": "@feedbackagent/db",
+  "version": "0.0.1",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "generate": "prisma generate",
+    "db:push": "prisma db push",
+    "migrate": "prisma migrate dev",
+    "studio": "prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.13.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.13.0",
+    "typescript": "^5.4.0"
+  }
+}
