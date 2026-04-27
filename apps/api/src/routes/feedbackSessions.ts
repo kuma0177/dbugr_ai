@@ -42,6 +42,7 @@ const patchSchema = z.object({
   visibility: z.enum(['private', 'public', 'org']).optional(),
   aiSummary: z.string().optional(),
   aiTaskBrief: z.string().optional(),
+  userIntent: z.string().optional(), // stores serialised annotation data from bookmarklet
 });
 
 // POST /api/feedback-sessions/upload (from recorder)
