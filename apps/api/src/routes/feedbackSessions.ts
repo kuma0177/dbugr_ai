@@ -1,11 +1,22 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '@feedbackagent/db';
 import { z } from 'zod';
+import multer from 'multer';
+import path from 'path';
 
 export const feedbackSessionRouter = Router();
 
 const DEMO_USER_ID = 'user_demo';
 const DEMO_ORG_ID = 'org_demo';
+
+// Configure multer for video uploads
+const uploadDir = process.env.UPLOAD_DIR ?? '/tmp/feedbackagent-videos';
+const upload = multer({
+  dest: uploadDir,
+  limits: {
+    fileSize: 500 * 1024 * 1024, // 500 MB max
+  },
+});
 
 const createSchema = z.object({
   title: z.string().min(1),
@@ -32,6 +43,37 @@ const patchSchema = z.object({
   aiSummary: z.string().optional(),
   aiTaskBrief: z.string().optional(),
 });
+
+// POST /api/feedback-sessions/upload (from recorder)
+feedbackSessionRouter.post(
+  '/feedback-sessions/upload',
+  upload.single('video'),
+  async (req: Request, res: Response) => {
+    try {
+      const title = (req.body?.title as string) || 'Untitled Recording';
+      const durationMs = parseInt((req.body?.durationMs as string) || '0');
+      const videoPath = req.file?.path;
+
+      // Create a draft session
+      const session = await prisma.feedbackSession.create({
+        data: {
+          projectId: 'proj_demo',
+          createdBy: DEMO_USER_ID,
+          title,
+          visibility: 'private',
+          status: 'draft',
+          videoUrl: videoPath || undefined, // Store path to video file
+        },
+      });
+
+      console.log(`[upload] Session created: ${session.id}, video: ${videoPath}`);
+      return res.status(201).json({ data: { id: session.id } });
+    } catch (err) {
+      console.error('[upload] Error:', err);
+      return res.status(500).json({ error: 'Upload failed' });
+    }
+  }
+);
 
 // POST /api/projects/:projectId/feedback-sessions
 feedbackSessionRouter.post(
