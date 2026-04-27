@@ -8,6 +8,11 @@ export interface IntegrationConfig {
   jiraEmail?: string;
   jiraApiToken?: string;
   jiraProjectKey?: string;
+  // Codex / Claude (code generation)
+  claudeApiKey?: string;
+  targetRepoUrl?: string; // Full repo URL: https://github.com/owner/repo
+  targetRepoBranch?: string;
+  autoMerge?: boolean;
 }
 
 export interface SendTaskInput {

@@ -2,18 +2,20 @@ export * from './types';
 export { GitHubProvider } from './providers/github';
 export { JiraProvider } from './providers/jira';
 export { MockProvider } from './providers/mock';
+export { CodexProvider, ClaudeCodeProvider } from './providers/codex';
 
 import type { IntegrationConfig, IntegrationProvider, SendTaskInput, SendTaskResult } from './types';
 import { GitHubProvider } from './providers/github';
 import { JiraProvider } from './providers/jira';
 import { MockProvider } from './providers/mock';
+import { CodexProvider, ClaudeCodeProvider } from './providers/codex';
 
 const PROVIDERS: Record<string, IntegrationProvider> = {
   github: new GitHubProvider(),
   jira: new JiraProvider(),
+  codex: new CodexProvider(),
+  claude: new ClaudeCodeProvider(),
   figma: new MockProvider('figma'),
-  claude: new MockProvider('claude'),
-  codex: new MockProvider('codex'),
   chatgpt: new MockProvider('chatgpt'),
   gemini: new MockProvider('gemini'),
 };
@@ -32,6 +34,10 @@ export function configFromEnv(): IntegrationConfig {
     jiraEmail: process.env.JIRA_EMAIL,
     jiraApiToken: process.env.JIRA_API_TOKEN,
     jiraProjectKey: process.env.JIRA_PROJECT_KEY,
+    claudeApiKey: process.env.CLAUDE_API_KEY,
+    targetRepoUrl: process.env.TARGET_REPO_URL,
+    targetRepoBranch: process.env.TARGET_REPO_BRANCH || 'main',
+    autoMerge: process.env.AUTO_MERGE === 'true',
   };
 }
 
