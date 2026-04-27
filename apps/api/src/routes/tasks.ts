@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '@feedbackagent/db';
 import { z } from 'zod';
 import { auditLog } from '../lib/audit';
+import { dispatchTask, configFromEnv } from '@feedbackagent/integrations';
 
 export const tasksRouter = Router();
 
@@ -51,18 +52,60 @@ tasksRouter.post('/tasks/:id/approve', async (req: Request, res: Response) => {
 
 // POST /api/tasks/:id/send
 tasksRouter.post('/tasks/:id/send', async (req: Request, res: Response) => {
-  const task = await prisma.improvementTask.findUnique({ where: { id: req.params.id } });
+  const task = await prisma.improvementTask.findUnique({
+    where: { id: req.params.id },
+    include: { session: true },
+  });
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (task.status !== 'approved') {
     return res.status(400).json({ error: 'Task must be approved before sending' });
   }
 
-  // TODO: replace with real integration provider dispatch
-  const mockExternalUrl = `https://mock-${task.target}.example.com/issues/MOCK-${Date.now()}`;
+  // Build config: env vars (local dev) or tokens stored in DB (production)
+  const envConfig = configFromEnv();
+
+  // Look up org integration record and merge any stored config
+  const integration = await prisma.integration.findFirst({
+    where: { organizationId: DEMO_ORG_ID, provider: task.target },
+  });
+
+  let storedConfig: Record<string, string> = {};
+  if (integration?.configJson) {
+    try {
+      storedConfig = JSON.parse(integration.configJson) as Record<string, string>;
+    } catch {
+      // ignore malformed config
+    }
+  }
+
+  // Env vars take precedence for local dev; DB config fills gaps
+  const config = { ...storedConfig, ...envConfig };
+
+  let result;
+  try {
+    result = await dispatchTask(
+      {
+        title: task.title,
+        description: task.description,
+        target: task.target,
+        sessionId: task.feedbackSessionId,
+        sessionTitle: task.session?.title,
+      },
+      config
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[api] dispatchTask error:', msg);
+    return res.status(502).json({ error: `Integration error: ${msg}` });
+  }
 
   const updated = await prisma.improvementTask.update({
     where: { id: task.id },
-    data: { status: 'sent', externalUrl: mockExternalUrl, externalId: `MOCK-${Date.now()}` },
+    data: {
+      status: 'sent',
+      externalUrl: result.externalUrl,
+      externalId: result.externalId,
+    },
   });
 
   await auditLog({
@@ -71,7 +114,12 @@ tasksRouter.post('/tasks/:id/send', async (req: Request, res: Response) => {
     action: 'task.sent',
     targetType: 'ImprovementTask',
     targetId: task.id,
-    metadata: { target: task.target, externalUrl: mockExternalUrl },
+    metadata: {
+      target: task.target,
+      provider: result.provider,
+      externalId: result.externalId,
+      externalUrl: result.externalUrl,
+    },
   });
 
   return res.json({ data: updated });

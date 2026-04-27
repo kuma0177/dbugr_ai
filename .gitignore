@@ -11,3 +11,4 @@ packages/db/.env
 apps/**/.env
 apps/**/.env.local
 uploads/
+dev.db

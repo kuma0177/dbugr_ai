@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@feedbackagent/db": "workspace:*",
+    "@feedbackagent/integrations": "workspace:*",
     "@feedbackagent/shared": "workspace:*",
     "cors": "^2.8.5",
     "express": "^4.19.0",
