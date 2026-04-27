@@ -74,10 +74,11 @@ export function TaskPanel({ session, onUpdate }: Props) {
       {session.status === 'ready' && (
         <div className="card" style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white', padding: 16, borderRadius: 8 }}>
           <div style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, opacity: 0.9 }}>
-            AI Code Generation
+            Experimental Handoff
           </div>
           <p style={{ marginBottom: 12, fontSize: '0.9rem', lineHeight: 1.6 }}>
-            Push this feedback to Claude Code for automatic implementation. Claude will analyze the feedback and generate code changes.
+            Send this prepared feedback package to Claude Code. Today this is a handoff step, not a fully automatic
+            fix pipeline.
           </p>
           <button
             className="btn"
@@ -94,7 +95,7 @@ export function TaskPanel({ session, onUpdate }: Props) {
             onClick={sendToClaude}
             disabled={loading}
           >
-            {loading ? '⏳ Pushing...' : '→ Send to Claude Code'}
+            {loading ? '⏳ Sending...' : '→ Send to Claude Code'}
           </button>
         </div>
       )}
