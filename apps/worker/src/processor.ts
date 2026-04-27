@@ -13,9 +13,10 @@ export async function processSession(sessionId: string): Promise<void> {
   await sleep(300);
 
   // TODO: replace with real frame extraction from video
+  // Delete existing frames first (idempotent re-processing)
+  await prisma.feedbackFrame.deleteMany({ where: { feedbackSessionId: sessionId } });
   await prisma.feedbackFrame.createMany({
     data: MOCK_FRAMES.map((f) => ({ ...f, feedbackSessionId: sessionId })),
-    skipDuplicates: true,
   });
 
   // TODO: replace with real AI summarization (Claude, GPT-4, etc.)

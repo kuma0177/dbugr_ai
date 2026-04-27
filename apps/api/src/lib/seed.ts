@@ -5,22 +5,28 @@
 import { prisma } from '@feedbackagent/db';
 
 async function main() {
-  const org = await prisma.organization.upsert({
-    where: { slug: 'demo-org' },
-    update: {},
-    create: { name: 'Demo Org', slug: 'demo-org' },
+  // Wipe existing demo data in dependency order
+  await prisma.auditLog.deleteMany({});
+  await prisma.feedbackVote.deleteMany({});
+  await prisma.feedbackComment.deleteMany({});
+  await prisma.feedbackFrame.deleteMany({});
+  await prisma.improvementTask.deleteMany({});
+  await prisma.feedbackSession.deleteMany({});
+  await prisma.integration.deleteMany({});
+  await prisma.project.deleteMany({});
+  await prisma.organization.deleteMany({});
+  await prisma.user.deleteMany({});
+
+  const org = await prisma.organization.create({
+    data: { id: 'org_demo', name: 'Demo Org', slug: 'demo-org' },
   });
 
-  const user = await prisma.user.upsert({
-    where: { email: 'demo@example.com' },
-    update: {},
-    create: { email: 'demo@example.com', name: 'Demo User', role: 'admin' },
+  const user = await prisma.user.create({
+    data: { id: 'user_demo', email: 'demo@example.com', name: 'Demo User', role: 'admin' },
   });
 
-  const project = await prisma.project.upsert({
-    where: { id: 'proj_demo' },
-    update: {},
-    create: {
+  const project = await prisma.project.create({
+    data: {
       id: 'proj_demo',
       organizationId: org.id,
       name: 'Demo Project',
