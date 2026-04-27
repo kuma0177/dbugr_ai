@@ -47,8 +47,58 @@ export function TaskPanel({ session, onUpdate }: Props) {
     onUpdate();
   }
 
+  async function sendToClaude() {
+    setLoading(true);
+    try {
+      // Send feedback to Claude Code via API
+      // This will be handled by the API calling MCP push_feedback_to_claude
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/feedback-sessions/${session.id}/send-to-claude`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'claude' }),
+      });
+      if (res.ok) {
+        alert('✓ Feedback pushed to Claude Code.\n\nYour Claude Code instance can now access the full context and generate code changes.');
+        onUpdate();
+      } else {
+        alert('Error sending feedback to Claude Code');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="stack gap-16">
+      {/* V2: Send to Claude Code */}
+      {session.status === 'ready' && (
+        <div className="card" style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', color: 'white', padding: 16, borderRadius: 8 }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, opacity: 0.9 }}>
+            AI Code Generation
+          </div>
+          <p style={{ marginBottom: 12, fontSize: '0.9rem', lineHeight: 1.6 }}>
+            Push this feedback to Claude Code for automatic implementation. Claude will analyze the feedback and generate code changes.
+          </p>
+          <button
+            className="btn"
+            style={{
+              background: 'white',
+              color: '#667eea',
+              fontWeight: 600,
+              padding: '8px 16px',
+              fontSize: '0.85rem',
+              cursor: 'pointer',
+              border: 'none',
+              borderRadius: 4,
+            }}
+            onClick={sendToClaude}
+            disabled={loading}
+          >
+            {loading ? '⏳ Pushing...' : '→ Send to Claude Code'}
+          </button>
+        </div>
+      )}
+
       {parsedBrief && (
         <div className="card">
           <div className="muted" style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>

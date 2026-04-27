@@ -117,3 +117,42 @@ feedbackSessionRouter.patch('/feedback-sessions/:id', async (req: Request, res: 
   });
   return res.json({ data: session });
 });
+
+// POST /api/feedback-sessions/:id/send-to-claude
+// V2: Send feedback to Claude Code for implementation
+feedbackSessionRouter.post('/feedback-sessions/:id/send-to-claude', async (req: Request, res: Response) => {
+  const { target } = req.body;
+
+  const session = await prisma.feedbackSession.findUnique({
+    where: { id: req.params.id },
+  });
+
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+
+  // Create an improvement task representing the Claude Code handoff
+  const task = await prisma.improvementTask.create({
+    data: {
+      feedbackSessionId: session.id,
+      target: target || 'claude',
+      title: session.title,
+      description: session.aiSummary || 'Feedback ready for implementation',
+      status: 'draft',
+    },
+  });
+
+  return res.status(201).json({
+    data: {
+      task_id: task.id,
+      feedback_id: session.id,
+      message: `Feedback sent to ${target || 'claude'}. Your Claude Code instance can now call the 'get_feedback_details' MCP tool to access the full context.`,
+      mcp_instructions: `
+In your Claude Code instance:
+1. Call get_feedback_details with feedback_id: "${session.id}"
+2. Implement the code changes
+3. Call register_completed_task with the PR details when done
+      `.trim(),
+    },
+  });
+});

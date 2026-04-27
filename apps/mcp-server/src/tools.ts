@@ -61,4 +61,46 @@ export const tools = [
       required: ['task_id'],
     },
   },
+  // ─── V2: Feedback → Claude Code Handoff ──────────────────────────────────
+  {
+    name: 'push_feedback_to_claude',
+    description: 'Push feedback from FeedbackAgent to Claude Code for implementation. Returns task ID for tracking.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        feedback_id: { type: 'string', description: 'Feedback session ID to push' },
+        target: {
+          type: 'string',
+          enum: ['claude', 'codex'],
+          description: 'Which AI to target (claude or codex)',
+        },
+      },
+      required: ['feedback_id', 'target'],
+    },
+  },
+  {
+    name: 'get_feedback_details',
+    description: 'Get complete feedback details: transcript, frames, summary, acceptance criteria. Used by Claude to get full context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        feedback_id: { type: 'string', description: 'Feedback session ID' },
+      },
+      required: ['feedback_id'],
+    },
+  },
+  {
+    name: 'register_completed_task',
+    description: 'Register completed task: Claude Code calls this after creating PR. Links PR back to original feedback.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        feedback_id: { type: 'string', description: 'Original feedback session ID' },
+        pr_url: { type: 'string', description: 'GitHub PR URL (e.g., https://github.com/owner/repo/pull/123)' },
+        pr_number: { type: 'integer', description: 'PR number (e.g., 123)' },
+        branch_name: { type: 'string', description: 'Branch name created for changes' },
+      },
+      required: ['feedback_id', 'pr_url', 'pr_number'],
+    },
+  },
 ];

@@ -31,6 +31,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return handleCreateTask(args as { feedback_id: string; target: string; title: string; description: string });
     case 'send_approved_task':
       return handleSendTask(args as { task_id: string });
+    // V2: Feedback → Claude Code handoff
+    case 'push_feedback_to_claude':
+      return handlePushFeedbackToClaude(args as { feedback_id: string; target: string });
+    case 'get_feedback_details':
+      return handleGetFeedbackDetails(args as { feedback_id: string });
+    case 'register_completed_task':
+      return handleRegisterCompletedTask(args as { feedback_id: string; pr_url: string; pr_number: number; branch_name?: string });
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -140,6 +147,144 @@ async function handleSendTask(args: { task_id: string }) {
 
   return {
     content: [{ type: 'text', text: JSON.stringify({ status: updated.status, external_url: externalUrl }, null, 2) }],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// V2: Feedback → Claude Code Handoff Handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function handlePushFeedbackToClaude(args: { feedback_id: string; target: string }) {
+  const session = await prisma.feedbackSession.findUnique({
+    where: { id: args.feedback_id },
+  });
+
+  if (!session) {
+    return { content: [{ type: 'text', text: JSON.stringify({ error: 'Feedback not found' }) }], isError: true };
+  }
+  if (session.visibility === 'private') {
+    return { content: [{ type: 'text', text: JSON.stringify({ error: 'Cannot push private feedback' }) }], isError: true };
+  }
+
+  // Create an improvement task that represents the Claude Code handoff
+  const task = await prisma.improvementTask.create({
+    data: {
+      feedbackSessionId: args.feedback_id,
+      target: args.target,
+      title: session.title,
+      description: session.aiSummary || 'Feedback summary pending...',
+      status: 'draft', // Will be approved by Claude Code when it creates PR
+    },
+  });
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({
+        task_id: task.id,
+        feedback_id: args.feedback_id,
+        status: 'pushed_to_claude',
+        message: `Feedback pushed to ${args.target}. Claude Code can now retrieve full details.`,
+      }, null, 2),
+    }],
+  };
+}
+
+async function handleGetFeedbackDetails(args: { feedback_id: string }) {
+  const session = await prisma.feedbackSession.findUnique({
+    where: { id: args.feedback_id },
+    include: {
+      frames: true,
+      comments: { where: { visibility: { not: 'private' } } },
+      tasks: true,
+    },
+  });
+
+  if (!session) {
+    return { content: [{ type: 'text', text: JSON.stringify({ error: 'Feedback not found' }) }], isError: true };
+  }
+  if (session.visibility === 'private') {
+    return { content: [{ type: 'text', text: JSON.stringify({ error: 'Access denied: private session' }) }], isError: true };
+  }
+
+  // Parse task brief if available
+  let taskBrief = null;
+  if (session.aiTaskBrief) {
+    try {
+      taskBrief = JSON.parse(session.aiTaskBrief);
+    } catch {}
+  }
+
+  const result = {
+    id: session.id,
+    title: session.title,
+    summary: session.aiSummary,
+    problem_statement: session.aiSummary ? 'See summary above' : null,
+    transcript: session.transcript,
+    task_brief: taskBrief,
+    acceptance_criteria: taskBrief?.context?.reproSteps || [],
+    frames_count: session.frames.length,
+    comments_count: session.comments.length,
+    visibility: session.visibility,
+    created_at: session.createdAt,
+  };
+
+  return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+}
+
+async function handleRegisterCompletedTask(args: {
+  feedback_id: string;
+  pr_url: string;
+  pr_number: number;
+  branch_name?: string;
+}) {
+  // Find the task created for this feedback when it was pushed to Claude
+  const task = await prisma.improvementTask.findFirst({
+    where: {
+      feedbackSessionId: args.feedback_id,
+      status: 'draft',
+    },
+  });
+
+  if (!task) {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          error: 'No pending task found for this feedback. Did you call push_feedback_to_claude first?',
+        }),
+      }],
+      isError: true,
+    };
+  }
+
+  // Update task with PR details
+  const updated = await prisma.improvementTask.update({
+    where: { id: task.id },
+    data: {
+      status: 'sent',
+      externalId: String(args.pr_number),
+      externalUrl: args.pr_url,
+    },
+  });
+
+  // Update feedback session status
+  await prisma.feedbackSession.update({
+    where: { id: args.feedback_id },
+    data: { status: 'routed' },
+  });
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({
+        success: true,
+        task_id: updated.id,
+        pr_url: args.pr_url,
+        pr_number: args.pr_number,
+        message: 'Task registered. PR is now tracked in FeedbackAgent.',
+      }, null, 2),
+    }],
   };
 }
 
