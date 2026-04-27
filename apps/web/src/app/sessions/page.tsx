@@ -127,15 +127,11 @@ export default function SessionsPage() {
       localStorage.setItem(RECENT_URLS_KEY, JSON.stringify(nextRecentUrls));
       setRecentUrls(nextRecentUrls);
 
-      try {
-        window.open(normalizedUrl, '_blank', 'noopener,noreferrer');
-      } catch {
-        // The launch page below still gives the user a manual open button if the popup is blocked.
-      }
-
       closeCreateModal();
+      // Navigate to the record page with the target URL pre-loaded.
+      // The annotation overlay is already there — no bookmarklet needed.
       router.push(
-        `/sessions/${session.id}/launch?url=${encodeURIComponent(normalizedUrl)}&target=${handoffTarget}`,
+        `/sessions/${session.id}/record?url=${encodeURIComponent(normalizedUrl)}&target=${handoffTarget}`,
       );
     } catch (err) {
       console.error('[sessions] Create error:', err);

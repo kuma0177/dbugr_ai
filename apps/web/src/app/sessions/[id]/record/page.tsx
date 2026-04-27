@@ -1,7 +1,8 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
+import { buildOverlayBookmarklet } from '@/lib/overlayBookmarklet';
 
 interface Note {
   id: string;
@@ -146,6 +147,7 @@ function RecordPageInner() {
   const [voiceTimer, setVoiceTimer] = useState(0);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [fetchedTitle, setFetchedTitle] = useState('');
 
   useEffect(() => {
     setRecentUrls(getRecentUrls());
@@ -155,6 +157,15 @@ function RecordPageInner() {
       setUrlInput(initialUrl);
       saveRecentUrl(initialUrl);
     }
+    const targetParam = searchParams?.get('target');
+    if (targetParam === 'codex') setHandoffTarget('codex');
+
+    // Fetch session title for the bookmarklet label
+    const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
+    fetch(`${API}/feedback-sessions/${id}`)
+      .then(r => r.json())
+      .then(j => { if (j.data?.title) setFetchedTitle(j.data.title); })
+      .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -182,6 +193,13 @@ function RecordPageInner() {
   }, [loadedUrl]);
 
   const selectedBox = boxes.find((box) => box.id === selectedBoxId) ?? null;
+
+  // Session-specific bookmarklet — pre-configured so clicking it on any page
+  // activates the overlay for this exact session without a prompt.
+  const bookmarkletHref = useMemo(() => {
+    const webOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+    return buildOverlayBookmarklet({ webOrigin, sessionId: id, title: fetchedTitle, target: handoffTarget });
+  }, [id, fetchedTitle, handoffTarget]);
 
   const handleLoad = () => {
     let nextUrl = urlInput.trim();
@@ -631,19 +649,59 @@ function RecordPageInner() {
             )}
 
             {iframeLikelyBlocked && (
-              <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', background: 'rgba(248, 250, 252, 0.92)' }}>
-                <div style={{ width: 'min(520px, calc(100% - 40px))', background: '#fff', color: '#0f172a', borderRadius: 18, border: '1px solid #cbd5e1', boxShadow: '0 22px 50px rgba(15, 23, 42, 0.18)', padding: '22px 24px' }}>
-                  <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#2563eb', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
-                    Embedding Blocked
+              <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(15,23,42,0.92)', zIndex: 5 }}>
+                <div style={{ width: 'min(560px, calc(100% - 40px))', background: '#fff', color: '#0f172a', borderRadius: 20, boxShadow: '0 30px 80px rgba(0,0,0,0.45)', padding: '28px 30px' }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#dc2626', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
+                    This site blocks embedding
                   </div>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 800, marginBottom: 10 }}>
-                    This site is likely refusing to render inside an iframe.
+                  <div style={{ fontSize: '1.15rem', fontWeight: 800, marginBottom: 10 }}>
+                    {loadedUrl} can't be previewed here
                   </div>
-                  <div style={{ fontSize: '0.92rem', color: '#475569', lineHeight: 1.7 }}>
-                    Sites like `twynd.ai` often send `X-Frame-Options` or `frame-ancestors` rules that block in-app embedding. The URL is valid, but the page itself is preventing this preview from loading.
+                  <div style={{ fontSize: '0.9rem', color: '#475569', lineHeight: 1.65, marginBottom: 22 }}>
+                    Many sites send <code style={{ background: '#f1f5f9', padding: '1px 5px', borderRadius: 4 }}>X-Frame-Options</code> headers that block in-app iframes. Use the 2-step workaround below — it only takes seconds.
                   </div>
-                  <div style={{ fontSize: '0.88rem', color: '#334155', lineHeight: 1.7, marginTop: 12 }}>
-                    Best fallback for now: choose the page from your open Chrome tabs in the session modal, or use the bookmarklet flow on the target page itself.
+
+                  <div style={{ display: 'grid', gap: 14 }}>
+                    {/* Step 1 */}
+                    <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 8, background: '#312e81', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 14, flexShrink: 0 }}>1</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, marginBottom: 6 }}>Drag this to your bookmarks bar</div>
+                        <a
+                          href={bookmarkletHref}
+                          onClick={e => e.preventDefault()}
+                          draggable
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 6,
+                            padding: '9px 16px', borderRadius: 9,
+                            background: '#eef2ff', color: '#312e81',
+                            fontWeight: 800, fontSize: 13, textDecoration: 'none',
+                            border: '1.5px dashed #818cf8', cursor: 'grab', userSelect: 'none',
+                          }}
+                          title="Drag to bookmarks bar"
+                        >
+                          ⬡ FeedbackAgent — {fetchedTitle || id.slice(0, 8)}
+                        </a>
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 5 }}>Already in your bar? Skip this step.</div>
+                      </div>
+                    </div>
+
+                    {/* Step 2 */}
+                    <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 8, background: '#312e81', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 14, flexShrink: 0 }}>2</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, marginBottom: 8 }}>Open the page and click the bookmarklet</div>
+                        <button
+                          onClick={() => window.open(loadedUrl, '_blank', 'noopener,noreferrer')}
+                          style={{ padding: '9px 18px', borderRadius: 9, background: '#0f172a', color: '#f8fafc', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 13 }}
+                        >
+                          Open {loadedUrl} ↗
+                        </button>
+                        <div style={{ fontSize: 12, color: '#64748b', marginTop: 6, lineHeight: 1.5 }}>
+                          Once the page loads, click <strong>⬡ FeedbackAgent</strong> in your bookmarks bar. The overlay will appear on that real page — already linked to this session.
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
