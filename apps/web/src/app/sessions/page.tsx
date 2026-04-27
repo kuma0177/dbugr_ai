@@ -16,9 +16,10 @@ export default function SessionsPage() {
   async function loadSessions() {
     try {
       const data = await api.sessions.list();
-      setSessions(data);
+      setSessions(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error('[sessions] Error loading:', e);
+      setSessions([]); // Default to empty list on error
     } finally {
       setLoading(false);
     }
