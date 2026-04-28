@@ -26,6 +26,13 @@ interface SessionMeta {
   canvasWidth?: number;
   canvasHeight?: number;
   capturedAt?: string;
+  sessionNote?: string;
+  audioNote?: {
+    mimeType: string;
+    dataUrl: string;
+    durationSec: number;
+    createdAt?: string;
+  };
 }
 
 interface AgentFeedback {
@@ -109,6 +116,8 @@ function SummaryPageInner() {
               canvasWidth: parsed.canvasWidth,
               canvasHeight: parsed.canvasHeight,
               capturedAt: parsed.capturedAt,
+              sessionNote: parsed.sessionNote,
+              audioNote: parsed.audioNote,
             });
           } catch (parseErr) {
             console.error('[summary] userIntent JSON parse failed:', parseErr);
@@ -216,6 +225,23 @@ function SummaryPageInner() {
       {submittedTarget === 'claude' || submittedTarget === 'codex' ? (
         <div style={{ marginBottom: 24, padding: '16px 18px', borderRadius: 12, background: '#ecfdf3', border: '1px solid #86efac', color: '#166534' }}>
           Native capture submitted to <strong>{submittedTarget === 'codex' ? 'Codex' : 'Claude Code'}</strong>. You can review the saved annotations below.
+        </div>
+      ) : null}
+
+      {meta.sessionNote || meta.audioNote ? (
+        <div style={{ border: '1px solid #e5e7eb', borderRadius: 12, background: '#fff', padding: 20, marginBottom: 24 }}>
+          <h2 style={{ marginTop: 0, marginBottom: 12 }}>Capture notes</h2>
+          {meta.sessionNote ? (
+            <p style={{ color: '#475467', lineHeight: 1.7, marginTop: 0 }}>{meta.sessionNote}</p>
+          ) : null}
+          {meta.audioNote ? (
+            <div style={{ marginTop: meta.sessionNote ? 14 : 0 }}>
+              <div style={{ fontSize: '0.85rem', color: '#667085', marginBottom: 8 }}>
+                Voice note · {Math.round(meta.audioNote.durationSec)}s
+              </div>
+              <audio controls src={meta.audioNote.dataUrl} style={{ width: '100%' }} />
+            </div>
+          ) : null}
         </div>
       ) : null}
 

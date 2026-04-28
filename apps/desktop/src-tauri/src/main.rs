@@ -4,6 +4,7 @@ use std::{
   process::Command,
   time::{SystemTime, UNIX_EPOCH},
 };
+use tauri::{AppHandle, Manager};
 
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
@@ -17,20 +18,6 @@ fn temp_capture_path() -> PathBuf {
     .map(|duration| duration.as_millis())
     .unwrap_or(0);
   std::env::temp_dir().join(format!("debugr-native-capture-{stamp}.png"))
-}
-
-#[tauri::command]
-fn open_external_url(url: String) -> Result<(), String> {
-  let status = Command::new("open")
-    .arg(&url)
-    .status()
-    .map_err(|error| format!("Failed to open URL: {error}"))?;
-
-  if status.success() {
-    Ok(())
-  } else {
-    Err(format!("macOS could not open the URL. Exit status: {status}"))
-  }
 }
 
 #[tauri::command]
@@ -58,7 +45,7 @@ fn open_screen_capture_settings() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn capture_interactive_screenshot() -> Result<String, String> {
+fn capture_interactive_screenshot(app: AppHandle) -> Result<String, String> {
   let path = temp_capture_path();
 
   let status = Command::new("screencapture")
@@ -91,13 +78,17 @@ fn capture_interactive_screenshot() -> Result<String, String> {
     .map_err(|error| format!("Screenshot encoding was not valid UTF-8: {error}"))?
     .replace('\n', "");
 
+  if let Some(window) = app.get_webview_window("main") {
+    let _ = window.show();
+    let _ = window.set_focus();
+  }
+
   Ok(format!("data:image/png;base64,{body}"))
 }
 
 fn main() {
   tauri::Builder::default()
     .invoke_handler(tauri::generate_handler![
-      open_external_url,
       get_screen_capture_permission,
       request_screen_capture_permission,
       open_screen_capture_settings,

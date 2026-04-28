@@ -24,8 +24,13 @@ interface FeedbackSessionSummary {
   title: string;
   status: string;
   createdAt: string;
-  userIntent?: string | null;
-  _count?: { comments: number; tasks: number };
+}
+
+interface AudioNotePayload {
+  mimeType: string;
+  dataUrl: string;
+  durationSec: number;
+  createdAt: string;
 }
 
 interface CapturePayload {
@@ -36,6 +41,8 @@ interface CapturePayload {
   canvasWidth: number;
   canvasHeight: number;
   capturedAt: string;
+  sessionNote?: string;
+  audioNote?: AudioNotePayload;
   boxes: Array<{
     id: string;
     x: number;
@@ -74,133 +81,143 @@ interface SubmissionResult {
 }
 
 const API_BASE = 'http://127.0.0.1:3001/api';
-const DEFAULT_TITLE = 'Native capture session';
+const DEFAULT_TITLE = 'Capture issue for agent handoff';
 const RECENT_KEY = 'debugr_native_recent_sessions';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Missing app root');
 
 app.innerHTML = `
-  <div class="shell capture-shell">
-    <section class="panel capture-panel">
-      <div class="hero">
-        <div class="brand-lockup">
-          <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" role="img" focusable="false">
-              <path d="M7.5 5.5h9a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3h-9a3 3 0 0 1-3-3v-7a3 3 0 0 1 3-3Z" />
-              <path d="M9.1 12.1l2.1-2.1c.25-.25.58-.39.94-.39h2.9" />
-              <path d="M10.2 15.1h2.9c.36 0 .69-.14.94-.39l1.4-1.4" />
-            </svg>
-          </div>
+  <div class="shell">
+    <aside class="rail">
+      <div class="brand-card">
+        <div class="brand-row">
+          <div class="brand-mark" aria-hidden="true">D</div>
           <div>
-            <div class="eyebrow">debugr.ai</div>
-            <div class="brand-subtitle">Native capture and annotation</div>
+            <div class="brand-name">DEBUGR.AI</div>
+            <div class="brand-subtitle">Native feedback composer</div>
           </div>
         </div>
-        <h1 class="title">Capture the screen. Mark it up. Send it on.</h1>
-        <p class="subtitle">
-          No browser embedding, no extension, no web recorder. Take a native macOS screenshot, mark up the frozen
-          frame, and hand the report to Claude or Codex.
+        <h1 class="hero-title">Capture once. Annotate clearly. Send a real handoff.</h1>
+        <p class="hero-copy">
+          Native screenshot capture, visual markups, typed notes, and voice notes in one place. No browser recorder,
+          no tab juggling.
         </p>
       </div>
 
-      <div class="card">
-        <div class="card-label">Permissions</div>
-        <div id="permission-card"></div>
+      <div class="rail-card">
+        <div class="card-kicker">Capture</div>
+        <div class="tool-row">
+          <button id="capture-btn" class="primary-btn">Take screenshot</button>
+          <button id="import-image-btn" class="secondary-btn">Import image</button>
+          <button id="reset-capture-btn" class="ghost-btn">Reset</button>
+        </div>
+        <input id="image-file-input" type="file" accept="image/*" hidden />
+        <div id="capture-state" class="inline-status">No screenshot loaded yet.</div>
       </div>
 
-      <div class="card">
-        <div class="card-label">Session</div>
+      <div class="rail-card">
+        <div class="card-kicker">Send</div>
         <div class="field">
           <label for="session-title">Session title</label>
           <input id="session-title" type="text" value="${DEFAULT_TITLE}" />
         </div>
         <div class="field">
-          <label for="handoff-target">Send after submit</label>
+          <label for="handoff-target">Send to</label>
           <select id="handoff-target">
             <option value="claude">Claude</option>
             <option value="codex">Codex</option>
           </select>
         </div>
-
-        <div class="button-row">
-          <button id="capture-btn" class="primary">Take screenshot</button>
-          <button id="submit-btn" class="secondary">Submit to agent</button>
-        </div>
-
-        <div id="status" class="status">Ready. Take a screenshot to begin annotating.</div>
+        <button id="submit-btn" class="primary-btn primary-btn-wide">Submit to agent</button>
+        <div id="status" class="status-banner">Ready. Add a screenshot, notes, or voice memo to begin.</div>
       </div>
 
-      <div class="card">
-        <div class="card-label">Recent sessions</div>
+      <div class="rail-card">
+        <div class="card-kicker">Permissions</div>
+        <div id="permission-card"></div>
+      </div>
+
+      <div class="rail-card">
+        <div class="card-kicker">Recent sessions</div>
         <div id="recent-sessions" class="recent"></div>
       </div>
-    </section>
+    </aside>
 
-    <section class="workspace native-workspace">
-      <div class="workspace-card capture-card">
-        <div class="workspace-kicker">Capture surface</div>
-        <div class="capture-toolbar">
+    <main class="workspace">
+      <section class="surface-card">
+        <div class="surface-head">
           <div>
-            <div class="capture-title">Capture any app or screen, then annotate the frozen frame</div>
-            <div class="capture-copy">
-              After the screenshot returns here, click and drag directly on the image to draw a box. Each box becomes
-              an annotation with a note before you submit the handoff.
-            </div>
+            <div class="surface-title">Screenshot surface</div>
+            <div class="surface-copy">Take one screenshot at a time. If macOS focus gets awkward, import the image instead and keep going.</div>
           </div>
-          <div id="annotation-mode-badge" class="capture-badge">Waiting for screenshot</div>
+          <div id="annotation-mode-badge" class="mode-pill">Waiting for image</div>
         </div>
 
         <div id="annotation-toolbar" class="annotation-toolbar annotation-toolbar-hidden">
-          <div class="annotation-tool-pill annotation-tool-pill-active">Box annotation mode</div>
-          <div class="annotation-tool-copy">Click and drag on the screenshot to mark an area. Release to add a note.</div>
+          <div class="tool-pill tool-pill-active">Box select</div>
+          <div class="annotation-toolbar-copy">Click and drag on the image to mark the exact area. Add the explanation in the annotation list below.</div>
         </div>
 
         <div id="capture-stage" class="capture-stage capture-empty">
-          <canvas id="capture-canvas" class="capture-canvas" aria-label="Native screenshot capture canvas"></canvas>
+          <canvas id="capture-canvas" class="capture-canvas" aria-label="Screenshot annotation canvas"></canvas>
           <div id="annotation-hint" class="annotation-hint annotation-hint-hidden">
-            <div class="annotation-hint-title">Drag on the screenshot to annotate</div>
-            <div class="annotation-hint-copy">Create a box around the issue, then add a note when you release.</div>
+            <div class="annotation-hint-title">Drag to create a box</div>
+            <div class="annotation-hint-copy">After the box appears, write a note in the annotations panel so Claude or Codex knows what matters.</div>
           </div>
           <div id="capture-placeholder" class="capture-placeholder">
-            <div class="capture-placeholder-title">Nothing captured yet</div>
+            <div class="capture-placeholder-title">No image loaded</div>
             <div class="capture-placeholder-copy">
-              Click <strong>Take screenshot</strong> to use the native macOS capture tool, then return here and drag on
-              the frozen frame to annotate it.
+              Use <strong>Take screenshot</strong> for a native one-shot capture, or <strong>Import image</strong> if the screenshot already exists.
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div class="workspace-card">
-        <div class="workspace-kicker">Confirm Handoff</div>
-        <div id="confirmation-card"></div>
-      </div>
+      <section class="composer-grid">
+        <div class="workspace-card">
+          <div class="card-kicker">Session notes</div>
+          <textarea id="session-note" class="note-textarea" placeholder="Describe the issue, expected behavior, and anything the agent should pay attention to."></textarea>
+        </div>
 
-      <div class="workspace-card">
-        <div class="workspace-kicker">Agent Feedback</div>
-        <div id="agent-feedback-card"></div>
-      </div>
+        <div class="workspace-card">
+          <div class="card-kicker">Voice note</div>
+          <div id="voice-note-card"></div>
+        </div>
 
-      <div class="workspace-card logs-card">
-        <div class="workspace-kicker">Logs</div>
-        <p>These logs cover capture start, box creation, note edits, and submit/send steps.</p>
-        <div id="logs" class="logs"></div>
-      </div>
+        <div class="workspace-card workspace-card-wide">
+          <div class="card-kicker">Annotations</div>
+          <div id="annotation-list" class="annotation-list"></div>
+        </div>
 
-      <div class="workspace-card annotations-card">
-        <div class="workspace-kicker">Boxes</div>
-        <div id="annotation-list" class="annotation-list"></div>
-      </div>
-    </section>
+        <div class="workspace-card">
+          <div class="card-kicker">Confirm handoff</div>
+          <div id="confirmation-card"></div>
+        </div>
+
+        <div class="workspace-card">
+          <div class="card-kicker">Agent feedback</div>
+          <div id="agent-feedback-card"></div>
+        </div>
+
+        <div class="workspace-card workspace-card-wide">
+          <div class="card-kicker">Activity</div>
+          <div id="logs" class="logs"></div>
+        </div>
+      </section>
+    </main>
   </div>
 `;
 
 const sessionTitleInput = document.querySelector<HTMLInputElement>('#session-title')!;
 const handoffTargetSelect = document.querySelector<HTMLSelectElement>('#handoff-target')!;
 const captureBtn = document.querySelector<HTMLButtonElement>('#capture-btn')!;
+const importImageBtn = document.querySelector<HTMLButtonElement>('#import-image-btn')!;
+const resetCaptureBtn = document.querySelector<HTMLButtonElement>('#reset-capture-btn')!;
+const imageFileInput = document.querySelector<HTMLInputElement>('#image-file-input')!;
 const submitBtn = document.querySelector<HTMLButtonElement>('#submit-btn')!;
 const statusEl = document.querySelector<HTMLDivElement>('#status')!;
+const captureStateEl = document.querySelector<HTMLDivElement>('#capture-state')!;
 const logsEl = document.querySelector<HTMLDivElement>('#logs')!;
 const canvas = document.querySelector<HTMLCanvasElement>('#capture-canvas')!;
 const stageEl = document.querySelector<HTMLDivElement>('#capture-stage')!;
@@ -213,6 +230,8 @@ const permissionCardEl = document.querySelector<HTMLDivElement>('#permission-car
 const annotationToolbarEl = document.querySelector<HTMLDivElement>('#annotation-toolbar')!;
 const annotationHintEl = document.querySelector<HTMLDivElement>('#annotation-hint')!;
 const annotationModeBadgeEl = document.querySelector<HTMLDivElement>('#annotation-mode-badge')!;
+const sessionNoteTextarea = document.querySelector<HTMLTextAreaElement>('#session-note')!;
+const voiceNoteCardEl = document.querySelector<HTMLDivElement>('#voice-note-card')!;
 
 const ctx = canvas.getContext('2d')!;
 
@@ -224,10 +243,18 @@ let drawing = false;
 let startPoint: { x: number; y: number } | null = null;
 let draftBox: CaptureBox | null = null;
 let boxes: CaptureBox[] = [];
+let selectedBoxId: string | null = null;
 let handoffContext: HandoffContext | null = null;
 let captureConfirmed = false;
 let submissionResult: SubmissionResult | null = null;
 let permissionState: PermissionState = 'checking';
+let audioNote: AudioNotePayload | null = null;
+let audioPreviewUrl: string | null = null;
+let mediaRecorder: MediaRecorder | null = null;
+let recorderStream: MediaStream | null = null;
+let recorderChunks: Blob[] = [];
+let recordingStartedAt = 0;
+let isRecordingAudio = false;
 
 function nowStamp() {
   return new Date().toLocaleTimeString([], { hour12: false });
@@ -239,7 +266,6 @@ function appendLog(message: string, details?: unknown) {
   const body = details === undefined ? message : `${message} ${typeof details === 'string' ? details : JSON.stringify(details)}`;
   line.textContent = `[${nowStamp()}] ${body}`;
   logsEl.prepend(line);
-  console.log('[desktop]', message, details ?? '');
 }
 
 function setStatus(message: string) {
@@ -249,14 +275,6 @@ function setStatus(message: string) {
 
 function getTargetLabel(target: Target) {
   return target === 'codex' ? 'Codex' : 'Claude Code';
-}
-
-function normalizeUrl(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('file://')) return trimmed;
-  if (trimmed.startsWith('localhost') || trimmed.startsWith('127.0.0.1')) return `http://${trimmed}`;
-  return `https://${trimmed}`;
 }
 
 function getRecentSessionIds(): string[] {
@@ -271,13 +289,69 @@ function setRecentSessionIds(ids: string[]) {
   localStorage.setItem(RECENT_KEY, JSON.stringify(ids));
 }
 
+function formatDuration(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0s';
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  return `${mins}m ${secs}s`;
+}
+
+function revokeAudioPreviewUrl() {
+  if (audioPreviewUrl) {
+    URL.revokeObjectURL(audioPreviewUrl);
+    audioPreviewUrl = null;
+  }
+}
+
+function setPrimaryBoxNote(box: CaptureBox, text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    box.notes = [];
+    return;
+  }
+  const existing = box.notes[0];
+  if (existing) {
+    box.notes = [{ ...existing, text: trimmed }];
+    return;
+  }
+  box.notes = [{ id: `note_${Date.now()}`, text: trimmed, createdAt: new Date().toISOString() }];
+}
+
+function getPrimaryBoxNote(box: CaptureBox) {
+  return box.notes[0]?.text ?? '';
+}
+
+function hasSubmissionContent() {
+  const hasBoxes = boxes.length > 0;
+  const hasBoxNotes = boxes.some((box) => box.notes.length > 0);
+  const hasSessionNote = sessionNoteTextarea.value.trim().length > 0;
+  const hasAudio = !!audioNote;
+  return hasBoxes || hasBoxNotes || hasSessionNote || hasAudio;
+}
+
+function updateCaptureMeta() {
+  if (!screenshotImage || !screenshotDataUrl) {
+    captureStateEl.textContent = 'No screenshot loaded yet.';
+    annotationModeBadgeEl.textContent = 'Waiting for image';
+    return;
+  }
+  const noteCount = boxes.reduce((count, box) => count + box.notes.length, 0);
+  const audioState = audioNote ? ` + voice note ${formatDuration(audioNote.durationSec)}` : '';
+  captureStateEl.textContent = `${boxes.length} box${boxes.length === 1 ? '' : 'es'} · ${noteCount} note${noteCount === 1 ? '' : 's'}${audioState}`;
+  annotationModeBadgeEl.textContent = selectedBoxId ? 'Editing selection' : 'Box annotation mode';
+}
+
 function clearCaptureState() {
   screenshotImage = null;
   screenshotDataUrl = '';
   naturalWidth = 0;
   naturalHeight = 0;
+  drawing = false;
+  startPoint = null;
   draftBox = null;
   boxes = [];
+  selectedBoxId = null;
   captureConfirmed = false;
   submissionResult = null;
   canvas.width = 0;
@@ -287,43 +361,95 @@ function clearCaptureState() {
   placeholderEl.style.display = 'grid';
   annotationToolbarEl.classList.add('annotation-toolbar-hidden');
   annotationHintEl.classList.add('annotation-hint-hidden');
-  annotationModeBadgeEl.textContent = 'Waiting for screenshot';
   renderCanvas();
   renderAnnotationList();
   renderConfirmationCard();
   renderAgentFeedbackCard();
+  updateCaptureMeta();
+}
+
+function resetComposer() {
+  clearCaptureState();
+  sessionNoteTextarea.value = '';
+  audioNote = null;
+  revokeAudioPreviewUrl();
+  renderVoiceNoteCard();
 }
 
 function renderPermissionCard() {
+  if (permissionState === 'checking') {
+    permissionCardEl.innerHTML = '<div class="subtle-copy">Checking screen capture access…</div>';
+    return;
+  }
+
   if (permissionState === 'granted') {
     permissionCardEl.innerHTML = `
-      <div class="status" style="margin-top: 0; background: rgba(21, 128, 61, 0.08); border-color: rgba(21, 128, 61, 0.18); color: #166534;">
-        Screen capture access is enabled for this app.
+      <div class="success-card">
+        Screen capture access is enabled.
       </div>
-      <p style="margin-bottom: 0;">Debugr can open the native macOS screenshot flow and bring the captured image back here for annotation.</p>
+      <div class="subtle-copy">Debugr can take a one-shot screenshot and bring it back into the composer automatically.</div>
     `;
     return;
   }
 
   permissionCardEl.innerHTML = `
-    <p>Debugr needs macOS screen capture access before it can take a screenshot.</p>
-    <ol>
-      <li>Click <strong>Grant permission</strong> to let macOS show the screen capture prompt.</li>
-      <li>If you already denied it, open <strong>System Settings → Privacy & Security → Screen & System Audio Recording</strong>.</li>
-      <li>Enable <strong>debugr.ai</strong>, then fully quit and reopen the app.</li>
-    </ol>
-    <div class="button-row" style="margin-top: 16px;">
-      <button id="grant-permission-btn" class="primary">Grant permission</button>
-      <button id="open-permission-settings-btn" class="secondary">Open System Settings</button>
+    <div class="subtle-copy">Debugr needs access to Screen & System Audio Recording before native screenshots will work.</div>
+    <div class="tool-row">
+      <button id="grant-permission-btn" class="primary-btn primary-btn-small">Grant permission</button>
+      <button id="open-permission-settings-btn" class="secondary-btn">Open settings</button>
     </div>
   `;
 
   permissionCardEl.querySelector<HTMLButtonElement>('#grant-permission-btn')?.addEventListener('click', () => {
     void ensureScreenCapturePermission(true);
   });
-
   permissionCardEl.querySelector<HTMLButtonElement>('#open-permission-settings-btn')?.addEventListener('click', () => {
     void openPermissionSettings();
+  });
+}
+
+function renderVoiceNoteCard() {
+  if (isRecordingAudio) {
+    voiceNoteCardEl.innerHTML = `
+      <div class="voice-state voice-state-live">
+        <div class="voice-live-dot"></div>
+        Recording now. When you're done, stop and keep the clip with this screenshot.
+      </div>
+      <div class="tool-row">
+        <button id="stop-audio-btn" class="primary-btn primary-btn-small">Stop recording</button>
+      </div>
+    `;
+    voiceNoteCardEl.querySelector<HTMLButtonElement>('#stop-audio-btn')?.addEventListener('click', () => {
+      void stopAudioRecording();
+    });
+    return;
+  }
+
+  if (audioNote && audioPreviewUrl) {
+    voiceNoteCardEl.innerHTML = `
+      <div class="voice-state">
+        Voice note attached · ${formatDuration(audioNote.durationSec)}
+      </div>
+      <audio class="audio-player" controls src="${audioPreviewUrl}"></audio>
+      <div class="tool-row">
+        <button id="record-audio-btn" class="secondary-btn">Replace voice note</button>
+        <button id="remove-audio-btn" class="ghost-btn">Remove</button>
+      </div>
+    `;
+  } else {
+    voiceNoteCardEl.innerHTML = `
+      <div class="subtle-copy">Record a short voice note if speaking is faster than typing. This gets bundled into the handoff payload.</div>
+      <div class="tool-row">
+        <button id="record-audio-btn" class="secondary-btn">Record voice note</button>
+      </div>
+    `;
+  }
+
+  voiceNoteCardEl.querySelector<HTMLButtonElement>('#record-audio-btn')?.addEventListener('click', () => {
+    void startAudioRecording();
+  });
+  voiceNoteCardEl.querySelector<HTMLButtonElement>('#remove-audio-btn')?.addEventListener('click', () => {
+    removeAudioNote();
   });
 }
 
@@ -331,39 +457,41 @@ function renderConfirmationCard() {
   const target = handoffTargetSelect.value as Target;
   const targetLabel = getTargetLabel(target);
   const repoLabel = handoffContext?.repoName || handoffContext?.repoUrl || 'No linked repo configured';
-  const captureLabel = 'The screenshot you just captured on macOS';
+  const hasTextNote = sessionNoteTextarea.value.trim().length > 0;
+  const hasVoiceNote = !!audioNote;
 
   if (!screenshotImage || !screenshotDataUrl) {
     confirmationCardEl.innerHTML = `
-      <p>After you freeze a screenshot, Debugr will ask you to confirm that the view belongs to your current ${targetLabel} work and linked GitHub repo.</p>
-      <ol>
-        <li>Take a screenshot of the exact window, tab, or screen region you want to discuss.</li>
-        <li>Return here and draw one or more annotation boxes on the frozen image.</li>
-        <li>Confirm the screenshot is tied to ${repoLabel} before you send it.</li>
+      <div class="subtle-copy">Once the screenshot is loaded, confirm that this capture belongs to your active ${targetLabel} work and linked GitHub repo before sending it.</div>
+      <ol class="ordered-list">
+        <li>Take or import a screenshot.</li>
+        <li>Add box selections, typed notes, voice notes, or any combination.</li>
+        <li>Confirm the capture is in scope for ${repoLabel}.</li>
       </ol>
     `;
     return;
   }
 
   const warning = handoffContext?.warning
-    ? `<div class="recent-empty" style="margin-top: 14px; color: #9a3412; background: #fff7ed; border-color: #fdba74;">${handoffContext.warning}</div>`
+    ? `<div class="warning-card">${handoffContext.warning}</div>`
     : '';
-  const confirmationState = captureConfirmed
-    ? `<div class="status" style="margin-top: 14px; background: rgba(21, 128, 61, 0.08); border-color: rgba(21, 128, 61, 0.18); color: #166534;">Confirmed. This screenshot is in scope for ${targetLabel} and ${repoLabel}.</div>`
+  const confirmed = captureConfirmed
+    ? `<div class="success-card" style="margin-top: 12px;">Confirmed. This screenshot is ready for ${targetLabel} and ${repoLabel}.</div>`
     : '';
 
   confirmationCardEl.innerHTML = `
-    <p>Review the screenshot context before sending feedback to ${targetLabel}.</p>
-    <ol>
-      <li><strong>Captured view:</strong> ${captureLabel}</li>
-      <li><strong>Agent session:</strong> ${handoffContext?.agentSessionLabel || `Current ${targetLabel} work session`}</li>
-      <li><strong>Linked GitHub repo:</strong> ${repoLabel}${handoffContext?.repoBranch ? ` · branch ${handoffContext.repoBranch}` : ''}</li>
-    </ol>
+    <div class="subtle-copy">Review the handoff package before sending it to ${targetLabel}.</div>
+    <div class="fact-list">
+      <div><strong>Linked repo</strong><span>${repoLabel}${handoffContext?.repoBranch ? ` · ${handoffContext.repoBranch}` : ''}</span></div>
+      <div><strong>Selections</strong><span>${boxes.length} box${boxes.length === 1 ? '' : 'es'}</span></div>
+      <div><strong>Typed notes</strong><span>${hasTextNote ? 'Included' : 'Not added yet'}</span></div>
+      <div><strong>Voice note</strong><span>${hasVoiceNote ? `Included · ${formatDuration(audioNote?.durationSec ?? 0)}` : 'Not added yet'}</span></div>
+    </div>
     ${warning}
-    ${confirmationState}
-    <div class="button-row" style="margin-top: 16px;">
-      <button id="confirm-capture-btn" class="primary"${handoffContext?.ready === false ? ' disabled' : ''}>Confirm this capture</button>
-      <button id="capture-again-btn" class="secondary">Capture again</button>
+    ${confirmed}
+    <div class="tool-row" style="margin-top: 14px;">
+      <button id="confirm-capture-btn" class="primary-btn primary-btn-small"${handoffContext?.ready === false ? ' disabled' : ''}>Confirm handoff</button>
+      <button id="capture-again-btn" class="ghost-btn">Replace screenshot</button>
     </div>
   `;
 
@@ -376,58 +504,136 @@ function renderConfirmationCard() {
     appendLog('Capture confirmed for handoff', {
       target,
       repo: handoffContext?.repoName || handoffContext?.repoUrl,
-      captureUrl: captureLabel,
+      boxes: boxes.length,
     });
     renderConfirmationCard();
-    setStatus(`Capture confirmed for ${targetLabel}. Submit when you're ready to get agent feedback.`);
+    setStatus(`Handoff confirmed for ${targetLabel}. Submit when you're ready.`);
   });
 
   confirmationCardEl.querySelector<HTMLButtonElement>('#capture-again-btn')?.addEventListener('click', () => {
     clearCaptureState();
-    setStatus('Ready to capture again.');
+    setStatus('Screenshot cleared. Take or import the next one.');
   });
 }
 
 function renderAgentFeedbackCard() {
   if (!submissionResult) {
     agentFeedbackCardEl.innerHTML = `
-      <p>Once you submit, Debugr will show the immediate response from Claude or Codex here, along with the linked task and next steps.</p>
+      <div class="subtle-copy">Claude or Codex will acknowledge the handoff here after you submit the capture package.</div>
     `;
     return;
   }
 
   const currentSubmission = submissionResult;
-  const targetLabel = getTargetLabel(currentSubmission.target);
   const feedback = currentSubmission.agentFeedback;
+  const targetLabel = getTargetLabel(currentSubmission.target);
   const nextSteps = feedback?.next_steps?.length
-    ? `<ol>${feedback.next_steps.map((step) => `<li>${step}</li>`).join('')}</ol>`
+    ? `<ol class="ordered-list">${feedback.next_steps.map((step) => `<li>${step}</li>`).join('')}</ol>`
     : '';
 
   agentFeedbackCardEl.innerHTML = `
-    <div class="status" style="margin-top: 0; background: rgba(21, 128, 61, 0.08); border-color: rgba(21, 128, 61, 0.18); color: #166534;">
-      Feedback received from ${targetLabel}.
+    <div class="success-card">${targetLabel} accepted the handoff.</div>
+    <div class="subtle-copy" style="margin-top: 12px;">${feedback?.title || `${targetLabel} acknowledged the capture package`}</div>
+    <p class="body-copy">${feedback?.summary || currentSubmission.message}</p>
+    <div class="fact-list compact-facts">
+      <div><strong>Task</strong><span>${currentSubmission.taskId}</span></div>
+      <div><strong>Session</strong><span>${currentSubmission.feedbackId}</span></div>
     </div>
-    <div style="margin-top: 16px;">
-      <div style="font-weight: 800; font-size: 1.05rem; margin-bottom: 8px;">${feedback?.title || `${targetLabel} acknowledged the handoff`}</div>
-      <p style="margin: 0 0 12px; color: #475467;">${feedback?.summary || submissionResult.message}</p>
-      <div class="recent-empty" style="margin-bottom: 14px;">
-        Task <strong>${submissionResult.taskId}</strong> · Session <strong>${submissionResult.feedbackId}</strong>
-      </div>
-      ${nextSteps}
-    </div>
-    <div class="button-row" style="margin-top: 16px;">
-      <button id="open-summary-btn" class="primary">Open session summary</button>
-      <button id="new-capture-btn" class="secondary">Start another capture</button>
+    ${nextSteps}
+    <div class="tool-row" style="margin-top: 14px;">
+      <button id="open-summary-btn" class="primary-btn primary-btn-small">Open summary</button>
+      <button id="new-capture-btn" class="ghost-btn">Start over</button>
     </div>
   `;
 
   agentFeedbackCardEl.querySelector<HTMLButtonElement>('#open-summary-btn')?.addEventListener('click', () => {
     window.location.href = `http://127.0.0.1:3000/sessions/${currentSubmission.sessionId}/summary?submitted=1&target=${currentSubmission.target}`;
   });
-
   agentFeedbackCardEl.querySelector<HTMLButtonElement>('#new-capture-btn')?.addEventListener('click', () => {
-    clearCaptureState();
-    setStatus('Ready for a new capture.');
+    resetComposer();
+    setStatus('Ready for another handoff package.');
+  });
+}
+
+function renderAnnotationList() {
+  annotationListEl.innerHTML = '';
+
+  if (!screenshotImage || !screenshotDataUrl) {
+    annotationListEl.innerHTML = '<div class="empty-card">Load a screenshot first, then drag on the image to create a visual selection.</div>';
+    return;
+  }
+
+  if (boxes.length === 0) {
+    annotationListEl.innerHTML = '<div class="empty-card">No selections yet. Drag on the screenshot to create the first box.</div>';
+    return;
+  }
+
+  boxes.forEach((box, index) => {
+    const item = document.createElement('div');
+    item.className = `annotation-item${selectedBoxId === box.id ? ' annotation-item-selected' : ''}`;
+
+    const header = document.createElement('div');
+    header.className = 'annotation-header';
+
+    const titleWrap = document.createElement('div');
+    const title = document.createElement('div');
+    title.className = 'annotation-title';
+    title.textContent = `Selection ${index + 1}`;
+    const meta = document.createElement('div');
+    meta.className = 'annotation-meta';
+    meta.textContent = `${Math.round(box.x)}, ${Math.round(box.y)} · ${Math.round(box.width)}×${Math.round(box.height)}`;
+    titleWrap.append(title, meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'annotation-actions';
+    const focusButton = document.createElement('button');
+    focusButton.className = 'chip-btn';
+    focusButton.textContent = selectedBoxId === box.id ? 'Selected' : 'Select';
+    focusButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      selectedBoxId = box.id;
+      renderCanvas();
+      renderAnnotationList();
+      updateCaptureMeta();
+    });
+    const deleteButton = document.createElement('button');
+    deleteButton.className = 'chip-btn chip-btn-danger';
+    deleteButton.textContent = 'Delete';
+    deleteButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      boxes = boxes.filter((current) => current.id !== box.id);
+      if (selectedBoxId === box.id) {
+        selectedBoxId = boxes[0]?.id ?? null;
+      }
+      captureConfirmed = false;
+      appendLog('Annotation deleted', { boxId: box.id });
+      renderCanvas();
+      renderAnnotationList();
+      renderConfirmationCard();
+      updateCaptureMeta();
+    });
+    actions.append(focusButton, deleteButton);
+
+    header.append(titleWrap, actions);
+
+    const textarea = document.createElement('textarea');
+    textarea.className = 'annotation-textarea';
+    textarea.placeholder = 'What should the agent notice in this selected area?';
+    textarea.value = getPrimaryBoxNote(box);
+    textarea.addEventListener('focus', () => {
+      selectedBoxId = box.id;
+      renderCanvas();
+      updateCaptureMeta();
+    });
+    textarea.addEventListener('input', () => {
+      setPrimaryBoxNote(box, textarea.value);
+      captureConfirmed = false;
+      renderConfirmationCard();
+      updateCaptureMeta();
+    });
+
+    item.append(header, textarea);
+    annotationListEl.appendChild(item);
   });
 }
 
@@ -451,21 +657,23 @@ async function loadRecentSessions() {
     const json = (await res.json()) as { data: FeedbackSessionSummary[] };
     const sessions = Array.isArray(json.data) ? json.data.slice(0, 6) : [];
     recentSessionsEl.innerHTML = '';
+
     if (sessions.length === 0) {
-      recentSessionsEl.innerHTML = '<div class="recent-empty">No sessions yet.</div>';
+      recentSessionsEl.innerHTML = '<div class="empty-card">No sessions yet.</div>';
       return;
     }
 
     sessions.forEach((session) => {
       const button = document.createElement('button');
-      button.innerHTML = `<strong>${session.title}</strong><div class="recent-sub">Open summary</div>`;
+      button.className = 'recent-item';
+      button.innerHTML = `<strong>${session.title}</strong><span>${session.status} · ${new Date(session.createdAt).toLocaleDateString()}</span>`;
       button.addEventListener('click', () => {
         window.location.href = `http://127.0.0.1:3000/sessions/${session.id}/summary`;
       });
       recentSessionsEl.appendChild(button);
     });
   } catch (error) {
-    recentSessionsEl.innerHTML = '<div class="recent-empty">Could not load recent sessions.</div>';
+    recentSessionsEl.innerHTML = '<div class="empty-card">Could not load recent sessions.</div>';
     appendLog('Recent sessions load failed', error instanceof Error ? error.message : error);
   }
 }
@@ -491,94 +699,40 @@ function resizeCanvasToImage() {
 
 function renderCanvas() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
   if (screenshotImage) {
     ctx.drawImage(screenshotImage, 0, 0, canvas.width, canvas.height);
   } else {
-    ctx.fillStyle = '#0b1220';
-    ctx.fillRect(0, 0, canvas.width || 1280, canvas.height || 800);
+    ctx.fillStyle = '#152033';
+    ctx.fillRect(0, 0, canvas.width || 1280, canvas.height || 720);
   }
 
   boxes.forEach((box, index) => {
-    const selectedColor = box === draftBox ? '#f59e0b' : '#0f62fe';
-    ctx.strokeStyle = selectedColor;
-    ctx.lineWidth = 4;
+    const isSelected = selectedBoxId === box.id;
+    ctx.strokeStyle = isSelected ? '#1d9bf0' : '#4f8cff';
+    ctx.lineWidth = isSelected ? 5 : 3;
+    ctx.fillStyle = isSelected ? 'rgba(29, 155, 240, 0.16)' : 'rgba(79, 140, 255, 0.12)';
+    ctx.fillRect(box.x, box.y, box.width, box.height);
     ctx.strokeRect(box.x, box.y, box.width, box.height);
 
-    const label = `#${index + 1} · ${box.notes.length} note${box.notes.length === 1 ? '' : 's'}`;
-    ctx.font = 'bold 18px Geist, Inter, system-ui, sans-serif';
-    const metrics = ctx.measureText(label);
-    const labelWidth = metrics.width + 20;
+    const label = `${index + 1}`;
+    ctx.font = 'bold 16px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    const labelWidth = ctx.measureText(label).width + 16;
     const labelX = box.x;
-    const labelY = Math.max(12, box.y - 28);
-
-    ctx.fillStyle = selectedColor;
+    const labelY = Math.max(10, box.y - 26);
+    ctx.fillStyle = isSelected ? '#1d9bf0' : '#4f8cff';
     ctx.fillRect(labelX, labelY, labelWidth, 22);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(label, labelX + 10, labelY + 16);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(label, labelX + 8, labelY + 16);
   });
 
   if (draftBox) {
-    ctx.strokeStyle = '#f59e0b';
+    ctx.strokeStyle = '#1d9bf0';
     ctx.lineWidth = 3;
     ctx.setLineDash([10, 8]);
     ctx.strokeRect(draftBox.x, draftBox.y, draftBox.width, draftBox.height);
     ctx.setLineDash([]);
   }
-}
-
-function renderAnnotationList() {
-  annotationListEl.innerHTML = '';
-  if (boxes.length === 0) {
-    annotationListEl.innerHTML = '<div class="recent-empty">No boxes yet. Click and drag on the screenshot above to create the first annotation.</div>';
-    return;
-  }
-
-  boxes.forEach((box, index) => {
-    const item = document.createElement('div');
-    item.className = 'annotation-item';
-    item.innerHTML = `
-      <div class="annotation-header">
-        <div>
-          <div class="annotation-title">Box #${index + 1}</div>
-          <div class="annotation-meta">${box.notes.length} note${box.notes.length === 1 ? '' : 's'}</div>
-        </div>
-        <div class="annotation-actions">
-          <button data-action="edit">Edit</button>
-          <button data-action="delete">Delete</button>
-        </div>
-      </div>
-      <div class="annotation-notes">${box.notes
-        .map((note) => `<div class="annotation-note">${note.text}</div>`)
-        .join('')}</div>
-    `;
-
-    item.querySelector<HTMLButtonElement>('[data-action="edit"]')?.addEventListener('click', () => {
-      const next = window.prompt('Edit the box note', box.notes[0]?.text ?? '');
-      if (next === null) return;
-      const text = next.trim();
-      if (!text) {
-        setStatus('Note cannot be empty.');
-        return;
-      }
-      if (box.notes.length === 0) {
-        box.notes.push({ id: `note_${Date.now()}`, text, createdAt: new Date().toISOString() });
-      } else {
-        box.notes[0] = { ...box.notes[0], text };
-      }
-      appendLog('Annotation edited', { boxId: box.id });
-      renderCanvas();
-      renderAnnotationList();
-    });
-
-    item.querySelector<HTMLButtonElement>('[data-action="delete"]')?.addEventListener('click', () => {
-      boxes = boxes.filter((current) => current.id !== box.id);
-      appendLog('Annotation deleted', { boxId: box.id });
-      renderCanvas();
-      renderAnnotationList();
-    });
-
-    annotationListEl.appendChild(item);
-  });
 }
 
 function commitDraftBox() {
@@ -588,33 +742,22 @@ function commitDraftBox() {
     return;
   }
 
-  const noteText = window.prompt('Add a note for this area', '');
-  if (noteText === null) {
-    draftBox = null;
-    renderCanvas();
-    return;
-  }
-
-  const trimmed = noteText.trim();
-  if (!trimmed) {
-    setStatus('A note is required for each capture box.');
-    draftBox = null;
-    renderCanvas();
-    return;
-  }
-
-  draftBox.notes.push({ id: `note_${Date.now()}`, text: trimmed, createdAt: new Date().toISOString() });
   boxes.push(draftBox);
+  selectedBoxId = draftBox.id;
   captureConfirmed = false;
-  appendLog('Annotation box saved', { boxId: draftBox.id, notes: draftBox.notes.length });
+  appendLog('Annotation box created', { boxId: draftBox.id, width: draftBox.width, height: draftBox.height });
   draftBox = null;
   annotationHintEl.classList.add('annotation-hint-hidden');
   renderCanvas();
   renderAnnotationList();
   renderConfirmationCard();
+  updateCaptureMeta();
+  setStatus('Selection created. Add a note in the annotation card or keep going with session notes and voice notes.');
 }
 
 async function refreshPermissionState() {
+  permissionState = 'checking';
+  renderPermissionCard();
   const granted = await invoke<boolean>('get_screen_capture_permission');
   permissionState = granted ? 'granted' : 'needs-access';
   renderPermissionCard();
@@ -625,7 +768,7 @@ async function openPermissionSettings() {
   try {
     await invoke('open_screen_capture_settings');
     appendLog('Opened macOS screen capture settings');
-    setStatus('System Settings opened. Turn on screen capture for debugr.ai, then fully quit and reopen the app.');
+    setStatus('System Settings opened. Enable debugr.ai under Screen & System Audio Recording, then reopen the app.');
   } catch (error) {
     appendLog('Open settings failed', error instanceof Error ? error.message : error);
     setStatus(error instanceof Error ? error.message : 'Could not open System Settings.');
@@ -646,19 +789,273 @@ async function ensureScreenCapturePermission(announceWhenGranted = false) {
   renderPermissionCard();
 
   if (granted) {
-    setStatus('Screen capture permission granted. If macOS asks, fully quit and reopen the app before capturing.');
+    setStatus('Screen capture permission granted. If macOS asks for a relaunch, reopen the app before capturing.');
     appendLog('Screen capture permission granted');
     return true;
   }
 
-  setStatus('Screen capture permission is still blocked. Open System Settings → Privacy & Security → Screen & System Audio Recording, enable debugr.ai, then reopen the app.');
-  appendLog('Screen capture permission denied or not yet enabled');
+  setStatus('Screen capture is still blocked. Open System Settings, enable debugr.ai, then fully reopen the app.');
+  appendLog('Screen capture permission denied or still blocked');
   return false;
+}
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('Could not read file'));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function startAudioRecording() {
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    setStatus('Voice notes are not supported in this app environment.');
+    return;
+  }
+
+  try {
+    recorderStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recorderChunks = [];
+    recordingStartedAt = Date.now();
+    revokeAudioPreviewUrl();
+
+    const preferredType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+    mediaRecorder = preferredType ? new MediaRecorder(recorderStream, { mimeType: preferredType }) : new MediaRecorder(recorderStream);
+
+    mediaRecorder.addEventListener('dataavailable', (event) => {
+      if (event.data.size > 0) {
+        recorderChunks.push(event.data);
+      }
+    });
+
+    mediaRecorder.addEventListener('stop', async () => {
+      const durationSec = Math.max(1, (Date.now() - recordingStartedAt) / 1000);
+      const blob = new Blob(recorderChunks, { type: mediaRecorder?.mimeType || 'audio/webm' });
+      const dataUrl = await blobToDataUrl(blob);
+      revokeAudioPreviewUrl();
+      audioPreviewUrl = URL.createObjectURL(blob);
+      audioNote = {
+        mimeType: blob.type || 'audio/webm',
+        dataUrl,
+        durationSec,
+        createdAt: new Date().toISOString(),
+      };
+      recorderStream?.getTracks().forEach((track) => track.stop());
+      recorderStream = null;
+      mediaRecorder = null;
+      isRecordingAudio = false;
+      captureConfirmed = false;
+      renderVoiceNoteCard();
+      renderConfirmationCard();
+      updateCaptureMeta();
+      setStatus('Voice note attached to this capture package.');
+      appendLog('Voice note recorded', { durationSec });
+    });
+
+    mediaRecorder.start();
+    isRecordingAudio = true;
+    renderVoiceNoteCard();
+    setStatus('Recording voice note...');
+    appendLog('Voice note recording started');
+  } catch (error) {
+    recorderStream?.getTracks().forEach((track) => track.stop());
+    recorderStream = null;
+    mediaRecorder = null;
+    isRecordingAudio = false;
+    renderVoiceNoteCard();
+    appendLog('Voice note start failed', error instanceof Error ? error.message : error);
+    setStatus(error instanceof Error ? error.message : 'Could not access the microphone.');
+  }
+}
+
+async function stopAudioRecording() {
+  if (!mediaRecorder || !isRecordingAudio) return;
+  isRecordingAudio = false;
+  mediaRecorder.stop();
+  renderVoiceNoteCard();
+  setStatus('Finishing voice note...');
+}
+
+function removeAudioNote() {
+  audioNote = null;
+  revokeAudioPreviewUrl();
+  captureConfirmed = false;
+  renderVoiceNoteCard();
+  renderConfirmationCard();
+  updateCaptureMeta();
+  setStatus('Voice note removed.');
+}
+
+async function loadScreenshot(dataUrl: string, sourceLabel: string) {
+  clearCaptureState();
+  screenshotDataUrl = dataUrl;
+
+  const image = new Image();
+  screenshotImage = image;
+
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error('The selected image could not be loaded.'));
+    image.src = dataUrl;
+  });
+
+  naturalWidth = image.naturalWidth || 1440;
+  naturalHeight = image.naturalHeight || 900;
+  resizeCanvasToImage();
+  annotationToolbarEl.classList.remove('annotation-toolbar-hidden');
+  annotationHintEl.classList.remove('annotation-hint-hidden');
+  renderCanvas();
+  renderAnnotationList();
+  renderConfirmationCard();
+  updateCaptureMeta();
+  appendLog('Screenshot loaded', { source: sourceLabel, width: naturalWidth, height: naturalHeight });
+  setStatus(`${sourceLabel} ready. Drag on the image to create selections, or add typed and voice notes before sending.`);
+}
+
+async function importImageFile(file: File) {
+  const dataUrl = await blobToDataUrl(file);
+  await loadScreenshot(dataUrl, `Imported ${file.name}`);
+}
+
+async function createSession(title: string) {
+  const res = await fetch(`${API_BASE}/projects/proj_demo/feedback-sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, visibility: 'private' }),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error ?? 'Failed to create session');
+  return json.data as { id: string; title: string };
+}
+
+async function submitCapture() {
+  const title = sessionTitleInput.value.trim();
+  const target = handoffTargetSelect.value as Target;
+  const sessionNote = sessionNoteTextarea.value.trim();
+
+  if (!title) {
+    setStatus('Add a session title before submitting.');
+    return;
+  }
+  if (isRecordingAudio) {
+    setStatus('Stop the voice note recording before submitting.');
+    return;
+  }
+  if (!screenshotDataUrl || !screenshotImage) {
+    setStatus('Take or import a screenshot before submitting.');
+    return;
+  }
+  if (!hasSubmissionContent()) {
+    setStatus('Add at least one annotation, typed note, or voice note before submitting.');
+    return;
+  }
+  if (!captureConfirmed) {
+    setStatus(`Confirm that this screenshot belongs to your ${getTargetLabel(target)} work before sending it.`);
+    return;
+  }
+
+  submissionResult = null;
+  renderAgentFeedbackCard();
+  submitBtn.disabled = true;
+  captureBtn.disabled = true;
+  importImageBtn.disabled = true;
+  setStatus('Creating session and packaging the capture for the agent...');
+
+  try {
+    const session = await createSession(title);
+    const payload: CapturePayload = {
+      mode: 'native-capture',
+      captureTitle: title,
+      handoffTarget: target,
+      screenshotDataUrl,
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+      capturedAt: new Date().toISOString(),
+      sessionNote: sessionNote || undefined,
+      audioNote: audioNote || undefined,
+      boxes: boxes.map((box) => ({
+        ...box,
+        screenshot: screenshotDataUrl,
+      })),
+    };
+
+    const patchRes = await fetch(`${API_BASE}/feedback-sessions/${session.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userIntent: JSON.stringify(payload) }),
+    });
+    if (!patchRes.ok) {
+      const err = await patchRes.text();
+      throw new Error(err || 'Failed to save capture details');
+    }
+
+    const sendRes = await fetch(`${API_BASE}/feedback-sessions/${session.id}/send-to-claude`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target }),
+    });
+    if (!sendRes.ok) {
+      const err = await sendRes.text();
+      throw new Error(err || 'Failed to send session');
+    }
+
+    const json = await sendRes.json();
+    const recent = [session.id, ...getRecentSessionIds().filter((id) => id !== session.id)].slice(0, 8);
+    setRecentSessionIds(recent);
+    await loadRecentSessions();
+
+    submissionResult = {
+      sessionId: session.id,
+      taskId: json.data.task_id,
+      feedbackId: json.data.feedback_id,
+      target,
+      message: json.data.message,
+      agentFeedback: json.data.agent_feedback as AgentFeedback | undefined,
+    };
+
+    appendLog('Session submitted', {
+      sessionId: session.id,
+      taskId: json.data.task_id,
+      target,
+      boxes: boxes.length,
+      hasSessionNote: !!sessionNote,
+      hasAudioNote: !!audioNote,
+    });
+    setStatus(`Feedback received from ${getTargetLabel(target)}. Review the response or open the session summary.`);
+    renderAgentFeedbackCard();
+  } catch (error) {
+    appendLog('Submit failed', error instanceof Error ? error.message : error);
+    setStatus(error instanceof Error ? error.message : 'Failed to submit capture');
+  } finally {
+    submitBtn.disabled = false;
+    captureBtn.disabled = false;
+    importImageBtn.disabled = false;
+  }
+}
+
+async function startScreenCapture() {
+  try {
+    const granted = await ensureScreenCapturePermission();
+    if (!granted) return;
+    captureBtn.disabled = true;
+    importImageBtn.disabled = true;
+    setStatus('Opening the macOS screenshot tool...');
+    appendLog('Starting native screenshot capture');
+    const dataUrl = await invoke<string>('capture_interactive_screenshot');
+    await loadScreenshot(dataUrl, 'Screenshot');
+  } catch (error) {
+    appendLog('Capture failed', error instanceof Error ? error.message : error);
+    setStatus('Screenshot capture did not complete. If the app loses focus, use Import image and continue from there.');
+  } finally {
+    captureBtn.disabled = false;
+    importImageBtn.disabled = false;
+  }
 }
 
 canvas.addEventListener('pointerdown', (event) => {
   if (!screenshotImage) {
-    setStatus('Capture the screen first.');
+    setStatus('Load a screenshot before creating a selection.');
     return;
   }
   drawing = true;
@@ -673,7 +1070,7 @@ canvas.addEventListener('pointerdown', (event) => {
     notes: [],
   };
   canvas.setPointerCapture(event.pointerId);
-  appendLog('Box draw started', { x: Math.round(point.x), y: Math.round(point.y) });
+  appendLog('Selection started', { x: Math.round(point.x), y: Math.round(point.y) });
 });
 
 canvas.addEventListener('pointermove', (event) => {
@@ -693,7 +1090,6 @@ canvas.addEventListener('pointerup', (event) => {
   if (!drawing) return;
   drawing = false;
   startPoint = null;
-  appendLog('Box draw finished');
   commitDraftBox();
   canvas.releasePointerCapture(event.pointerId);
 });
@@ -705,158 +1101,30 @@ canvas.addEventListener('pointercancel', () => {
   renderCanvas();
 });
 
-async function createSession(title: string) {
-  const res = await fetch(`${API_BASE}/projects/proj_demo/feedback-sessions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, visibility: 'private' }),
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error ?? 'Failed to create session');
-  return json.data as { id: string; title: string };
-}
-
-async function submitCapture() {
-  const title = sessionTitleInput.value.trim();
-  const target = handoffTargetSelect.value as Target;
-
-  if (!title) {
-    setStatus('Enter a session title first.');
-    return;
-  }
-  if (!screenshotDataUrl || !screenshotImage) {
-    setStatus('Capture the screen before submitting.');
-    return;
-  }
-  if (boxes.length === 0) {
-    setStatus('Add at least one annotation box.');
-    return;
-  }
-  if (!captureConfirmed) {
-    setStatus(`Confirm that this screenshot belongs to your ${getTargetLabel(target)} work before sending it.`);
-    return;
-  }
-
-  submissionResult = null;
-  renderAgentFeedbackCard();
-  submitBtn.disabled = true;
-  captureBtn.disabled = true;
-  setStatus('Creating session and saving annotations...');
-
-  try {
-    const session = await createSession(title);
-    const payload: CapturePayload = {
-      mode: 'native-capture',
-      captureTitle: title,
-      handoffTarget: target,
-      screenshotDataUrl,
-      canvasWidth: canvas.width,
-      canvasHeight: canvas.height,
-      capturedAt: new Date().toISOString(),
-      boxes: boxes.map((box) => ({
-        ...box,
-        screenshot: screenshotDataUrl,
-      })),
-    };
-
-    const patchRes = await fetch(`${API_BASE}/feedback-sessions/${session.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userIntent: JSON.stringify(payload) }),
-    });
-    if (!patchRes.ok) {
-      const err = await patchRes.text();
-      throw new Error(err || 'Failed to save annotations');
-    }
-
-    const sendRes = await fetch(`${API_BASE}/feedback-sessions/${session.id}/send-to-claude`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target }),
-    });
-    if (!sendRes.ok) {
-      const err = await sendRes.text();
-      throw new Error(err || 'Failed to send session');
-    }
-
-    const json = await sendRes.json();
-    const recent = [session.id, ...getRecentSessionIds().filter((id) => id !== session.id)].slice(0, 8);
-    setRecentSessionIds(recent);
-    await loadRecentSessions();
-    submissionResult = {
-      sessionId: session.id,
-      taskId: json.data.task_id,
-      feedbackId: json.data.feedback_id,
-      target,
-      message: json.data.message,
-      agentFeedback: json.data.agent_feedback as AgentFeedback | undefined,
-    };
-    setStatus(`Feedback received from ${getTargetLabel(target)}. Review the response and open the session summary if needed.`);
-    appendLog('Session submitted', { sessionId: session.id, taskId: json.data.task_id, target });
-    renderAgentFeedbackCard();
-  } catch (error) {
-    setStatus(error instanceof Error ? error.message : 'Failed to submit capture');
-    appendLog('Submit failed', error instanceof Error ? error.message : error);
-  } finally {
-    submitBtn.disabled = false;
-    captureBtn.disabled = false;
-  }
-}
-
-async function startScreenCapture() {
-  try {
-    const granted = await ensureScreenCapturePermission();
-    if (!granted) return;
-    captureBtn.disabled = true;
-    setStatus('Opening the macOS screenshot tool...');
-    appendLog('Starting native screenshot capture');
-    screenshotDataUrl = await invoke<string>('capture_interactive_screenshot');
-    boxes = [];
-    draftBox = null;
-    captureConfirmed = false;
-    submissionResult = null;
-    renderAgentFeedbackCard();
-    renderAnnotationList();
-    renderConfirmationCard();
-
-    screenshotImage = new Image();
-    screenshotImage.onload = () => {
-      naturalWidth = screenshotImage?.naturalWidth || 1440;
-      naturalHeight = screenshotImage?.naturalHeight || 900;
-      resizeCanvasToImage();
-      annotationToolbarEl.classList.remove('annotation-toolbar-hidden');
-      annotationHintEl.classList.toggle('annotation-hint-hidden', boxes.length > 0);
-      annotationModeBadgeEl.textContent = 'Box annotation mode';
-      renderCanvas();
-      renderAnnotationList();
-      renderConfirmationCard();
-      appendLog('Screenshot captured', { width: naturalWidth, height: naturalHeight });
-      setStatus(
-        `Screenshot captured. Add notes, then confirm it belongs to your ${getTargetLabel(handoffTargetSelect.value as Target)} work before sending it.`
-      );
-    };
-    screenshotImage.onerror = () => {
-      screenshotImage = null;
-      screenshotDataUrl = '';
-      annotationToolbarEl.classList.add('annotation-toolbar-hidden');
-      annotationHintEl.classList.add('annotation-hint-hidden');
-      annotationModeBadgeEl.textContent = 'Waiting for screenshot';
-      setStatus('The screenshot was captured, but Debugr could not load it.');
-      appendLog('Screenshot image load failed');
-    };
-    screenshotImage.src = screenshotDataUrl;
-  } catch (error) {
-    appendLog('Capture failed', error instanceof Error ? error.message : error);
-    setStatus(
-      error instanceof Error ? error.message : 'Could not capture the screen. Check Screen Recording permission and try again.'
-    );
-  } finally {
-    captureBtn.disabled = false;
-  }
-}
-
 captureBtn.addEventListener('click', () => {
   void startScreenCapture();
+});
+
+importImageBtn.addEventListener('click', () => {
+  imageFileInput.click();
+});
+
+imageFileInput.addEventListener('change', () => {
+  const file = imageFileInput.files?.[0];
+  if (!file) return;
+  void importImageFile(file)
+    .catch((error) => {
+      appendLog('Image import failed', error instanceof Error ? error.message : error);
+      setStatus(error instanceof Error ? error.message : 'Could not import the selected image.');
+    })
+    .finally(() => {
+      imageFileInput.value = '';
+    });
+});
+
+resetCaptureBtn.addEventListener('click', () => {
+  clearCaptureState();
+  setStatus('Capture cleared. Take a new screenshot or import another image.');
 });
 
 submitBtn.addEventListener('click', () => {
@@ -872,6 +1140,9 @@ handoffTargetSelect.addEventListener('change', () => {
     appendLog('Handoff context failed', error instanceof Error ? error.message : error);
     setStatus(error instanceof Error ? error.message : 'Could not load linked repo information.');
   });
+});
+
+sessionNoteTextarea.addEventListener('input', () => {
   captureConfirmed = false;
   renderConfirmationCard();
 });
@@ -891,12 +1162,14 @@ if (recentIds.length > 0) {
 
 void (async () => {
   renderPermissionCard();
-  await refreshPermissionState();
-  await loadRecentSessions();
-  await loadHandoffContext(handoffTargetSelect.value as Target);
+  renderVoiceNoteCard();
   renderCanvas();
   renderAnnotationList();
   renderConfirmationCard();
   renderAgentFeedbackCard();
+  updateCaptureMeta();
+  await refreshPermissionState();
+  await loadRecentSessions();
+  await loadHandoffContext(handoffTargetSelect.value as Target);
   appendLog('Desktop capture app ready');
 })();
