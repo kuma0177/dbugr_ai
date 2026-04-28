@@ -27,12 +27,12 @@
         "label": "overlay",
         "title": "Debugr Annotation",
         "url": "http://127.0.0.1:5173/overlay.html",
-        "transparent": true,
         "decorations": false,
         "alwaysOnTop": true,
         "visible": false,
         "resizable": false,
         "skipTaskbar": true,
+        "fullscreen": false,
         "width": 2560,
         "height": 1600,
         "x": 0,
@@ -41,7 +41,7 @@
     ]
   },
   "plugins": {
-    "global-shortcut": {}
+    "global-shortcut": null
   },
   "bundle": {
     "active": true,

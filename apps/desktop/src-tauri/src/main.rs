@@ -4,7 +4,9 @@ use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+// ── CoreGraphics for screen-capture permissions ───────────────────────────────
 
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
@@ -20,7 +22,7 @@ fn temp_capture_path() -> PathBuf {
     std::env::temp_dir().join(format!("debugr-capture-{stamp}.png"))
 }
 
-// ── Permission commands ──────────────────────────────────────────────────────
+// ── Permission commands ───────────────────────────────────────────────────────
 
 #[tauri::command]
 fn get_screen_capture_permission() -> bool {
@@ -37,69 +39,63 @@ fn open_screen_capture_settings() -> Result<(), String> {
     Command::new("open")
         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
         .status()
-        .map_err(|e| format!("Failed to open System Settings: {e}"))?;
+        .map_err(|e| format!("Failed: {e}"))?;
     Ok(())
 }
 
-// ── Screenshot commands ──────────────────────────────────────────────────────
+// ── Screenshot helpers ────────────────────────────────────────────────────────
 
 fn encode_image_at(path: &PathBuf) -> Result<String, String> {
-    let encoded = Command::new("base64")
-        .arg("-i")
-        .arg(path)
+    let out = Command::new("base64")
+        .arg("-i").arg(path)
         .output()
-        .map_err(|e| format!("base64 encoding failed: {e}"))?;
+        .map_err(|e| format!("base64 failed: {e}"))?;
     let _ = fs::remove_file(path);
-    if !encoded.status.success() {
-        return Err("base64 encoding returned an error".to_string());
-    }
-    let body = String::from_utf8(encoded.stdout)
-        .map_err(|e| format!("Invalid UTF-8 from base64: {e}"))?
+    let body = String::from_utf8(out.stdout)
+        .map_err(|e| format!("UTF-8 error: {e}"))?
         .replace('\n', "");
     Ok(format!("data:image/png;base64,{body}"))
 }
 
-/// Take a silent full-screen screenshot (used before showing the overlay)
-#[tauri::command]
-fn capture_screen(app: AppHandle) -> Result<String, String> {
+/// Silent full-screen screenshot — used internally before showing overlay.
+fn take_silent_screenshot() -> Result<String, String> {
     let path = temp_capture_path();
-    let status = Command::new("screencapture")
+    let ok = Command::new("screencapture")
         .args(["-x", "-t", "png"])
         .arg(&path)
         .status()
-        .map_err(|e| format!("screencapture failed: {e}"))?;
-
-    if !status.success() || !path.exists() {
-        return Err("Screenshot failed.".to_string());
+        .map_err(|e| format!("screencapture failed: {e}"))?
+        .success();
+    if !ok || !path.exists() {
+        return Err("Screenshot failed".into());
     }
     encode_image_at(&path)
 }
 
-/// Interactive screenshot tool (for manual capture in session view)
+/// Interactive screenshot (used from session window).
 #[tauri::command]
 fn capture_interactive_screenshot(app: AppHandle) -> Result<String, String> {
     let path = temp_capture_path();
-    let status = Command::new("screencapture")
+    let ok = Command::new("screencapture")
         .args(["-i", "-x"])
         .arg(&path)
         .status()
-        .map_err(|e| format!("screencapture failed: {e}"))?;
-
-    if !status.success() || !path.exists() {
-        return Err("Screenshot was cancelled.".to_string());
+        .map_err(|e| format!("screencapture failed: {e}"))?
+        .success();
+    if !ok || !path.exists() {
+        return Err("Screenshot cancelled".into());
     }
-
-    let data_url = encode_image_at(&path)?;
-
+    let url = encode_image_at(&path)?;
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
         let _ = win.set_focus();
     }
-    Ok(data_url)
+    Ok(url)
 }
 
-// ── Window management commands ───────────────────────────────────────────────
+// ── Window management commands ────────────────────────────────────────────────
 
+/// Called from frontend (tray Sessions menu or "New Annotation" button).
 #[tauri::command]
 fn show_overlay(app: AppHandle) -> Result<(), String> {
     trigger_overlay(&app);
@@ -117,7 +113,6 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn show_session_window(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
-        // Emit event to switch to session mode before showing
         let _ = win.emit("enter-session-mode", ());
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
@@ -133,55 +128,67 @@ fn hide_main_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// ── Internal helpers ─────────────────────────────────────────────────────────
+// ── Core: trigger annotation overlay ─────────────────────────────────────────
 
 fn trigger_overlay(app: &AppHandle) {
+    // If already visible, hide it (toggle)
     if let Some(overlay) = app.get_webview_window("overlay") {
-        let is_visible = overlay.is_visible().unwrap_or(false);
-        if is_visible {
+        if overlay.is_visible().unwrap_or(false) {
             let _ = overlay.hide();
-        } else {
+            return;
+        }
+    }
+
+    // Capture the screen in a background thread so we don't block the shortcut handler
+    let app = app.clone();
+    std::thread::spawn(move || {
+        // Small delay so the Debugr window has time to hide if needed
+        std::thread::sleep(std::time::Duration::from_millis(80));
+
+        let screenshot = take_silent_screenshot();
+
+        if let Some(overlay) = app.get_webview_window("overlay") {
+            // Send screenshot (or empty string on failure) to overlay frontend
+            match screenshot {
+                Ok(data_url) => { let _ = overlay.emit("set-screenshot", data_url); }
+                Err(e) => {
+                    eprintln!("Screenshot failed: {e}");
+                    let _ = overlay.emit("set-screenshot", String::new());
+                }
+            }
             let _ = overlay.show();
             let _ = overlay.set_focus();
         }
-    }
+    });
 }
 
-// ── Entry point ──────────────────────────────────────────────────────────────
+// ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             // ── Tray menu ──────────────────────────────────────────────────
-            let annotate = MenuItemBuilder::new("New Annotation")
-                .id("annotate")
-                .build(app)?;
+            let annotate = MenuItemBuilder::new("New Annotation  ⌘⌥A")
+                .id("annotate").build(app)?;
             let sessions = MenuItemBuilder::new("Sessions")
-                .id("sessions")
-                .build(app)?;
-            let settings = MenuItemBuilder::new("Settings")
-                .id("settings")
-                .enabled(false)
-                .build(app)?;
+                .id("sessions").build(app)?;
             let quit = MenuItemBuilder::new("Quit Debugr")
-                .id("quit")
-                .build(app)?;
+                .id("quit").build(app)?;
 
             let menu = MenuBuilder::new(app)
                 .item(&annotate)
                 .item(&sessions)
                 .separator()
-                .item(&settings)
                 .item(&quit)
                 .build()?;
 
             let _tray = TrayIconBuilder::new()
                 .menu(&menu)
-                .tooltip("Debugr — Press ⌘⌥A to annotate")
+                .tooltip("Debugr — ⌘⌥A to annotate")
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "annotate" => trigger_overlay(app),
-                    "sessions" => {
+                    "annotate"  => trigger_overlay(app),
+                    "sessions"  => {
                         if let Some(win) = app.get_webview_window("main") {
                             let _ = win.emit("enter-session-mode", ());
                             let _ = win.show();
@@ -195,10 +202,15 @@ fn main() {
 
             // ── Global shortcut ⌘⌥A ───────────────────────────────────────
             let handle = app.handle().clone();
-            app.global_shortcut()
-                .on_shortcut("cmd+alt+a", move |_, _, _| {
-                    trigger_overlay(&handle);
-                })?;
+            app.global_shortcut().on_shortcut(
+                "Cmd+Alt+A",
+                move |_app, _shortcut, event| {
+                    // Only fire on key-down, not key-up
+                    if event.state == ShortcutState::Pressed {
+                        trigger_overlay(&handle);
+                    }
+                },
+            )?;
 
             Ok(())
         })
@@ -206,7 +218,6 @@ fn main() {
             get_screen_capture_permission,
             request_screen_capture_permission,
             open_screen_capture_settings,
-            capture_screen,
             capture_interactive_screenshot,
             show_overlay,
             hide_overlay,
