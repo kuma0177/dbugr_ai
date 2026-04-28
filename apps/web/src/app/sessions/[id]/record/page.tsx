@@ -663,7 +663,8 @@ function RecordPageInner() {
               <div style={{ position: 'absolute', inset: 0, backgroundImage: 'radial-gradient(circle, #334155 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
             )}
 
-            {loadedUrl && (
+            {/* For localhost URLs, load in iframe. For external sites, skip iframe and show bookmarklet flow immediately */}
+            {loadedUrl && !looksExternallyHosted(loadedUrl) && (
               <iframe
                 ref={iframeRef}
                 key={loadedUrl}
@@ -672,24 +673,25 @@ function RecordPageInner() {
                 sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
                 title="Page being annotated"
                 onLoad={() => {
-                  if (!looksExternallyHosted(loadedUrl)) {
-                    setIframeLikelyBlocked(false);
-                  }
+                  setIframeLikelyBlocked(false);
                 }}
               />
             )}
 
-            {iframeLikelyBlocked && (
+            {/* Show bookmarklet flow for external URLs or when local iframe is blocked */}
+            {(looksExternallyHosted(loadedUrl) || iframeLikelyBlocked) && loadedUrl && (
               <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(15,23,42,0.92)', zIndex: 5 }}>
                 <div style={{ width: 'min(560px, calc(100% - 40px))', background: '#fff', color: '#0f172a', borderRadius: 20, boxShadow: '0 30px 80px rgba(0,0,0,0.45)', padding: '28px 30px' }}>
-                  <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#dc2626', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
-                    This site blocks embedding
+                  <div style={{ fontSize: '0.75rem', fontWeight: 800, color: '#6366f1', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
+                    {looksExternallyHosted(loadedUrl) ? 'Annotate on the real page' : 'This site blocks embedding'}
                   </div>
                   <div style={{ fontSize: '1.15rem', fontWeight: 800, marginBottom: 10 }}>
-                    {loadedUrl} can't be previewed here
+                    {looksExternallyHosted(loadedUrl) ? 'Ready to go' : `${loadedUrl} can't be previewed here`}
                   </div>
                   <div style={{ fontSize: '0.9rem', color: '#475569', lineHeight: 1.65, marginBottom: 22 }}>
-                    Many sites send <code style={{ background: '#f1f5f9', padding: '1px 5px', borderRadius: 4 }}>X-Frame-Options</code> headers that block in-app iframes. Use the 2-step workaround below — it only takes seconds.
+                    {looksExternallyHosted(loadedUrl)
+                      ? `Open ${new URL(loadedUrl).hostname} in a new tab, then click the FeedbackAgent bookmarklet from your bookmarks bar. The overlay will activate on that real page — already linked to this session.`
+                      : 'Many sites send X-Frame-Options headers that block in-app iframes. Use the 2-step workaround below — it only takes seconds.'}
                   </div>
 
                   <div style={{ display: 'grid', gap: 14 }}>
@@ -731,7 +733,7 @@ function RecordPageInner() {
                           onClick={() => window.open(loadedUrl, '_blank', 'noopener,noreferrer')}
                           style={{ padding: '9px 18px', borderRadius: 9, background: '#0f172a', color: '#f8fafc', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 13 }}
                         >
-                          Open {loadedUrl} ↗
+                          Open {(() => { try { return new URL(loadedUrl).hostname; } catch { return loadedUrl; } })()} ↗
                         </button>
                         <div style={{ fontSize: 12, color: '#64748b', marginTop: 6, lineHeight: 1.5 }}>
                           Once the page loads, click <strong>⬡ FeedbackAgent</strong> in your bookmarks bar. The overlay will appear on that real page — already linked to this session.
