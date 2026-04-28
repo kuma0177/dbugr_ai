@@ -15,11 +15,28 @@
     },
     "windows": [
       {
+        "label": "main",
         "title": "debugr.ai",
-        "width": 1320,
-        "height": 920,
-        "resizable": true,
-        "fullscreen": false
+        "width": 420,
+        "height": 460,
+        "resizable": false,
+        "center": true,
+        "visible": true
+      },
+      {
+        "label": "overlay",
+        "title": "Debugr Annotation",
+        "url": "http://127.0.0.1:5173/overlay.html",
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "visible": false,
+        "resizable": false,
+        "skipTaskbar": true,
+        "width": 2560,
+        "height": 1600,
+        "x": 0,
+        "y": 0
       }
     ]
   },
@@ -29,6 +46,7 @@
   "bundle": {
     "active": true,
     "targets": ["dmg"],
+    "icon": ["icons/icon.png"],
     "macOS": {
       "minimumSystemVersion": "13.0"
     }

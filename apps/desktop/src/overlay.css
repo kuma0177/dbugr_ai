@@ -1,0 +1,325 @@
+/* ── Reset & base ───────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --blue:      #1d9bf0;
+  --blue2:     #0f6dfd;
+  --blue-dark: #095bd8;
+  --blue-soft: rgba(15, 109, 253, 0.14);
+  --green:     #16a34a;
+  --border:    rgba(219, 229, 242, 0.72);
+  --text:      #0f172a;
+  --muted:     #64748b;
+  --shadow:    0 12px 32px rgba(15, 23, 42, 0.18);
+  --shadow-lg: 0 24px 70px rgba(15, 23, 42, 0.22);
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+    "SF Pro Text", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+/* ── Root overlay ───────────────────────────────────────────────────────── */
+#overlay-root {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
+  cursor: crosshair;
+}
+
+/* ── Toast ──────────────────────────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px 9px 12px;
+  border: 1px solid rgba(219, 229, 242, 0.7);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  color: var(--muted);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 100;
+}
+
+.toast kbd {
+  min-width: 22px;
+  padding: 3px 6px;
+  border: 1px solid #cbd5e1;
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: #fff;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+/* ── Floating annotation toolbar ────────────────────────────────────────── */
+.toolbar {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: var(--shadow-lg);
+  z-index: 200;
+}
+
+.tool-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  height: 42px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 120ms ease;
+  user-select: none;
+}
+
+.tool-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.tool-btn.active {
+  border-color: rgba(29, 155, 240, 0.6);
+  background: rgba(29, 155, 240, 0.22);
+  color: #60b9ff;
+}
+
+.tool-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.45);
+  margin-top: 2px;
+  letter-spacing: 0.02em;
+}
+
+.tool-btn.active .tool-label { color: rgba(96, 185, 255, 0.8); }
+
+.tool-btn.cancel {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+}
+
+.tool-btn.save-btn {
+  min-width: 64px;
+  background: linear-gradient(135deg, #208cff, var(--blue2));
+  border-color: transparent;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 650;
+  box-shadow: 0 6px 16px rgba(15, 109, 253, 0.35);
+}
+
+.tool-btn.save-btn:hover {
+  background: linear-gradient(135deg, #3a9dff, #2078ff);
+  transform: translateY(-1px);
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.12);
+  margin: 0 2px;
+}
+
+/* ── Annotation pin ─────────────────────────────────────────────────────── */
+.ann-pin {
+  position: fixed;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2.5px solid #fff;
+  background: var(--blue2);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(15, 109, 253, 0.5);
+  cursor: pointer;
+  z-index: 300;
+  transform: translate(-50%, -50%);
+  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: auto;
+}
+
+.ann-pin:hover { transform: translate(-50%, -50%) scale(1.12); }
+
+/* ── Highlight rect ─────────────────────────────────────────────────────── */
+.ann-highlight {
+  position: fixed;
+  border: 2px solid var(--blue2);
+  border-radius: 8px;
+  background: rgba(15, 109, 253, 0.10);
+  box-shadow: 0 0 0 4px rgba(15, 109, 253, 0.10);
+  pointer-events: none;
+  z-index: 250;
+}
+
+/* ── Connector line (SVG) ───────────────────────────────────────────────── */
+.ann-connector {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 260;
+  overflow: visible;
+}
+
+/* ── Note card ──────────────────────────────────────────────────────────── */
+.note-card {
+  position: fixed;
+  width: 260px;
+  padding: 14px;
+  border: 1px solid rgba(219, 229, 242, 0.9);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: var(--shadow-lg);
+  z-index: 310;
+  pointer-events: auto;
+  animation: card-appear 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes card-appear {
+  from { opacity: 0; transform: scale(0.9) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.note-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.note-card-head strong { color: var(--text); font-weight: 700; }
+.note-card-head span   { color: var(--muted); }
+
+.note-card textarea {
+  width: 100%;
+  height: 76px;
+  padding: 9px 10px;
+  border: 1px solid rgba(219, 229, 242, 0.9);
+  border-radius: 9px;
+  background: #f9fbff;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+}
+
+.note-card textarea:focus {
+  border-color: rgba(29, 155, 240, 0.5);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(29, 155, 240, 0.1);
+}
+
+.note-card textarea::placeholder { color: #94a3b8; }
+
+/* ── Tag chips ──────────────────────────────────────────────────────────── */
+.chips {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
+.chip {
+  padding: 4px 9px;
+  border: 1px solid rgba(219, 229, 242, 0.9);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 120ms ease;
+  font-family: inherit;
+}
+
+.chip:hover { border-color: rgba(29, 155, 240, 0.4); color: var(--blue2); }
+
+.chip.active {
+  border-color: rgba(29, 155, 240, 0.55);
+  background: #e7f2ff;
+  color: var(--blue-dark);
+  font-weight: 600;
+}
+
+/* ── Save annotation button ─────────────────────────────────────────────── */
+.save-ann-btn {
+  width: 100%;
+  height: 36px;
+  margin-top: 4px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #208cff, var(--blue2));
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(15, 109, 253, 0.28);
+  font-family: inherit;
+  transition: all 120ms ease;
+}
+
+.save-ann-btn:hover {
+  background: linear-gradient(135deg, #3a9dff, #2078ff);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(15, 109, 253, 0.35);
+}
+
+/* ── Annotation count badge ─────────────────────────────────────────────── */
+.ann-counter {
+  position: fixed;
+  top: 22px;
+  right: 28px;
+  padding: 6px 14px;
+  border: 1px solid rgba(22, 163, 74, 0.3);
+  border-radius: 999px;
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 100;
+  display: none;
+}
+
+.ann-counter.visible { display: block; }
