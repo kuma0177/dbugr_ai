@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "FeedbackAgent Auto Overlay",
+  "version": "0.1.0",
+  "description": "Automatically inject FeedbackAgent overlay on launched debug tabs.",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://localhost:3001/*",
+    "http://localhost:3000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

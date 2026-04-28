@@ -39,7 +39,7 @@ async function main() {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  const [{ feedbackSessionRouter }, { commentsRouter }, { tasksRouter }, { integrationsRouter }, { liveSessionsRouter }, { systemRouter }] =
+  const [{ feedbackSessionRouter }, { commentsRouter }, { tasksRouter }, { integrationsRouter }, { liveSessionsRouter }, { systemRouter }, { overlayAutomationRouter }] =
     await Promise.all([
       import('./routes/feedbackSessions'),
       import('./routes/comments'),
@@ -47,6 +47,7 @@ async function main() {
       import('./routes/integrations'),
       import('./routes/liveSessions'),
       import('./routes/system'),
+      import('./routes/overlayAutomation'),
     ]);
 
   app.use('/api', feedbackSessionRouter);
@@ -55,6 +56,7 @@ async function main() {
   app.use('/api', integrationsRouter);
   app.use('/api', liveSessionsRouter);
   app.use('/api', systemRouter);
+  app.use('/api', overlayAutomationRouter);
 
   // Compatibility mount for older local browser bundles that still call /api/api/...
   app.use('/api/api', feedbackSessionRouter);
@@ -63,6 +65,7 @@ async function main() {
   app.use('/api/api', integrationsRouter);
   app.use('/api/api', liveSessionsRouter);
   app.use('/api/api', systemRouter);
+  app.use('/api/api', overlayAutomationRouter);
 
   app.get('/health', (_req, res) => {
     res.json({ ok: true });

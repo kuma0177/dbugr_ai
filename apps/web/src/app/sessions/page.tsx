@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import { buildOverlayBookmarklet, type OverlayTarget } from '@/lib/overlayBookmarklet';
@@ -37,6 +37,7 @@ export default function SessionsPage() {
   const [tabsError, setTabsError] = useState('');
   const [handoffTarget, setHandoffTarget] = useState<OverlayTarget>('claude');
   const [creatingSession, setCreatingSession] = useState(false);
+  const bookmarkletLinkRef = useRef<HTMLAnchorElement>(null);
 
   async function loadSessions() {
     try {
@@ -116,25 +117,44 @@ export default function SessionsPage() {
     }
 
     setCreatingSession(true);
+    const normalizedUrl = normalizeUrl(targetUrl);
+    // Open target page immediately inside the click gesture so popup blockers
+    // allow it and users don't get stuck on an empty about:blank tab.
+    const popup = window.open(normalizedUrl, '_blank');
+
     try {
-      const normalizedUrl = normalizeUrl(targetUrl);
       const session = await api.sessions.create('proj_demo', {
         title: title.trim(),
         visibility: 'private',
       });
+
+      // Queue automatic overlay injection command for extension-based auto mode.
+      try {
+        await fetch(`${API_BASE}/overlay/launch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: session.id,
+            title: title.trim(),
+            target: handoffTarget,
+            url: normalizedUrl,
+          }),
+        });
+      } catch (error) {
+        console.warn('[sessions] overlay launch queue failed', error);
+      }
 
       const nextRecentUrls = [normalizedUrl, ...recentUrls.filter((entry) => entry !== normalizedUrl)].slice(0, 6);
       localStorage.setItem(RECENT_URLS_KEY, JSON.stringify(nextRecentUrls));
       setRecentUrls(nextRecentUrls);
 
       closeCreateModal();
-      // Navigate to the record page with the target URL pre-loaded.
-      // The annotation overlay is already there — no bookmarklet needed.
       router.push(
-        `/sessions/${session.id}/record?url=${encodeURIComponent(normalizedUrl)}&target=${handoffTarget}`,
+        `/sessions/${session.id}/launch?url=${encodeURIComponent(normalizedUrl)}&target=${handoffTarget}`,
       );
     } catch (err) {
       console.error('[sessions] Create error:', err);
+      if (popup && !popup.closed) popup.close();
       const msg = err instanceof Error ? err.message : String(err);
       alert(`Failed to create session: ${msg}\n\nCheck that the API server is running at http://localhost:3001`);
       setCreatingSession(false);
@@ -144,6 +164,13 @@ export default function SessionsPage() {
   // Build bookmarklet href (must be a single expression, no newlines)
   const webOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
   const bookmarkletHref = buildOverlayBookmarklet({ webOrigin });
+
+  useEffect(() => {
+    // React/Next sanitize javascript: href values. Set it imperatively so the bookmarklet remains functional.
+    if (bookmarkletLinkRef.current) {
+      bookmarkletLinkRef.current.setAttribute('href', bookmarkletHref);
+    }
+  }, [bookmarkletHref]);
 
   return (
     <main style={{ maxWidth: 1200, margin: '0 auto', padding: '24px' }}>
@@ -174,11 +201,19 @@ export default function SessionsPage() {
           <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.5 }}>
             Drag <strong style={{ color: '#818cf8' }}>⬡ FeedbackAgent</strong> to your bookmarks bar once, then click it on any page to launch the real-page overlay without leaving that product tab.
           </div>
+          <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: 4 }}>
+            If you saved an older launcher before today, delete it and drag this one again.
+          </div>
         </div>
         {/* Draggable bookmarklet */}
         <a
-          href={bookmarkletHref}
+          ref={bookmarkletLinkRef}
+          href="#"
           onClick={e => e.preventDefault()}
+          onDragStart={(e) => {
+            e.dataTransfer.setData('text/uri-list', bookmarkletHref);
+            e.dataTransfer.setData('text/plain', bookmarkletHref);
+          }}
           draggable
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 6,

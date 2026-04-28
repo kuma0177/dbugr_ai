@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { buildOverlayBookmarklet } from '@/lib/overlayBookmarklet';
 
 interface Note {
@@ -117,11 +117,13 @@ async function captureBoxScreenshot(
 
 function RecordPageInner() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const sessionStartTime = useRef(Date.now());
   const overlayRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const bookmarkletLinkRef = useRef<HTMLAnchorElement>(null);
   const speechRecRef = useRef<BrowserSpeechRecognition | null>(null);
   const voiceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -148,6 +150,7 @@ function RecordPageInner() {
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [fetchedTitle, setFetchedTitle] = useState('');
+  const [redirectingToLaunch, setRedirectingToLaunch] = useState(false);
 
   useEffect(() => {
     setRecentUrls(getRecentUrls());
@@ -192,6 +195,27 @@ function RecordPageInner() {
     return () => window.clearTimeout(timeout);
   }, [loadedUrl]);
 
+  useEffect(() => {
+    const initialUrl = searchParams?.get('url') ?? '';
+    if (!initialUrl) return;
+    if (!looksExternallyHosted(initialUrl)) return;
+
+    const targetParam = searchParams?.get('target');
+    const target = targetParam === 'codex' ? 'codex' : 'claude';
+    setRedirectingToLaunch(true);
+    router.replace(
+      `/sessions/${id}/launch?url=${encodeURIComponent(initialUrl)}&target=${target}`,
+    );
+  }, [id, router, searchParams]);
+
+  if (redirectingToLaunch) {
+    return (
+      <div style={{ minHeight: '70vh', display: 'grid', placeItems: 'center', color: '#94a3b8' }}>
+        Redirecting to overlay launch...
+      </div>
+    );
+  }
+
   const selectedBox = boxes.find((box) => box.id === selectedBoxId) ?? null;
 
   // Session-specific bookmarklet — pre-configured so clicking it on any page
@@ -200,6 +224,13 @@ function RecordPageInner() {
     const webOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
     return buildOverlayBookmarklet({ webOrigin, sessionId: id, title: fetchedTitle, target: handoffTarget });
   }, [id, fetchedTitle, handoffTarget]);
+
+  useEffect(() => {
+    // React/Next sanitize javascript: href values. Set it imperatively so the bookmarklet remains functional.
+    if (bookmarkletLinkRef.current) {
+      bookmarkletLinkRef.current.setAttribute('href', bookmarkletHref);
+    }
+  }, [bookmarkletHref]);
 
   const handleLoad = () => {
     let nextUrl = urlInput.trim();
@@ -668,8 +699,13 @@ function RecordPageInner() {
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 700, marginBottom: 6 }}>Drag this to your bookmarks bar</div>
                         <a
-                          href={bookmarkletHref}
+                          ref={bookmarkletLinkRef}
+                          href="#"
                           onClick={e => e.preventDefault()}
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('text/uri-list', bookmarkletHref);
+                            e.dataTransfer.setData('text/plain', bookmarkletHref);
+                          }}
                           draggable
                           style={{
                             display: 'inline-flex', alignItems: 'center', gap: 6,

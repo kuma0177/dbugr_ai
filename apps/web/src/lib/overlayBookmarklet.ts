@@ -7,13 +7,31 @@ interface OverlayBookmarkletOptions {
   target?: OverlayTarget;
 }
 
-export function buildOverlayBookmarklet(options: OverlayBookmarkletOptions) {
-  const params = new URLSearchParams();
+/**
+ * Keep bookmarklet short and robust:
+ * 1) Store session preset on window so inject.js can read it.
+ * 2) Fetch inject.js as text and eval it in the CURRENT tab context.
+ *
+ * This avoids oversized bookmark URLs and mixed-content script-tag blocks.
+ */
+export function buildOverlayBookmarklet(options: OverlayBookmarkletOptions): string {
+  const webOrigin = options.webOrigin || 'http://localhost:3000';
+  const preset = {
+    sessionId: options.sessionId ?? '',
+    title: options.title ?? '',
+    target: options.target === 'codex' ? 'codex' : 'claude',
+  };
 
-  if (options.sessionId) params.set('sessionId', options.sessionId);
-  if (options.title) params.set('title', options.title);
-  if (options.target) params.set('target', options.target);
+  const presetJson = JSON.stringify(preset);
+  const injectUrl = `${webOrigin}/inject.js`;
 
-  const src = `${options.webOrigin}/inject.js${params.toString() ? `?${params.toString()}` : ''}`;
-  return `javascript:(function(){var s=document.createElement('script');s.src='${src}';document.head.appendChild(s);})()`;
+  const code = `(function(){` +
+    `window.__FA_PRESET=${presetJson};` +
+    `fetch(${JSON.stringify(injectUrl+'?v='+Date.now())})` +
+    `.then(function(r){return r.text();})` +
+    `.then(function(src){(0,eval)(src);})` +
+    `.catch(function(e){alert('FeedbackAgent overlay failed: '+(e&&e.message?e.message:e));});` +
+  `})()`;
+
+  return `javascript:${code}`;
 }

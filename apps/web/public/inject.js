@@ -16,10 +16,17 @@
   var API = 'http://localhost:3001/api';
   var PROJ = 'proj_demo';
   var FA_ORIGIN = 'http://localhost:3000';
+  var presetFromWindow = window.__FA_PRESET || null;
   var scriptUrl = new URL((document.currentScript && document.currentScript.src) || (FA_ORIGIN + '/inject.js'));
-  var presetSessionId = scriptUrl.searchParams.get('sessionId');
-  var presetTitle = scriptUrl.searchParams.get('title');
-  var selectedTarget = scriptUrl.searchParams.get('target') === 'codex' ? 'codex' : 'claude';
+  var presetSessionId = (presetFromWindow && presetFromWindow.sessionId) || scriptUrl.searchParams.get('sessionId');
+  var presetTitle = (presetFromWindow && presetFromWindow.title) || scriptUrl.searchParams.get('title');
+  var selectedTarget = ((presetFromWindow && presetFromWindow.target) || scriptUrl.searchParams.get('target')) === 'codex' ? 'codex' : 'claude';
+
+  if (window.__FA_PRESET) {
+    try {
+      delete window.__FA_PRESET;
+    } catch {}
+  }
 
   var sessionId = null;
   var boxes = [];

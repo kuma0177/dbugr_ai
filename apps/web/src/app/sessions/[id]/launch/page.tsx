@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
@@ -11,6 +11,7 @@ function LaunchOverlayPageInner() {
   const searchParams = useSearchParams();
   const [sessionTitle, setSessionTitle] = useState('Debug session');
   const [copied, setCopied] = useState(false);
+  const bookmarkletLinkRef = useRef<HTMLAnchorElement>(null);
 
   const targetUrl = searchParams.get('url') ?? '';
   const handoffTarget = (searchParams.get('target') === 'codex' ? 'codex' : 'claude') as OverlayTarget;
@@ -40,6 +41,13 @@ function LaunchOverlayPageInner() {
     [handoffTarget, id, sessionTitle, webOrigin],
   );
 
+  useEffect(() => {
+    // React/Next sanitize javascript: href values. Set it imperatively so the bookmarklet remains functional.
+    if (bookmarkletLinkRef.current) {
+      bookmarkletLinkRef.current.setAttribute('href', bookmarkletHref);
+    }
+  }, [bookmarkletHref]);
+
   const targetLabel = handoffTarget === 'codex' ? 'Codex' : 'Claude';
 
   return (
@@ -54,8 +62,8 @@ function LaunchOverlayPageInner() {
         </div>
         <h1 style={{ margin: 0, fontSize: '2.5rem' }}>Annotate on the real page</h1>
         <p style={{ fontSize: '1rem', color: '#94a3b8', lineHeight: 1.7, maxWidth: 760, marginTop: 14 }}>
-          This session is ready. Open the target page, launch the FeedbackAgent overlay there, add up to 5 boxes with typed notes or
-          transcribed voice notes, then submit everything straight to {targetLabel}.
+          This session is ready. If the FeedbackAgent extension is installed, opening the target page will auto-show annotation controls.
+          If not, use the bookmarklet fallback below. Then add up to 5 boxes with typed or transcribed voice notes and submit straight to {targetLabel}.
         </p>
       </div>
 
@@ -78,8 +86,8 @@ function LaunchOverlayPageInner() {
               },
               {
                 step: '2',
-                title: 'Click the overlay launcher on that page',
-                body: 'The launcher already knows this session ID, title, and whether the final handoff should go to Claude or Codex.',
+                title: 'Controls appear automatically (extension mode)',
+                body: 'With the extension installed, this tab is auto-matched and the overlay appears without clicking bookmarklets.',
               },
               {
                 step: '3',
@@ -157,18 +165,22 @@ function LaunchOverlayPageInner() {
           }}
         >
           <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#4f46e5', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>
-            Ready-To-Use Launcher
+            Fallback Launcher (v2)
           </div>
           <div style={{ fontSize: '1.15rem', fontWeight: 800, marginBottom: 8 }}>FeedbackAgent Overlay</div>
           <p style={{ margin: 0, fontSize: '0.92rem', color: '#475569', lineHeight: 1.7 }}>
-            Drag this into your bookmarks bar once, then click it from the target page tab. It is already configured for
-            this session and will send the finished report to {targetLabel}.
+            Use this only if extension auto-mode is not installed. Drag into bookmarks bar, then click from the target page tab.
+            It is already configured for this session and will send the finished report to {targetLabel}.
           </p>
 
           <a
-            href={bookmarkletHref}
-            onClick={(event) => event.preventDefault()}
+            ref={bookmarkletLinkRef}
+            href="#"
             draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData('text/uri-list', bookmarkletHref);
+              e.dataTransfer.setData('text/plain', bookmarkletHref);
+            }}
             style={{
               marginTop: 18,
               display: 'inline-flex',
@@ -187,10 +199,19 @@ function LaunchOverlayPageInner() {
               userSelect: 'none',
               width: '100%',
             }}
-            title="Drag this to your bookmarks bar"
+            title="Drag this to your bookmarks bar or click to test it on this page"
           >
-            ⬡ FeedbackAgent Overlay
+            ⬡ FeedbackAgent Overlay v2
           </a>
+
+          <div style={{ marginTop: 10, fontSize: '0.8rem', color: '#64748b', lineHeight: 1.6 }}>
+            If an older `⬡ FeedbackAgent Overlay` bookmark exists, delete it first and keep only this `v2` launcher.
+          </div>
+
+          <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 12, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e3a8a', fontSize: '0.82rem', lineHeight: 1.6 }}>
+            Auto mode install (one-time): open <code>chrome://extensions</code> → Developer mode ON → Load unpacked →
+            <code>/Users/kumar/debugr/apps/chrome-extension</code>.
+          </div>
 
           <div style={{ marginTop: 18, padding: '14px 16px', borderRadius: 14, background: '#fff', border: '1px solid #dbe4f0' }}>
             <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
