@@ -1,4 +1,5 @@
 import './index.css';
+import { invoke } from '@tauri-apps/api/core';
 
 type Target = 'claude' | 'codex';
 
@@ -209,7 +210,6 @@ let screenshotImage: HTMLImageElement | null = null;
 let screenshotDataUrl = '';
 let naturalWidth = 0;
 let naturalHeight = 0;
-let captureStream: MediaStream | null = null;
 let drawing = false;
 let startPoint: { x: number; y: number } | null = null;
 let draftBox: CaptureBox | null = null;
@@ -717,69 +717,65 @@ async function submitCapture() {
 
 async function startScreenCapture() {
   try {
-    setStatus('Opening the screen picker...');
-    appendLog('Starting native screen capture');
-    captureStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { cursor: 'always' } as MediaTrackConstraints,
-      audio: false,
-    });
-
-    const track = captureStream.getVideoTracks()[0];
-    const video = document.createElement('video');
-    video.srcObject = captureStream;
-    video.muted = true;
-    video.playsInline = true;
-    await video.play();
-    await new Promise<void>((resolve) => {
-      if (video.readyState >= 2) resolve();
-      else video.onloadedmetadata = () => resolve();
-    });
-
-    naturalWidth = video.videoWidth || 1440;
-    naturalHeight = video.videoHeight || 900;
-    resizeCanvasToImage();
-
-    const captureCanvas = document.createElement('canvas');
-    captureCanvas.width = naturalWidth;
-    captureCanvas.height = naturalHeight;
-    const captureCtx = captureCanvas.getContext('2d');
-    if (!captureCtx) throw new Error('Could not create capture canvas');
-    captureCtx.drawImage(video, 0, 0, naturalWidth, naturalHeight);
-    screenshotDataUrl = captureCanvas.toDataURL('image/png');
+    captureBtn.disabled = true;
+    openUrlBtn.disabled = true;
+    setStatus('Opening the macOS screenshot tool...');
+    appendLog('Starting native screenshot capture');
+    screenshotDataUrl = await invoke<string>('capture_interactive_screenshot');
 
     screenshotImage = new Image();
     screenshotImage.onload = () => {
+      naturalWidth = screenshotImage?.naturalWidth || 1440;
+      naturalHeight = screenshotImage?.naturalHeight || 900;
+      resizeCanvasToImage();
       renderCanvas();
       renderAnnotationList();
       renderConfirmationCard();
+      appendLog('Screenshot captured', { width: naturalWidth, height: naturalHeight });
+      setStatus(
+        `Screenshot captured. Add notes, then confirm it belongs to your ${getTargetLabel(handoffTargetSelect.value as Target)} work before sending it.`
+      );
+    };
+    screenshotImage.onerror = () => {
+      screenshotImage = null;
+      screenshotDataUrl = '';
+      setStatus('The screenshot was captured, but Debugr could not load it.');
+      appendLog('Screenshot image load failed');
     };
     screenshotImage.src = screenshotDataUrl;
     captureConfirmed = false;
     submissionResult = null;
     renderAgentFeedbackCard();
-
-    stageEl.classList.remove('capture-empty');
-    placeholderEl.style.display = 'none';
-    appendLog('Screenshot captured', { width: naturalWidth, height: naturalHeight, source: track.label });
-    setStatus(`Screenshot captured. Add notes, then confirm it belongs to your ${getTargetLabel(handoffTargetSelect.value as Target)} work before sending it.`);
   } catch (error) {
     appendLog('Capture failed', error instanceof Error ? error.message : error);
-    setStatus('Could not capture the screen. Check Screen Recording permission and try again.');
+    setStatus(
+      error instanceof Error ? error.message : 'Could not capture the screen. Check Screen Recording permission and try again.'
+    );
   } finally {
-    captureStream?.getTracks().forEach((track) => track.stop());
-    captureStream = null;
+    captureBtn.disabled = false;
+    openUrlBtn.disabled = false;
   }
 }
 
-openUrlBtn.addEventListener('click', () => {
+openUrlBtn.addEventListener('click', async () => {
   const normalized = normalizeUrl(captureUrlInput.value);
   if (!normalized) {
     setStatus('Add a browser URL first, or keep going and capture another app window.');
     return;
   }
-  window.open(normalized, '_blank', 'noopener,noreferrer');
-  appendLog('Context URL opened in browser', normalized);
-  setStatus('Context URL opened. Use the macOS picker to capture that browser tab or any other app window.');
+  try {
+    openUrlBtn.disabled = true;
+    captureBtn.disabled = true;
+    await invoke('open_external_url', { url: normalized });
+    appendLog('Context URL opened in browser', normalized);
+    setStatus('Context URL opened. Use the macOS screenshot tool to capture that browser tab or any other app window.');
+  } catch (error) {
+    appendLog('Open URL failed', error instanceof Error ? error.message : error);
+    setStatus(error instanceof Error ? error.message : 'Could not open the URL in your default browser.');
+  } finally {
+    openUrlBtn.disabled = false;
+    captureBtn.disabled = false;
+  }
 });
 
 captureBtn.addEventListener('click', () => {
