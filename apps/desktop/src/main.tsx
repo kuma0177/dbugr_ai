@@ -637,6 +637,26 @@ function renderAnnotationList() {
 function renderFeedbackConversation(result: SubmissionResult) {
   const label = getTargetLabel(result.target);
   const feedback = result.agentFeedback;
+  const isPending = result.taskId === 'pending';
+
+  if (isPending) {
+    return `
+      <div class="conversation">
+        <div class="message message-user">
+          <div class="message-role">You</div>
+          <div class="message-body">Sending this session to ${label}...</div>
+        </div>
+        <div class="message message-agent message-loading">
+          <div class="message-role">${label}</div>
+          <div class="message-body">
+            <div class="loading-spinner"></div>
+            <p>${label} is analyzing your capture...</p>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   const nextSteps = feedback?.next_steps?.length
     ? `<ul class="feedback-list">${feedback.next_steps.map((step) => `<li>${step}</li>`).join('')}</ul>`
     : '';
@@ -652,10 +672,6 @@ function renderFeedbackConversation(result: SubmissionResult) {
         <div class="message-body">
           <strong>${feedback?.title || `${label} reviewed the capture`}</strong>
           <p>${feedback?.summary || result.message}</p>
-          <div class="suggested-fix-block">
-            <div class="suggested-fix-label">Suggested fix</div>
-            <pre><code>if (!prefs) return &lt;SetupWizard /&gt;</code></pre>
-          </div>
           ${nextSteps}
           <div class="message-meta">Task ${result.taskId} · Session ${result.feedbackId}</div>
         </div>
@@ -1055,6 +1071,19 @@ async function sendSavedSession() {
     const payload = buildCapturePayload();
     await patchSession(currentSessionId, payload);
 
+    // Show loading state immediately
+    viewMode = 'feedback';
+    submissionResult = {
+      sessionId: currentSessionId,
+      taskId: 'pending',
+      feedbackId: 'pending',
+      target,
+      message: `Sending to ${getTargetLabel(target)}...`,
+    };
+    renderDetailPanel();
+    setStatus(`Sending to ${getTargetLabel(target)}...`);
+
+    // Send and wait for real feedback
     const sendRes = await fetch(`${API_BASE}/feedback-sessions/${currentSessionId}/send-to-claude`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1075,11 +1104,12 @@ async function sendSavedSession() {
       agentFeedback: json.data.agent_feedback as AgentFeedback | undefined,
     };
 
-    viewMode = 'feedback';
     renderDetailPanel();
-    setStatus(`Feedback received from ${getTargetLabel(target)}.`);
+    setStatus(`✓ Feedback received from ${getTargetLabel(target)}.`);
   } catch (error) {
     setStatus(error instanceof Error ? error.message : 'Failed to send session.');
+    submissionResult = null;
+    renderDetailPanel();
   }
 }
 

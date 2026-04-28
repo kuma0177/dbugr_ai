@@ -3,6 +3,7 @@ import { prisma } from '@feedbackagent/db';
 import { z } from 'zod';
 import multer from 'multer';
 import path from 'path';
+import { generateClaudeFeedback, generateCodexFeedback, type CaptureContext } from '../services/claude';
 
 export const feedbackSessionRouter = Router();
 
@@ -191,7 +192,7 @@ feedbackSessionRouter.patch('/feedback-sessions/:id', async (req: Request, res: 
 });
 
 // POST /api/feedback-sessions/:id/send-to-claude
-// V2: Send feedback to Claude Code for implementation
+// V2: Send feedback to Claude Code for implementation with real AI feedback
 feedbackSessionRouter.post('/feedback-sessions/:id/send-to-claude', async (req: Request, res: Response) => {
   const { target } = req.body;
   console.log('[api] POST /feedback-sessions/:id/send-to-claude id:', req.params.id, 'target:', target);
@@ -220,28 +221,68 @@ feedbackSessionRouter.post('/feedback-sessions/:id/send-to-claude', async (req: 
   const resolvedTarget = target === 'codex' ? 'codex' : 'claude';
   const targetLabel = resolvedTarget === 'codex' ? 'Codex' : 'Claude Code';
   const { repoUrl, repoName, repoBranch } = getRepoContext();
-  const repoLabel = repoName || 'your linked GitHub repo';
+
+  // Parse userIntent if available (from native capture)
+  let captureContext: CaptureContext | null = null;
+  if (session.userIntent) {
+    try {
+      const parsed = JSON.parse(session.userIntent);
+      captureContext = {
+        title: session.title,
+        notes: parsed.sessionNote || parsed.notes,
+        boxes: parsed.boxes || [],
+        repoUrl,
+        repoName,
+        repoBranch,
+      };
+      console.log('[api] Parsed capture context for feedback generation:', { boxes: captureContext.boxes.length });
+    } catch (e) {
+      console.warn('[api] Failed to parse userIntent:', e);
+    }
+  }
+
+  // Generate real feedback from Claude or Codex
+  let agentFeedback;
+  try {
+    if (resolvedTarget === 'codex') {
+      agentFeedback = await generateCodexFeedback(
+        captureContext || {
+          title: session.title,
+          boxes: [],
+          repoUrl,
+          repoName,
+          repoBranch,
+        },
+        session.id
+      );
+    } else {
+      agentFeedback = await generateClaudeFeedback(
+        captureContext || {
+          title: session.title,
+          boxes: [],
+          repoUrl,
+          repoName,
+          repoBranch,
+        },
+        session.id
+      );
+    }
+    console.log('[api] Feedback generated successfully:', agentFeedback.title);
+  } catch (error) {
+    console.error('[api] Error generating feedback:', error);
+    agentFeedback = {
+      title: 'Feedback generation failed',
+      summary: `Could not generate feedback: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      next_steps: ['Check API configuration', 'Verify network connection', 'Try again'],
+    };
+  }
 
   return res.status(201).json({
     data: {
       task_id: task.id,
       feedback_id: session.id,
-      message: `Feedback sent to ${resolvedTarget}. ${targetLabel} can now call the 'get_feedback_details' MCP tool to access the full context.`,
-      agent_feedback: {
-        title: `${targetLabel} is ready to review this capture`,
-        summary: `The screenshot, annotation boxes, and notes are now attached to feedback session ${session.id} for ${repoLabel}${repoUrl ? ` on branch ${repoBranch}` : ''}.`,
-        next_steps: [
-          `Confirm the issue is in scope for ${repoLabel}.`,
-          `Open ${targetLabel} and pull feedback session ${session.id} into the active work session.`,
-          'Generate the implementation diff or PR, then register the completed task back in Debugr.',
-        ],
-      },
-      mcp_instructions: `
-In your ${targetLabel} instance:
-1. Call get_feedback_details with feedback_id: "${session.id}"
-2. Implement the code changes
-3. Call register_completed_task with the PR details when done
-      `.trim(),
+      message: `Feedback from ${targetLabel} is ready.`,
+      agent_feedback: agentFeedback,
     },
   });
 });
