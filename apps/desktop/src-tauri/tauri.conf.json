@@ -23,6 +23,9 @@
       }
     ]
   },
+  "plugins": {
+    "global-shortcut": {}
+  },
   "bundle": {
     "active": true,
     "targets": ["dmg"],

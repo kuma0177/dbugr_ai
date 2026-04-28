@@ -5,6 +5,7 @@ use std::{
   time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
@@ -86,13 +87,43 @@ fn capture_interactive_screenshot(app: AppHandle) -> Result<String, String> {
   Ok(format!("data:image/png;base64,{body}"))
 }
 
+#[tauri::command]
+fn register_global_shortcut(app: AppHandle) -> Result<(), String> {
+  let shortcut = if cfg!(target_os = "macos") {
+    "cmd+alt+a"
+  } else {
+    "ctrl+alt+a"
+  };
+
+  app.global_shortcut()
+    .on_shortcut(shortcut, move |_app, _shortcut, _event| {
+      if let Some(window) = _app.get_webview_window("main") {
+        if let Ok(is_visible) = window.is_visible() {
+          if is_visible {
+            let _ = window.hide();
+          } else {
+            let _ = window.show();
+            let _ = window.set_focus();
+          }
+        } else {
+          let _ = window.show();
+          let _ = window.set_focus();
+        }
+      }
+    })
+    .map_err(|e| format!("Failed to register global shortcut: {}", e))?;
+
+  Ok(())
+}
+
 fn main() {
   tauri::Builder::default()
     .invoke_handler(tauri::generate_handler![
       get_screen_capture_permission,
       request_screen_capture_permission,
       open_screen_capture_settings,
-      capture_interactive_screenshot
+      capture_interactive_screenshot,
+      register_global_shortcut
     ])
     .run(tauri::generate_context!())
     .expect("error while running debugr.ai desktop app");
