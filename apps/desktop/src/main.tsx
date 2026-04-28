@@ -2,6 +2,7 @@ import './index.css';
 import { invoke } from '@tauri-apps/api/core';
 
 type Target = 'claude' | 'codex';
+type PermissionState = 'checking' | 'granted' | 'needs-access';
 
 interface BoxNote {
   id: string;
@@ -30,7 +31,6 @@ interface FeedbackSessionSummary {
 interface CapturePayload {
   mode: 'native-capture';
   captureTitle: string;
-  captureUrl?: string;
   handoffTarget: Target;
   screenshotDataUrl: string;
   canvasWidth: number;
@@ -75,7 +75,6 @@ interface SubmissionResult {
 
 const API_BASE = 'http://127.0.0.1:3001/api';
 const DEFAULT_TITLE = 'Native capture session';
-const DEFAULT_CAPTURE_URL = 'https://twynd.ai';
 const RECENT_KEY = 'debugr_native_recent_sessions';
 
 const app = document.querySelector<HTMLDivElement>('#app');
@@ -100,9 +99,14 @@ app.innerHTML = `
         </div>
         <h1 class="title">Capture the screen. Mark it up. Send it on.</h1>
         <p class="subtitle">
-          No bookmarklet, no webview target, no browser extension. Start a native screen capture, draw boxes on the
-          frozen frame, add notes, and hand the report to Claude or Codex.
+          No browser embedding, no extension, no web recorder. Take a native macOS screenshot, mark up the frozen
+          frame, and hand the report to Claude or Codex.
         </p>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Permissions</div>
+        <div id="permission-card"></div>
       </div>
 
       <div class="card">
@@ -110,10 +114,6 @@ app.innerHTML = `
         <div class="field">
           <label for="session-title">Session title</label>
           <input id="session-title" type="text" value="${DEFAULT_TITLE}" />
-        </div>
-        <div class="field">
-          <label for="capture-url">Context URL</label>
-          <input id="capture-url" type="url" value="${DEFAULT_CAPTURE_URL}" placeholder="https://yourapp.com/page" />
         </div>
         <div class="field">
           <label for="handoff-target">Send after submit</label>
@@ -124,12 +124,11 @@ app.innerHTML = `
         </div>
 
         <div class="button-row">
-          <button id="open-url-btn" class="secondary">Open URL in browser</button>
-          <button id="capture-btn" class="primary">Start screen capture</button>
+          <button id="capture-btn" class="primary">Take screenshot</button>
           <button id="submit-btn" class="secondary">Submit to agent</button>
         </div>
 
-        <div id="status" class="status">Ready. Capture the screen to begin annotating.</div>
+        <div id="status" class="status">Ready. Take a screenshot to begin annotating.</div>
       </div>
 
       <div class="card">
@@ -143,22 +142,31 @@ app.innerHTML = `
         <div class="workspace-kicker">Capture surface</div>
         <div class="capture-toolbar">
           <div>
-            <div class="capture-title">Capture a browser or any app, then annotate the frozen frame</div>
+            <div class="capture-title">Capture any app or screen, then annotate the frozen frame</div>
             <div class="capture-copy">
-              Start by opening the page you want in a browser, or leave the URL as a pointer and capture another
-              experience from the macOS picker. After the screenshot is frozen here, click and drag to create a box.
+              After the screenshot returns here, click and drag directly on the image to draw a box. Each box becomes
+              an annotation with a note before you submit the handoff.
             </div>
           </div>
-          <div class="capture-badge">Native window</div>
+          <div id="annotation-mode-badge" class="capture-badge">Waiting for screenshot</div>
+        </div>
+
+        <div id="annotation-toolbar" class="annotation-toolbar annotation-toolbar-hidden">
+          <div class="annotation-tool-pill annotation-tool-pill-active">Box annotation mode</div>
+          <div class="annotation-tool-copy">Click and drag on the screenshot to mark an area. Release to add a note.</div>
         </div>
 
         <div id="capture-stage" class="capture-stage capture-empty">
           <canvas id="capture-canvas" class="capture-canvas" aria-label="Native screenshot capture canvas"></canvas>
+          <div id="annotation-hint" class="annotation-hint annotation-hint-hidden">
+            <div class="annotation-hint-title">Drag on the screenshot to annotate</div>
+            <div class="annotation-hint-copy">Create a box around the issue, then add a note when you release.</div>
+          </div>
           <div id="capture-placeholder" class="capture-placeholder">
             <div class="capture-placeholder-title">Nothing captured yet</div>
             <div class="capture-placeholder-copy">
-              Click <strong>Start screen capture</strong> to open the macOS picker, then annotate the frozen frame in
-              this app.
+              Click <strong>Take screenshot</strong> to use the native macOS capture tool, then return here and drag on
+              the frozen frame to annotate it.
             </div>
           </div>
         </div>
@@ -189,9 +197,7 @@ app.innerHTML = `
 `;
 
 const sessionTitleInput = document.querySelector<HTMLInputElement>('#session-title')!;
-const captureUrlInput = document.querySelector<HTMLInputElement>('#capture-url')!;
 const handoffTargetSelect = document.querySelector<HTMLSelectElement>('#handoff-target')!;
-const openUrlBtn = document.querySelector<HTMLButtonElement>('#open-url-btn')!;
 const captureBtn = document.querySelector<HTMLButtonElement>('#capture-btn')!;
 const submitBtn = document.querySelector<HTMLButtonElement>('#submit-btn')!;
 const statusEl = document.querySelector<HTMLDivElement>('#status')!;
@@ -203,6 +209,10 @@ const annotationListEl = document.querySelector<HTMLDivElement>('#annotation-lis
 const recentSessionsEl = document.querySelector<HTMLDivElement>('#recent-sessions')!;
 const confirmationCardEl = document.querySelector<HTMLDivElement>('#confirmation-card')!;
 const agentFeedbackCardEl = document.querySelector<HTMLDivElement>('#agent-feedback-card')!;
+const permissionCardEl = document.querySelector<HTMLDivElement>('#permission-card')!;
+const annotationToolbarEl = document.querySelector<HTMLDivElement>('#annotation-toolbar')!;
+const annotationHintEl = document.querySelector<HTMLDivElement>('#annotation-hint')!;
+const annotationModeBadgeEl = document.querySelector<HTMLDivElement>('#annotation-mode-badge')!;
 
 const ctx = canvas.getContext('2d')!;
 
@@ -217,6 +227,7 @@ let boxes: CaptureBox[] = [];
 let handoffContext: HandoffContext | null = null;
 let captureConfirmed = false;
 let submissionResult: SubmissionResult | null = null;
+let permissionState: PermissionState = 'checking';
 
 function nowStamp() {
   return new Date().toLocaleTimeString([], { hour12: false });
@@ -274,25 +285,61 @@ function clearCaptureState() {
   canvas.style.aspectRatio = '';
   stageEl.classList.add('capture-empty');
   placeholderEl.style.display = 'grid';
+  annotationToolbarEl.classList.add('annotation-toolbar-hidden');
+  annotationHintEl.classList.add('annotation-hint-hidden');
+  annotationModeBadgeEl.textContent = 'Waiting for screenshot';
   renderCanvas();
   renderAnnotationList();
   renderConfirmationCard();
   renderAgentFeedbackCard();
 }
 
+function renderPermissionCard() {
+  if (permissionState === 'granted') {
+    permissionCardEl.innerHTML = `
+      <div class="status" style="margin-top: 0; background: rgba(21, 128, 61, 0.08); border-color: rgba(21, 128, 61, 0.18); color: #166534;">
+        Screen capture access is enabled for this app.
+      </div>
+      <p style="margin-bottom: 0;">Debugr can open the native macOS screenshot flow and bring the captured image back here for annotation.</p>
+    `;
+    return;
+  }
+
+  permissionCardEl.innerHTML = `
+    <p>Debugr needs macOS screen capture access before it can take a screenshot.</p>
+    <ol>
+      <li>Click <strong>Grant permission</strong> to let macOS show the screen capture prompt.</li>
+      <li>If you already denied it, open <strong>System Settings → Privacy & Security → Screen & System Audio Recording</strong>.</li>
+      <li>Enable <strong>debugr.ai</strong>, then fully quit and reopen the app.</li>
+    </ol>
+    <div class="button-row" style="margin-top: 16px;">
+      <button id="grant-permission-btn" class="primary">Grant permission</button>
+      <button id="open-permission-settings-btn" class="secondary">Open System Settings</button>
+    </div>
+  `;
+
+  permissionCardEl.querySelector<HTMLButtonElement>('#grant-permission-btn')?.addEventListener('click', () => {
+    void ensureScreenCapturePermission(true);
+  });
+
+  permissionCardEl.querySelector<HTMLButtonElement>('#open-permission-settings-btn')?.addEventListener('click', () => {
+    void openPermissionSettings();
+  });
+}
+
 function renderConfirmationCard() {
   const target = handoffTargetSelect.value as Target;
   const targetLabel = getTargetLabel(target);
   const repoLabel = handoffContext?.repoName || handoffContext?.repoUrl || 'No linked repo configured';
-  const captureLabel = normalizeUrl(captureUrlInput.value) || 'Another browser tab or app window';
+  const captureLabel = 'The screenshot you just captured on macOS';
 
   if (!screenshotImage || !screenshotDataUrl) {
     confirmationCardEl.innerHTML = `
       <p>After you freeze a screenshot, Debugr will ask you to confirm that the view belongs to your current ${targetLabel} work and linked GitHub repo.</p>
       <ol>
-        <li>Open a browser page from the context URL, or keep another app ready on screen.</li>
-        <li>Start screen capture and choose the exact tab, window, or display from the macOS picker.</li>
-        <li>Return here to confirm the screenshot is tied to ${repoLabel} before you send it.</li>
+        <li>Take a screenshot of the exact window, tab, or screen region you want to discuss.</li>
+        <li>Return here and draw one or more annotation boxes on the frozen image.</li>
+        <li>Confirm the screenshot is tied to ${repoLabel} before you send it.</li>
       </ol>
     `;
     return;
@@ -482,7 +529,7 @@ function renderCanvas() {
 function renderAnnotationList() {
   annotationListEl.innerHTML = '';
   if (boxes.length === 0) {
-    annotationListEl.innerHTML = '<div class="recent-empty">No boxes yet. Draw one on the capture above.</div>';
+    annotationListEl.innerHTML = '<div class="recent-empty">No boxes yet. Click and drag on the screenshot above to create the first annotation.</div>';
     return;
   }
 
@@ -561,9 +608,52 @@ function commitDraftBox() {
   captureConfirmed = false;
   appendLog('Annotation box saved', { boxId: draftBox.id, notes: draftBox.notes.length });
   draftBox = null;
+  annotationHintEl.classList.add('annotation-hint-hidden');
   renderCanvas();
   renderAnnotationList();
   renderConfirmationCard();
+}
+
+async function refreshPermissionState() {
+  const granted = await invoke<boolean>('get_screen_capture_permission');
+  permissionState = granted ? 'granted' : 'needs-access';
+  renderPermissionCard();
+  return granted;
+}
+
+async function openPermissionSettings() {
+  try {
+    await invoke('open_screen_capture_settings');
+    appendLog('Opened macOS screen capture settings');
+    setStatus('System Settings opened. Turn on screen capture for debugr.ai, then fully quit and reopen the app.');
+  } catch (error) {
+    appendLog('Open settings failed', error instanceof Error ? error.message : error);
+    setStatus(error instanceof Error ? error.message : 'Could not open System Settings.');
+  }
+}
+
+async function ensureScreenCapturePermission(announceWhenGranted = false) {
+  const alreadyGranted = await refreshPermissionState();
+  if (alreadyGranted) {
+    if (announceWhenGranted) {
+      setStatus('Screen capture permission is already enabled.');
+    }
+    return true;
+  }
+
+  const granted = await invoke<boolean>('request_screen_capture_permission');
+  permissionState = granted ? 'granted' : 'needs-access';
+  renderPermissionCard();
+
+  if (granted) {
+    setStatus('Screen capture permission granted. If macOS asks, fully quit and reopen the app before capturing.');
+    appendLog('Screen capture permission granted');
+    return true;
+  }
+
+  setStatus('Screen capture permission is still blocked. Open System Settings → Privacy & Security → Screen & System Audio Recording, enable debugr.ai, then reopen the app.');
+  appendLog('Screen capture permission denied or not yet enabled');
+  return false;
 }
 
 canvas.addEventListener('pointerdown', (event) => {
@@ -628,7 +718,6 @@ async function createSession(title: string) {
 
 async function submitCapture() {
   const title = sessionTitleInput.value.trim();
-  const contextUrl = normalizeUrl(captureUrlInput.value);
   const target = handoffTargetSelect.value as Target;
 
   if (!title) {
@@ -659,7 +748,6 @@ async function submitCapture() {
     const payload: CapturePayload = {
       mode: 'native-capture',
       captureTitle: title,
-      captureUrl: contextUrl || undefined,
       handoffTarget: target,
       screenshotDataUrl,
       canvasWidth: canvas.width,
@@ -717,17 +805,28 @@ async function submitCapture() {
 
 async function startScreenCapture() {
   try {
+    const granted = await ensureScreenCapturePermission();
+    if (!granted) return;
     captureBtn.disabled = true;
-    openUrlBtn.disabled = true;
     setStatus('Opening the macOS screenshot tool...');
     appendLog('Starting native screenshot capture');
     screenshotDataUrl = await invoke<string>('capture_interactive_screenshot');
+    boxes = [];
+    draftBox = null;
+    captureConfirmed = false;
+    submissionResult = null;
+    renderAgentFeedbackCard();
+    renderAnnotationList();
+    renderConfirmationCard();
 
     screenshotImage = new Image();
     screenshotImage.onload = () => {
       naturalWidth = screenshotImage?.naturalWidth || 1440;
       naturalHeight = screenshotImage?.naturalHeight || 900;
       resizeCanvasToImage();
+      annotationToolbarEl.classList.remove('annotation-toolbar-hidden');
+      annotationHintEl.classList.toggle('annotation-hint-hidden', boxes.length > 0);
+      annotationModeBadgeEl.textContent = 'Box annotation mode';
       renderCanvas();
       renderAnnotationList();
       renderConfirmationCard();
@@ -739,13 +838,13 @@ async function startScreenCapture() {
     screenshotImage.onerror = () => {
       screenshotImage = null;
       screenshotDataUrl = '';
+      annotationToolbarEl.classList.add('annotation-toolbar-hidden');
+      annotationHintEl.classList.add('annotation-hint-hidden');
+      annotationModeBadgeEl.textContent = 'Waiting for screenshot';
       setStatus('The screenshot was captured, but Debugr could not load it.');
       appendLog('Screenshot image load failed');
     };
     screenshotImage.src = screenshotDataUrl;
-    captureConfirmed = false;
-    submissionResult = null;
-    renderAgentFeedbackCard();
   } catch (error) {
     appendLog('Capture failed', error instanceof Error ? error.message : error);
     setStatus(
@@ -753,30 +852,8 @@ async function startScreenCapture() {
     );
   } finally {
     captureBtn.disabled = false;
-    openUrlBtn.disabled = false;
   }
 }
-
-openUrlBtn.addEventListener('click', async () => {
-  const normalized = normalizeUrl(captureUrlInput.value);
-  if (!normalized) {
-    setStatus('Add a browser URL first, or keep going and capture another app window.');
-    return;
-  }
-  try {
-    openUrlBtn.disabled = true;
-    captureBtn.disabled = true;
-    await invoke('open_external_url', { url: normalized });
-    appendLog('Context URL opened in browser', normalized);
-    setStatus('Context URL opened. Use the macOS screenshot tool to capture that browser tab or any other app window.');
-  } catch (error) {
-    appendLog('Open URL failed', error instanceof Error ? error.message : error);
-    setStatus(error instanceof Error ? error.message : 'Could not open the URL in your default browser.');
-  } finally {
-    openUrlBtn.disabled = false;
-    captureBtn.disabled = false;
-  }
-});
 
 captureBtn.addEventListener('click', () => {
   void startScreenCapture();
@@ -795,9 +872,6 @@ handoffTargetSelect.addEventListener('change', () => {
     appendLog('Handoff context failed', error instanceof Error ? error.message : error);
     setStatus(error instanceof Error ? error.message : 'Could not load linked repo information.');
   });
-});
-
-captureUrlInput.addEventListener('input', () => {
   captureConfirmed = false;
   renderConfirmationCard();
 });
@@ -816,6 +890,8 @@ if (recentIds.length > 0) {
 }
 
 void (async () => {
+  renderPermissionCard();
+  await refreshPermissionState();
   await loadRecentSessions();
   await loadHandoffContext(handoffTargetSelect.value as Target);
   renderCanvas();

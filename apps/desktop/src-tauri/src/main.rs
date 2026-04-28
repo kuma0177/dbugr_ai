@@ -5,6 +5,12 @@ use std::{
   time::{SystemTime, UNIX_EPOCH},
 };
 
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+  fn CGPreflightScreenCaptureAccess() -> bool;
+  fn CGRequestScreenCaptureAccess() -> bool;
+}
+
 fn temp_capture_path() -> PathBuf {
   let stamp = SystemTime::now()
     .duration_since(UNIX_EPOCH)
@@ -24,6 +30,30 @@ fn open_external_url(url: String) -> Result<(), String> {
     Ok(())
   } else {
     Err(format!("macOS could not open the URL. Exit status: {status}"))
+  }
+}
+
+#[tauri::command]
+fn get_screen_capture_permission() -> bool {
+  unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+#[tauri::command]
+fn request_screen_capture_permission() -> bool {
+  unsafe { CGRequestScreenCaptureAccess() }
+}
+
+#[tauri::command]
+fn open_screen_capture_settings() -> Result<(), String> {
+  let status = Command::new("open")
+    .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+    .status()
+    .map_err(|error| format!("Failed to open System Settings: {error}"))?;
+
+  if status.success() {
+    Ok(())
+  } else {
+    Err(format!("macOS could not open Screen Recording settings. Exit status: {status}"))
   }
 }
 
@@ -68,6 +98,9 @@ fn main() {
   tauri::Builder::default()
     .invoke_handler(tauri::generate_handler![
       open_external_url,
+      get_screen_capture_permission,
+      request_screen_capture_permission,
+      open_screen_capture_settings,
       capture_interactive_screenshot
     ])
     .run(tauri::generate_context!())
