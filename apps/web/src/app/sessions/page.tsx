@@ -28,7 +28,7 @@ export default function SessionsPage() {
   const [sessions, setSessions] = useState<FeedbackSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createStep, setCreateStep] = useState<1 | 2>(1);
+  const [createStep, setCreateStep] = useState<1 | 2 | 3>(1);
   const [title, setTitle] = useState('');
   const [targetUrl, setTargetUrl] = useState('');
   const [recentUrls, setRecentUrls] = useState<string[]>([]);
@@ -37,7 +37,10 @@ export default function SessionsPage() {
   const [tabsError, setTabsError] = useState('');
   const [handoffTarget, setHandoffTarget] = useState<OverlayTarget>('claude');
   const [creatingSession, setCreatingSession] = useState(false);
+  const [createdSessionId, setCreatedSessionId] = useState('');
+  const [createdSessionTitle, setCreatedSessionTitle] = useState('');
   const bookmarkletLinkRef = useRef<HTMLAnchorElement>(null);
+  const sessionBookmarkletRef = useRef<HTMLAnchorElement>(null);
 
   async function loadSessions() {
     try {
@@ -93,6 +96,8 @@ export default function SessionsPage() {
     setTargetUrl('');
     setHandoffTarget('claude');
     setCreatingSession(false);
+    setCreatedSessionId('');
+    setCreatedSessionTitle('');
     setChromeTabs([]);
     setTabsError('');
     setTabsLoading(false);
@@ -118,9 +123,9 @@ export default function SessionsPage() {
 
     setCreatingSession(true);
     const normalizedUrl = normalizeUrl(targetUrl);
-    // Open target page immediately inside the click gesture so popup blockers
-    // allow it and users don't get stuck on an empty about:blank tab.
-    const popup = window.open(normalizedUrl, '_blank');
+
+    // Open the target tab immediately inside the click handler so popup blockers allow it.
+    window.open(normalizedUrl, '_blank', 'noopener,noreferrer');
 
     try {
       const session = await api.sessions.create('proj_demo', {
@@ -128,33 +133,18 @@ export default function SessionsPage() {
         visibility: 'private',
       });
 
-      // Queue automatic overlay injection command for extension-based auto mode.
-      try {
-        await fetch(`${API_BASE}/overlay/launch`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sessionId: session.id,
-            title: title.trim(),
-            target: handoffTarget,
-            url: normalizedUrl,
-          }),
-        });
-      } catch (error) {
-        console.warn('[sessions] overlay launch queue failed', error);
-      }
-
       const nextRecentUrls = [normalizedUrl, ...recentUrls.filter((entry) => entry !== normalizedUrl)].slice(0, 6);
       localStorage.setItem(RECENT_URLS_KEY, JSON.stringify(nextRecentUrls));
       setRecentUrls(nextRecentUrls);
 
-      closeCreateModal();
-      router.push(
-        `/sessions/${session.id}/launch?url=${encodeURIComponent(normalizedUrl)}&target=${handoffTarget}`,
-      );
+      // Stay in the modal — advance to Step 3 which shows the session-specific bookmarklet.
+      // The user switches to the newly opened tab and clicks it there.
+      setCreatedSessionId(session.id);
+      setCreatedSessionTitle(session.title);
+      setCreatingSession(false);
+      setCreateStep(3);
     } catch (err) {
       console.error('[sessions] Create error:', err);
-      if (popup && !popup.closed) popup.close();
       const msg = err instanceof Error ? err.message : String(err);
       alert(`Failed to create session: ${msg}\n\nCheck that the API server is running at http://localhost:3001`);
       setCreatingSession(false);
@@ -165,12 +155,27 @@ export default function SessionsPage() {
   const webOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
   const bookmarkletHref = buildOverlayBookmarklet({ webOrigin });
 
+  // Session-specific bookmarklet — pre-configured with session ID, title, and target
+  const sessionBookmarkletHref = buildOverlayBookmarklet({
+    webOrigin,
+    sessionId: createdSessionId,
+    title: createdSessionTitle,
+    target: handoffTarget,
+  });
+
   useEffect(() => {
     // React/Next sanitize javascript: href values. Set it imperatively so the bookmarklet remains functional.
     if (bookmarkletLinkRef.current) {
       bookmarkletLinkRef.current.setAttribute('href', bookmarkletHref);
     }
   }, [bookmarkletHref]);
+
+  useEffect(() => {
+    // Set session-specific bookmarklet href imperatively (same reason as above)
+    if (sessionBookmarkletRef.current) {
+      sessionBookmarkletRef.current.setAttribute('href', sessionBookmarkletHref);
+    }
+  }, [sessionBookmarkletHref]);
 
   return (
     <main style={{ maxWidth: 1200, margin: '0 auto', padding: '24px' }}>
@@ -260,11 +265,11 @@ export default function SessionsPage() {
                   New Debug Session
                 </div>
                 <h2 style={{ margin: 0, fontSize: '1.75rem', color: '#0f172a' }}>
-                  {createStep === 1 ? 'Name the feedback first' : 'Pick the tab to debug'}
+                  {createStep === 1 ? 'Name the feedback first' : createStep === 2 ? 'Pick the tab to debug' : 'Annotate on the real page'}
                 </h2>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                {[1, 2].map((step) => (
+                {[1, 2, 3].map((step) => (
                   <div
                     key={step}
                     style={{
@@ -273,19 +278,98 @@ export default function SessionsPage() {
                       borderRadius: 999,
                       display: 'grid',
                       placeItems: 'center',
-                      background: createStep === step ? '#0f172a' : '#cbd5e1',
-                      color: createStep === step ? '#f8fafc' : '#475569',
-                      fontSize: 13,
+                      background: createStep === step ? '#0f172a' : step < createStep ? '#6366f1' : '#cbd5e1',
+                      color: createStep === step || step < createStep ? '#f8fafc' : '#475569',
+                      fontSize: step < createStep ? 16 : 13,
                       fontWeight: 800,
                     }}
                   >
-                    {step}
+                    {step < createStep ? '✓' : step}
                   </div>
                 ))}
               </div>
             </div>
 
-            {createStep === 1 ? (
+            {createStep === 3 ? (
+              /* ── Step 3: Tab is open, show session-specific bookmarklet ── */
+              <>
+                {/* Success banner */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 12, background: '#f0fdf4', border: '1px solid #86efac', marginBottom: 22 }}>
+                  <span style={{ fontSize: 22 }}>✅</span>
+                  <div>
+                    <div style={{ fontWeight: 700, color: '#166534', fontSize: '0.95rem' }}>Tab opened — session ready</div>
+                    <div style={{ color: '#15803d', fontSize: '0.82rem', marginTop: 2 }}>
+                      <strong>{createdSessionTitle}</strong> · Sending to <strong>{handoffTarget === 'codex' ? 'Codex' : 'Claude'}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Numbered steps */}
+                <div style={{ display: 'grid', gap: 14, marginBottom: 22 }}>
+                  {/* Step A: bookmarklet (only needed once) */}
+                  <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '16px 18px', borderRadius: 14, background: '#0f172a', border: '1px solid #1e293b' }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 8, background: '#6366f1', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 13, flexShrink: 0 }}>1</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, color: '#f8fafc', marginBottom: 8, fontSize: '0.92rem' }}>
+                        Drag to your bookmarks bar <span style={{ color: '#94a3b8', fontWeight: 400, fontSize: '0.8rem' }}>(only needed once)</span>
+                      </div>
+                      <a
+                        ref={sessionBookmarkletRef}
+                        href="#"
+                        onClick={e => e.preventDefault()}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('text/uri-list', sessionBookmarkletHref);
+                          e.dataTransfer.setData('text/plain', sessionBookmarkletHref);
+                        }}
+                        draggable
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 8,
+                          padding: '10px 18px', borderRadius: 10,
+                          background: '#1e293b', color: '#818cf8',
+                          fontWeight: 800, fontSize: 13, textDecoration: 'none',
+                          border: '1.5px dashed #6366f1', cursor: 'grab', userSelect: 'none',
+                        }}
+                        title="Drag this to your bookmarks bar"
+                      >
+                        ⬡ {createdSessionTitle || 'FeedbackAgent Overlay'}
+                      </a>
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>
+                        This bookmarklet already knows this session ID — no prompts needed.
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Step B: switch tab and click */}
+                  <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '16px 18px', borderRadius: 14, background: '#0f172a', border: '1px solid #1e293b' }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 8, background: '#6366f1', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 13, flexShrink: 0 }}>2</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, color: '#f8fafc', marginBottom: 6, fontSize: '0.92rem' }}>
+                        Switch to the new tab and click the bookmarklet
+                      </div>
+                      <div style={{ fontSize: '0.84rem', color: '#94a3b8', lineHeight: 1.6 }}>
+                        The annotation overlay will appear directly on <code style={{ background: '#1e293b', padding: '1px 5px', borderRadius: 4, color: '#93c5fd' }}>{targetUrl}</code>. Draw boxes, add notes, then click Submit — you'll land on the summary page automatically.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button className="btn btn-ghost" onClick={closeCreateModal} style={{ flex: 1 }}>
+                    Close
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      closeCreateModal();
+                      router.push(`/sessions/${createdSessionId}/summary`);
+                    }}
+                    style={{ flex: 2 }}
+                  >
+                    Go to session summary →
+                  </button>
+                </div>
+              </>
+            ) : createStep === 1 ? (
               <>
                 <p style={{ color: '#475569', marginBottom: 20, fontSize: '0.95rem', lineHeight: 1.7 }}>
                   Start with a short title so the session, screenshots, notes, and AI handoff all use the same label.
