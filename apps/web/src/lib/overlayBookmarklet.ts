@@ -33,7 +33,11 @@ export function buildOverlayBookmarklet(options: OverlayBookmarkletOptions): str
   // Keep as close to the original as possible — only the top config block changes.
   const code = `(function(){
 'use strict';
-if(window.__FA_ACTIVE){var old=document.getElementById('__fa_root');var oldStyle=document.getElementById('__fa_style');if(old)old.remove();if(oldStyle)oldStyle.remove();window.__FA_ACTIVE=false;return;}
+console.log('[FA] bookmarklet fired, checking __FA_ACTIVE:', window.__FA_ACTIVE);
+if(window.__FA_ACTIVE){
+console.log('[FA] already active — toggling off');
+var old=document.getElementById('__fa_root');var oldStyle=document.getElementById('__fa_style');if(old)old.remove();if(oldStyle)oldStyle.remove();window.__FA_ACTIVE=false;return;
+}
 window.__FA_ACTIVE=true;
 var API=${api};
 var PROJ='proj_demo';
@@ -41,6 +45,7 @@ var FA_ORIGIN=${faOrigin};
 var sessionId=${sessionId};
 var presetTitle=${presetTitle};
 var selectedTarget=${selectedTarget};
+console.log('[FA] config:', {API:API,FA_ORIGIN:FA_ORIGIN,sessionId:sessionId,presetTitle:presetTitle,selectedTarget:selectedTarget});
 var boxes=[];
 var drawing=false;
 var drawStart=null;
@@ -65,9 +70,11 @@ style.textContent=[
 '#__fa_modal{background:#fff;border-radius:14px;padding:24px;width:440px;max-width:92vw;box-shadow:0 24px 60px rgba(0,0,0,.45);}'
 ].join('');
 document.head.appendChild(style);
+console.log('[FA] styles injected');
 var root=document.createElement('div');
 root.id='__fa_root';
 document.body.appendChild(root);
+console.log('[FA] root div appended to body');
 var toolbar=document.createElement('div');
 toolbar.id='__fa_toolbar';
 toolbar.innerHTML='<span style="color:#818cf8;font-weight:800;font-size:14px;letter-spacing:-.3px;flex-shrink:0;">⧡ FeedbackAgent</span>'+
@@ -79,6 +86,7 @@ toolbar.innerHTML='<span style="color:#818cf8;font-weight:800;font-size:14px;let
 '<button id="__fa_submit" style="padding:7px 18px;background:#059669;color:#fff;border:none;border-radius:7px;font-weight:700;font-size:13px;cursor:pointer;flex-shrink:0;">✓ Submit</button>'+
 '<button id="__fa_close" style="padding:7px 12px;background:#334155;color:#94a3b8;border:none;border-radius:7px;font-size:13px;cursor:pointer;flex-shrink:0;">✕</button>';
 root.appendChild(toolbar);
+console.log('[FA] toolbar appended');
 function syncTargetButtons(){
 var claude=document.getElementById('__fa_target_claude');
 var codex=document.getElementById('__fa_target_codex');
@@ -124,6 +132,7 @@ overlay.addEventListener('mousedown',function(e){
 if(e.button!==0)return;
 drawing=true;
 drawStart={x:e.clientX,y:e.clientY};
+console.log('[FA] draw start at',e.clientX,e.clientY);
 });
 document.addEventListener('mousemove',function(e){
 if(!drawing||!drawStart)return;
@@ -144,10 +153,12 @@ var y=Math.min(drawStart.y,e.clientY);
 var w=Math.abs(e.clientX-drawStart.x);
 var h=Math.abs(e.clientY-drawStart.y);
 drawStart=null;
-if(w<20||h<20)return;
+console.log('[FA] draw end, size:',w,'x',h);
+if(w<20||h<20){console.log('[FA] box too small, ignored');return;}
 if(boxes.length>=5){alert('FeedbackAgent: max 5 boxes per session');return;}
 var box={id:'box_'+Date.now(),x:x,y:y,width:w,height:h,notes:[]};
 boxes.push(box);
+console.log('[FA] box created',box.id,'total boxes:',boxes.length);
 renderBox(box);
 updateCount();
 openModal(box.id);
@@ -283,16 +294,23 @@ if(resetTranscript){voiceTranscript='';voiceTimer=0;}
 }
 function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 document.getElementById('__fa_submit').addEventListener('click',async function(){
+console.log('[FA] submit clicked, boxes:',boxes.length,'sessionId:',sessionId);
 if(boxes.length===0){alert('FeedbackAgent: add at least one annotation box first');return;}
 if(!sessionId){alert('FeedbackAgent: session not ready yet, try again in a second');return;}
 var btn=document.getElementById('__fa_submit');
 btn.textContent='⏳ Saving…';
 btn.disabled=true;
 var annotationData=JSON.stringify({boxes:boxes,pageUrl:window.location.href,viewportWidth:window.innerWidth,viewportHeight:window.innerHeight,handoffTarget:selectedTarget});
+console.log('[FA] PATCH',API+'/feedback-sessions/'+sessionId,'with',boxes.length,'boxes');
 try{
-await fetch(API+'/feedback-sessions/'+sessionId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({userIntent:annotationData})});
-window.location.href=FA_ORIGIN+'/sessions/'+sessionId+'/summary?autoSend=1&target='+encodeURIComponent(selectedTarget);
+var patchRes=await fetch(API+'/feedback-sessions/'+sessionId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({userIntent:annotationData})});
+console.log('[FA] PATCH response status:',patchRes.status);
+if(!patchRes.ok){var errBody=await patchRes.text();console.error('[FA] PATCH failed:',errBody);}
+var redirectUrl=FA_ORIGIN+'/sessions/'+sessionId+'/summary?autoSend=1&target='+encodeURIComponent(selectedTarget);
+console.log('[FA] redirecting to:',redirectUrl);
+window.location.href=redirectUrl;
 }catch(err){
+console.error('[FA] submit error:',err);
 alert('FeedbackAgent: failed to save — '+err.message);
 btn.textContent='✓ Submit';
 btn.disabled=false;
@@ -300,22 +318,27 @@ btn.disabled=false;
 });
 document.getElementById('__fa_close').addEventListener('click',function(){root.remove();style.remove();window.__FA_ACTIVE=false;});
 var titlePill=document.getElementById('__fa_title_pill');
-if(titlePill&&sessionId)titlePill.textContent='→ "'+presetTitle+'"';
+if(titlePill&&sessionId){titlePill.textContent='→ "'+presetTitle+'"';console.log('[FA] preset session id:',sessionId,'title:',presetTitle);}
 if(!sessionId){
+console.log('[FA] no preset sessionId — prompting user for title');
 var promptTitle=prompt('FeedbackAgent — what are you annotating?\\n(Enter a short title for this session)');
-if(!promptTitle||!promptTitle.trim()){root.remove();style.remove();window.__FA_ACTIVE=false;return;}
+if(!promptTitle||!promptTitle.trim()){console.log('[FA] user cancelled prompt');root.remove();style.remove();window.__FA_ACTIVE=false;return;}
+console.log('[FA] creating new session with title:',promptTitle.trim());
 fetch(API+'/projects/'+PROJ+'/feedback-sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:promptTitle.trim(),visibility:'private'})})
-.then(function(r){return r.json();})
+.then(function(r){console.log('[FA] create session response:',r.status);return r.json();})
 .then(function(res){
+console.log('[FA] session created:',res.data&&res.data.id);
 sessionId=res.data.id;
 var pill=document.getElementById('__fa_title_pill');
 if(pill)pill.textContent='→ "'+res.data.title+'"';
 })
-.catch(function(){
+.catch(function(err){
+console.error('[FA] create session error:',err);
 alert('FeedbackAgent: cannot reach API at localhost:3001. Is it running?');
 root.remove();style.remove();window.__FA_ACTIVE=false;
 });
 }
+console.log('[FA] overlay ready — draw boxes on the page');
 })()`;
 
   return 'javascript:' + encodeURIComponent(code);

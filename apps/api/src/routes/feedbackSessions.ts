@@ -80,8 +80,12 @@ feedbackSessionRouter.post(
 feedbackSessionRouter.post(
   '/projects/:projectId/feedback-sessions',
   async (req: Request, res: Response) => {
+    console.log('[api] POST /projects/:projectId/feedback-sessions body:', req.body);
     const parsed = createSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    if (!parsed.success) {
+      console.warn('[api] create session validation failed:', parsed.error.flatten());
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
 
     const session = await prisma.feedbackSession.create({
       data: {
@@ -92,6 +96,7 @@ feedbackSessionRouter.post(
         status: 'draft',
       },
     });
+    console.log('[api] session created:', session.id, 'title:', session.title);
     return res.status(201).json({ data: session });
   }
 );
@@ -151,13 +156,26 @@ feedbackSessionRouter.get('/feedback-sessions/:id', async (req: Request, res: Re
 
 // PATCH /api/feedback-sessions/:id
 feedbackSessionRouter.patch('/feedback-sessions/:id', async (req: Request, res: Response) => {
+  console.log('[api] PATCH /feedback-sessions/:id', req.params.id, 'keys:', Object.keys(req.body));
+  if (req.body.userIntent) {
+    try {
+      const intent = JSON.parse(req.body.userIntent);
+      console.log('[api] userIntent received — boxes:', intent.boxes?.length ?? 0, 'pageUrl:', intent.pageUrl);
+    } catch {
+      console.warn('[api] userIntent present but not valid JSON');
+    }
+  }
   const parsed = patchSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success) {
+    console.warn('[api] patch validation failed:', parsed.error.flatten());
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
 
   const session = await prisma.feedbackSession.update({
     where: { id: req.params.id },
     data: parsed.data,
   });
+  console.log('[api] session patched:', session.id, 'status:', session.status);
   return res.json({ data: session });
 });
 
@@ -165,14 +183,17 @@ feedbackSessionRouter.patch('/feedback-sessions/:id', async (req: Request, res: 
 // V2: Send feedback to Claude Code for implementation
 feedbackSessionRouter.post('/feedback-sessions/:id/send-to-claude', async (req: Request, res: Response) => {
   const { target } = req.body;
+  console.log('[api] POST /feedback-sessions/:id/send-to-claude id:', req.params.id, 'target:', target);
 
   const session = await prisma.feedbackSession.findUnique({
     where: { id: req.params.id },
   });
 
   if (!session) {
+    console.warn('[api] send-to-claude: session not found:', req.params.id);
     return res.status(404).json({ error: 'Session not found' });
   }
+  console.log('[api] session found:', session.id, 'userIntent length:', session.userIntent?.length ?? 0);
 
   // Create an improvement task representing the Claude Code handoff
   const task = await prisma.improvementTask.create({

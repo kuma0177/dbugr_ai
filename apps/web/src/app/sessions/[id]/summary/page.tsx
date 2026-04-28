@@ -75,8 +75,10 @@ function SummaryPageInner() {
 
   useEffect(() => {
     async function load() {
+      console.log('[summary] loading session:', id);
       try {
         const sessionData = await api.sessions.get(id);
+        console.log('[summary] session loaded:', sessionData.id, 'status:', sessionData.status, 'userIntent length:', sessionData.userIntent?.length ?? 0);
         setSession(sessionData);
 
         // 1. Try sessionStorage first (iframe/record-tab flow)
@@ -84,22 +86,30 @@ function SummaryPageInner() {
         const storedMeta  = sessionStorage.getItem(`session_${id}_meta`);
 
         if (storedBoxes) {
-          setBoxes(JSON.parse(storedBoxes));
+          const parsed = JSON.parse(storedBoxes);
+          console.log('[summary] loaded', parsed.length, 'boxes from sessionStorage');
+          setBoxes(parsed);
           if (storedMeta) setMeta(JSON.parse(storedMeta));
         } else if (sessionData.userIntent) {
           // 2. Fall back to userIntent saved by the bookmarklet
+          console.log('[summary] no sessionStorage — parsing userIntent from API');
           try {
             const parsed = JSON.parse(sessionData.userIntent);
+            console.log('[summary] userIntent parsed — boxes:', parsed.boxes?.length ?? 0, 'pageUrl:', parsed.pageUrl);
             if (parsed.boxes) setBoxes(parsed.boxes);
             setMeta({
               loadedUrl: parsed.pageUrl,
               viewportWidth: parsed.viewportWidth,
               viewportHeight: parsed.viewportHeight,
             });
-          } catch { /* malformed JSON, ignore */ }
+          } catch (parseErr) {
+            console.error('[summary] userIntent JSON parse failed:', parseErr);
+          }
+        } else {
+          console.log('[summary] no sessionStorage and no userIntent — session has no annotations yet');
         }
       } catch (e) {
-        console.error('[summary] Error:', e);
+        console.error('[summary] load error:', e);
       } finally {
         setLoading(false);
       }
@@ -111,19 +121,24 @@ function SummaryPageInner() {
 
   const handleSend = async (target: 'claude' | 'codex') => {
     if (!session) return;
+    console.log('[summary] handleSend called, target:', target, 'session:', id);
     setSending(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/feedback-sessions/${id}/send-to-claude`, {
+      const url = `${process.env.NEXT_PUBLIC_API_URL}/feedback-sessions/${id}/send-to-claude`;
+      console.log('[summary] POST', url);
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target }),
       });
+      console.log('[summary] send-to-claude response:', res.status);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'Failed to send');
+      console.log('[summary] task created:', json.data.task_id);
       setSentData({ taskId: json.data.task_id, feedbackId: json.data.feedback_id, message: json.data.message });
       setSent(target);
     } catch (err) {
-      console.error('[summary] Send error:', err);
+      console.error('[summary] send error:', err);
       alert(`Failed to send: ${err instanceof Error ? err.message : String(err)}\n\nCheck the API server is running.`);
     } finally {
       setSending(false);
@@ -133,9 +148,11 @@ function SummaryPageInner() {
   useEffect(() => {
     const requestedTarget = searchParams.get('target');
     const autoSend = searchParams.get('autoSend') === '1';
+    console.log('[summary] autoSend check — autoSend:', autoSend, 'target:', requestedTarget, 'sessionReady:', !!session, 'alreadyStarted:', autoSendStarted);
     if (!autoSend || autoSendStarted || !session) return;
     if (requestedTarget !== 'claude' && requestedTarget !== 'codex') return;
 
+    console.log('[summary] triggering autoSend to', requestedTarget);
     setAutoSendStarted(true);
     handleSend(requestedTarget);
   }, [autoSendStarted, searchParams, session]);
