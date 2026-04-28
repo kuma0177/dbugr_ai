@@ -25,7 +25,7 @@ export function buildOverlayBookmarklet(options: OverlayBookmarkletOptions): str
   const webOrigin = options.webOrigin || 'http://localhost:3000';
   const sessionId = JSON.stringify(options.sessionId ?? '');
   const presetTitle = JSON.stringify(options.title ?? '');
-  const selectedTarget = JSON.stringify(options.target === 'codex' ? 'codex' : 'claude');
+  let selectedTarget = JSON.stringify(options.target === 'codex' ? 'codex' : 'claude');
   const faOrigin = JSON.stringify(webOrigin);
   const api = JSON.stringify('http://localhost:3001/api');
 
@@ -45,7 +45,13 @@ var FA_ORIGIN=${faOrigin};
 var sessionId=${sessionId};
 var presetTitle=${presetTitle};
 var selectedTarget=${selectedTarget};
-console.log('[FA] config:', {API:API,FA_ORIGIN:FA_ORIGIN,sessionId:sessionId,presetTitle:presetTitle,selectedTarget:selectedTarget});
+function log(){
+var args=Array.prototype.slice.call(arguments);
+args.unshift('[FA]');
+console.log.apply(console,args);
+}
+window.__FA_LOG=log;
+log('config:', {API:API,FA_ORIGIN:FA_ORIGIN,sessionId:sessionId,presetTitle:presetTitle,selectedTarget:selectedTarget});
 var boxes=[];
 var drawing=false;
 var drawStart=null;
@@ -60,6 +66,12 @@ style.textContent=[
 '#__fa_root,#__fa_root *{box-sizing:border-box;font-family:system-ui,sans-serif;line-height:normal;}',
 '#__fa_toolbar{position:fixed;top:0;left:0;right:0;z-index:2147483646;display:flex;align-items:center;gap:10px;padding:8px 14px;background:#1e293b;border-bottom:2px solid #6366f1;box-shadow:0 2px 12px rgba(0,0,0,.4);}',
 '#__fa_overlay{position:fixed;top:44px;left:0;right:0;bottom:0;z-index:2147483644;cursor:crosshair;}',
+'#__fa_tip{position:fixed;top:58px;left:56px;z-index:2147483645;max-width:min(640px,calc(100vw - 112px));background:#0b63d9;color:#fff;border-radius:28px;box-shadow:0 18px 48px rgba(15,23,42,.28);padding:24px 26px 22px 28px;display:flex;gap:18px;align-items:flex-start;}',
+'#__fa_tip:after{content:"";position:absolute;right:-9px;top:42px;width:18px;height:18px;background:#0b63d9;transform:rotate(45deg);border-radius:2px;}',
+'#__fa_tip_body{display:grid;gap:14px;}',
+'#__fa_tip_title{font-size:28px;line-height:1.15;font-weight:800;letter-spacing:-.02em;}',
+'#__fa_tip_text{font-size:20px;line-height:1.45;font-weight:600;max-width:560px;}',
+'#__fa_tip_close{appearance:none;border:none;background:transparent;color:#fff;font-size:30px;line-height:1;cursor:pointer;padding:0;margin-left:auto;flex-shrink:0;opacity:.95;}',
 '.fa-box{position:fixed;border:2px solid #6366f1;background:rgba(99,102,241,.1);cursor:pointer;z-index:2147483644;}',
 '.fa-box:hover{background:rgba(99,102,241,.18);}',
 '.fa-target{padding:7px 14px;border-radius:999px;border:1px solid #334155;background:#0f172a;color:#94a3b8;font-size:12px;font-weight:800;cursor:pointer;}',
@@ -86,7 +98,26 @@ toolbar.innerHTML='<span style="color:#818cf8;font-weight:800;font-size:14px;let
 '<button id="__fa_submit" style="padding:7px 18px;background:#059669;color:#fff;border:none;border-radius:7px;font-weight:700;font-size:13px;cursor:pointer;flex-shrink:0;">✓ Submit</button>'+
 '<button id="__fa_close" style="padding:7px 12px;background:#334155;color:#94a3b8;border:none;border-radius:7px;font-size:13px;cursor:pointer;flex-shrink:0;">✕</button>';
 root.appendChild(toolbar);
-console.log('[FA] toolbar appended');
+log('toolbar appended');
+var tipSeenKey='__fa_annotation_tip_seen';
+var annotationTip=null;
+try {
+var tipSeen=window.localStorage.getItem(tipSeenKey)==='1';
+if(!tipSeen){
+annotationTip=document.createElement('div');
+annotationTip.id='__fa_tip';
+annotationTip.innerHTML='<div id="__fa_tip_body"><div id="__fa_tip_title">Try Annotation Mode</div><div id="__fa_tip_text">Leave visual comments for '+(selectedTarget==='codex'?'Codex':'Claude')+' with a single click or drag to select an area</div></div><button id="__fa_tip_close" aria-label="Dismiss annotation tip">×</button>';
+root.appendChild(annotationTip);
+annotationTip.querySelector('#__fa_tip_close').addEventListener('click',function(){
+window.localStorage.setItem(tipSeenKey,'1');
+if(annotationTip){annotationTip.remove();annotationTip=null;}
+log('annotation tip dismissed');
+});
+log('annotation tip shown');
+}
+} catch(err) {
+log('annotation tip skipped:', err && err.message ? err.message : err);
+}
 function syncTargetButtons(){
 var claude=document.getElementById('__fa_target_claude');
 var codex=document.getElementById('__fa_target_codex');
@@ -94,16 +125,18 @@ if(!claude||!codex)return;
 claude.classList.toggle('active',selectedTarget==='claude');
 codex.classList.toggle('active',selectedTarget==='codex');
 }
-document.getElementById('__fa_target_claude').addEventListener('click',function(){selectedTarget='claude';syncTargetButtons();});
-document.getElementById('__fa_target_codex').addEventListener('click',function(){selectedTarget='codex';syncTargetButtons();});
+document.getElementById('__fa_target_claude').addEventListener('click',function(){selectedTarget='claude';log('target switched to claude');syncTargetButtons();});
+document.getElementById('__fa_target_codex').addEventListener('click',function(){selectedTarget='codex';log('target switched to codex');syncTargetButtons();});
 syncTargetButtons();
 var overlay=document.createElement('div');
 overlay.id='__fa_overlay';
 root.appendChild(overlay);
+log('overlay layer appended');
 var preview=document.createElement('div');
 preview.className='fa-preview';
 preview.style.display='none';
 root.appendChild(preview);
+log('preview layer appended');
 function updateCount(){
 document.getElementById('__fa_count').textContent=boxes.length+'/5 boxes';
 var btn=document.getElementById('__fa_submit');
@@ -132,7 +165,7 @@ overlay.addEventListener('mousedown',function(e){
 if(e.button!==0)return;
 drawing=true;
 drawStart={x:e.clientX,y:e.clientY};
-console.log('[FA] draw start at',e.clientX,e.clientY);
+log('draw start at',e.clientX,e.clientY);
 });
 document.addEventListener('mousemove',function(e){
 if(!drawing||!drawStart)return;
@@ -153,12 +186,12 @@ var y=Math.min(drawStart.y,e.clientY);
 var w=Math.abs(e.clientX-drawStart.x);
 var h=Math.abs(e.clientY-drawStart.y);
 drawStart=null;
-console.log('[FA] draw end, size:',w,'x',h);
-if(w<20||h<20){console.log('[FA] box too small, ignored');return;}
-if(boxes.length>=5){alert('FeedbackAgent: max 5 boxes per session');return;}
+log('draw end, size:',w,'x',h);
+if(w<20||h<20){log('box too small, ignored');return;}
+if(boxes.length>=5){alert('FeedbackAgent: max 5 boxes per session');log('box limit reached');return;}
 var box={id:'box_'+Date.now(),x:x,y:y,width:w,height:h,notes:[]};
 boxes.push(box);
-console.log('[FA] box created',box.id,'total boxes:',boxes.length);
+log('box created',box.id,'total boxes:',boxes.length);
 renderBox(box);
 updateCount();
 openModal(box.id);
@@ -294,51 +327,51 @@ if(resetTranscript){voiceTranscript='';voiceTimer=0;}
 }
 function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 document.getElementById('__fa_submit').addEventListener('click',async function(){
-console.log('[FA] submit clicked, boxes:',boxes.length,'sessionId:',sessionId);
-if(boxes.length===0){alert('FeedbackAgent: add at least one annotation box first');return;}
-if(!sessionId){alert('FeedbackAgent: session not ready yet, try again in a second');return;}
+log('submit clicked, boxes:',boxes.length,'sessionId:',sessionId);
+if(boxes.length===0){alert('FeedbackAgent: add at least one annotation box first');log('submit blocked: no boxes');return;}
+if(!sessionId){alert('FeedbackAgent: session not ready yet, try again in a second');log('submit blocked: missing session id');return;}
 var btn=document.getElementById('__fa_submit');
 btn.textContent='⏳ Saving…';
 btn.disabled=true;
 var annotationData=JSON.stringify({boxes:boxes,pageUrl:window.location.href,viewportWidth:window.innerWidth,viewportHeight:window.innerHeight,handoffTarget:selectedTarget});
-console.log('[FA] PATCH',API+'/feedback-sessions/'+sessionId,'with',boxes.length,'boxes');
+log('PATCH',API+'/feedback-sessions/'+sessionId,'with',boxes.length,'boxes');
 try{
 var patchRes=await fetch(API+'/feedback-sessions/'+sessionId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({userIntent:annotationData})});
-console.log('[FA] PATCH response status:',patchRes.status);
-if(!patchRes.ok){var errBody=await patchRes.text();console.error('[FA] PATCH failed:',errBody);}
+log('PATCH response status:',patchRes.status);
+if(!patchRes.ok){var errBody=await patchRes.text();log('PATCH failed:',errBody);}
 var redirectUrl=FA_ORIGIN+'/sessions/'+sessionId+'/summary?autoSend=1&target='+encodeURIComponent(selectedTarget);
-console.log('[FA] redirecting to:',redirectUrl);
+log('redirecting to:',redirectUrl);
 window.location.href=redirectUrl;
 }catch(err){
-console.error('[FA] submit error:',err);
+log('submit error:',err);
 alert('FeedbackAgent: failed to save — '+err.message);
 btn.textContent='✓ Submit';
 btn.disabled=false;
 }
 });
-document.getElementById('__fa_close').addEventListener('click',function(){root.remove();style.remove();window.__FA_ACTIVE=false;});
+document.getElementById('__fa_close').addEventListener('click',function(){log('overlay closed');root.remove();style.remove();window.__FA_ACTIVE=false;});
 var titlePill=document.getElementById('__fa_title_pill');
-if(titlePill&&sessionId){titlePill.textContent='→ "'+presetTitle+'"';console.log('[FA] preset session id:',sessionId,'title:',presetTitle);}
+if(titlePill&&sessionId){titlePill.textContent='→ "'+presetTitle+'"';log('preset session id:',sessionId,'title:',presetTitle);}
 if(!sessionId){
-console.log('[FA] no preset sessionId — prompting user for title');
+log('no preset sessionId — prompting user for title');
 var promptTitle=prompt('FeedbackAgent — what are you annotating?\\n(Enter a short title for this session)');
-if(!promptTitle||!promptTitle.trim()){console.log('[FA] user cancelled prompt');root.remove();style.remove();window.__FA_ACTIVE=false;return;}
-console.log('[FA] creating new session with title:',promptTitle.trim());
+if(!promptTitle||!promptTitle.trim()){log('user cancelled prompt');root.remove();style.remove();window.__FA_ACTIVE=false;return;}
+log('creating new session with title:',promptTitle.trim());
 fetch(API+'/projects/'+PROJ+'/feedback-sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:promptTitle.trim(),visibility:'private'})})
-.then(function(r){console.log('[FA] create session response:',r.status);return r.json();})
+.then(function(r){log('create session response:',r.status);return r.json();})
 .then(function(res){
-console.log('[FA] session created:',res.data&&res.data.id);
+log('session created:',res.data&&res.data.id);
 sessionId=res.data.id;
 var pill=document.getElementById('__fa_title_pill');
 if(pill)pill.textContent='→ "'+res.data.title+'"';
 })
 .catch(function(err){
-console.error('[FA] create session error:',err);
+log('create session error:',err);
 alert('FeedbackAgent: cannot reach API at localhost:3001. Is it running?');
 root.remove();style.remove();window.__FA_ACTIVE=false;
 });
 }
-console.log('[FA] overlay ready — draw boxes on the page');
+log('overlay ready — draw boxes on the page');
 })()`;
 
   return 'javascript:' + encodeURIComponent(code);

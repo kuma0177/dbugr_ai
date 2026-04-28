@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
@@ -11,7 +11,7 @@ function LaunchOverlayPageInner() {
   const searchParams = useSearchParams();
   const [sessionTitle, setSessionTitle] = useState('Debug session');
   const [copied, setCopied] = useState(false);
-  const bookmarkletLinkRef = useRef<HTMLAnchorElement>(null);
+  const [copiedLauncher, setCopiedLauncher] = useState(false);
 
   const targetUrl = searchParams.get('url') ?? '';
   const handoffTarget = (searchParams.get('target') === 'codex' ? 'codex' : 'claude') as OverlayTarget;
@@ -40,13 +40,6 @@ function LaunchOverlayPageInner() {
       }),
     [handoffTarget, id, sessionTitle, webOrigin],
   );
-
-  useEffect(() => {
-    // React/Next sanitize javascript: href values. Set it imperatively so the bookmarklet remains functional.
-    if (bookmarkletLinkRef.current) {
-      bookmarkletLinkRef.current.setAttribute('href', bookmarkletHref);
-    }
-  }, [bookmarkletHref]);
 
   const targetLabel = handoffTarget === 'codex' ? 'Codex' : 'Claude';
 
@@ -169,17 +162,20 @@ function LaunchOverlayPageInner() {
           </div>
           <div style={{ fontSize: '1.15rem', fontWeight: 800, marginBottom: 8 }}>FeedbackAgent Overlay</div>
           <p style={{ margin: 0, fontSize: '0.92rem', color: '#475569', lineHeight: 1.7 }}>
-            Use this only if extension auto-mode is not installed. Drag into bookmarks bar, then click from the target page tab.
+            Use this only if extension auto-mode is not installed. Copy the launcher URL, then create a bookmark manually and click it from the target page tab.
             It is already configured for this session and will send the finished report to {targetLabel}.
           </p>
 
-          <a
-            ref={bookmarkletLinkRef}
-            href="#"
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.setData('text/uri-list', bookmarkletHref);
-              e.dataTransfer.setData('text/plain', bookmarkletHref);
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(bookmarkletHref);
+                setCopiedLauncher(true);
+                window.setTimeout(() => setCopiedLauncher(false), 1800);
+              } catch (error) {
+                console.error('[launch] bookmarklet copy failed', error);
+              }
             }}
             style={{
               marginTop: 18,
@@ -189,23 +185,27 @@ function LaunchOverlayPageInner() {
               gap: 8,
               padding: '14px 18px',
               borderRadius: 14,
-              background: '#eef2ff',
-              color: '#312e81',
+              background: copiedLauncher ? '#059669' : '#eef2ff',
+              color: copiedLauncher ? '#f8fafc' : '#312e81',
               textDecoration: 'none',
               fontWeight: 800,
               fontSize: '0.95rem',
-              border: '1.5px dashed #818cf8',
-              cursor: 'grab',
+              border: '1.5px solid #818cf8',
+              cursor: 'pointer',
               userSelect: 'none',
               width: '100%',
             }}
-            title="Drag this to your bookmarks bar or click to test it on this page"
+            title="Copy the bookmarklet URL to your clipboard"
           >
-            ⬡ FeedbackAgent Overlay v2
-          </a>
+            {copiedLauncher ? '✓ Copied launcher URL' : '📋 Copy FeedbackAgent Overlay v2'}
+          </button>
 
-          <div style={{ marginTop: 10, fontSize: '0.8rem', color: '#64748b', lineHeight: 1.6 }}>
-            If an older `⬡ FeedbackAgent Overlay` bookmark exists, delete it first and keep only this `v2` launcher.
+          <div style={{ marginTop: 10, fontSize: '0.8rem', color: '#64748b', lineHeight: 1.7 }}>
+            1. Create a new bookmark named <code>⬡ FeedbackAgent Overlay</code>.
+            <br />
+            2. Paste the copied launcher URL into the bookmark's URL field.
+            <br />
+            3. If an older bookmark exists, delete it first so only the new launcher remains.
           </div>
 
           <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 12, background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e3a8a', fontSize: '0.82rem', lineHeight: 1.6 }}>

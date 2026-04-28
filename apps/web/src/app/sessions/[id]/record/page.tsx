@@ -123,7 +123,6 @@ function RecordPageInner() {
   const overlayRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const bookmarkletLinkRef = useRef<HTMLAnchorElement>(null);
   const speechRecRef = useRef<BrowserSpeechRecognition | null>(null);
   const voiceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -135,6 +134,8 @@ function RecordPageInner() {
   const [showUrlEditor, setShowUrlEditor] = useState(false);
   const [showRecentUrls, setShowRecentUrls] = useState(false);
   const [iframeLikelyBlocked, setIframeLikelyBlocked] = useState(false);
+  const [copiedLauncher, setCopiedLauncher] = useState(false);
+  const [showAnnotationTip, setShowAnnotationTip] = useState(true);
 
   const [boxes, setBoxes] = useState<Box[]>([]);
   const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
@@ -163,6 +164,12 @@ function RecordPageInner() {
     const targetParam = searchParams?.get('target');
     if (targetParam === 'codex') setHandoffTarget('codex');
 
+    console.log('[record] initial load', {
+      id,
+      initialUrl,
+      targetParam,
+    });
+
     // Fetch session title for the bookmarklet label
     const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
     fetch(`${API}/feedback-sessions/${id}`)
@@ -184,11 +191,14 @@ function RecordPageInner() {
       return;
     }
 
+    console.log('[record] loadedUrl changed', loadedUrl);
+    setShowAnnotationTip(true);
     setIframeLikelyBlocked(false);
 
     if (!looksExternallyHosted(loadedUrl)) return;
 
     const timeout = window.setTimeout(() => {
+      console.log('[record] iframe likely blocked for', loadedUrl);
       setIframeLikelyBlocked(true);
     }, 2500);
 
@@ -202,6 +212,7 @@ function RecordPageInner() {
 
     const targetParam = searchParams?.get('target');
     const target = targetParam === 'codex' ? 'codex' : 'claude';
+    console.log('[record] redirecting external url to launch page', { id, initialUrl, target });
     setRedirectingToLaunch(true);
     router.replace(
       `/sessions/${id}/launch?url=${encodeURIComponent(initialUrl)}&target=${target}`,
@@ -225,19 +236,16 @@ function RecordPageInner() {
     return buildOverlayBookmarklet({ webOrigin, sessionId: id, title: fetchedTitle, target: handoffTarget });
   }, [id, fetchedTitle, handoffTarget]);
 
-  useEffect(() => {
-    // React/Next sanitize javascript: href values. Set it imperatively so the bookmarklet remains functional.
-    if (bookmarkletLinkRef.current) {
-      bookmarkletLinkRef.current.setAttribute('href', bookmarkletHref);
-    }
-  }, [bookmarkletHref]);
-
   const handleLoad = () => {
     let nextUrl = urlInput.trim();
-    if (!nextUrl) return;
+    if (!nextUrl) {
+      console.log('[record] load blocked: empty url');
+      return;
+    }
     if (!nextUrl.startsWith('http://') && !nextUrl.startsWith('https://')) {
       nextUrl = nextUrl.startsWith('localhost') || nextUrl.startsWith('127.0.0.1') ? `http://${nextUrl}` : `https://${nextUrl}`;
     }
+    console.log('[record] loading url', nextUrl);
     setLoadedUrl(nextUrl);
     setUrlInput(nextUrl);
     setShowUrlEditor(false);
@@ -471,10 +479,12 @@ function RecordPageInner() {
 
   const handleSubmit = async () => {
     if (boxes.length === 0) {
+      console.log('[record] submit blocked: no boxes');
       alert('Add at least one annotation box first');
       return;
     }
 
+    console.log('[record] submitting annotations', { boxes: boxes.length, loadedUrl, target: handoffTarget });
     setSubmitting(true);
     sessionStorage.setItem(`session_${id}_boxes`, JSON.stringify(boxes));
     sessionStorage.setItem(
@@ -663,6 +673,69 @@ function RecordPageInner() {
               <div style={{ position: 'absolute', inset: 0, backgroundImage: 'radial-gradient(circle, #334155 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
             )}
 
+            {loadedUrl && showAnnotationTip && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 20,
+                  left: 48,
+                  zIndex: 12,
+                  maxWidth: 'min(640px, calc(100% - 96px))',
+                  background: '#0b63d9',
+                  color: '#fff',
+                  borderRadius: 28,
+                  boxShadow: '0 18px 48px rgba(15,23,42,.28)',
+                  padding: '24px 26px 22px 28px',
+                  display: 'flex',
+                  gap: 18,
+                  alignItems: 'flex-start',
+                }}
+              >
+                <div style={{ display: 'grid', gap: 14 }}>
+                  <div style={{ fontSize: 28, lineHeight: 1.15, fontWeight: 800, letterSpacing: '-0.02em' }}>Try Annotation Mode</div>
+                  <div style={{ fontSize: 20, lineHeight: 1.45, fontWeight: 600, maxWidth: 560 }}>
+                    Leave visual comments for {handoffTarget === 'codex' ? 'Codex' : 'Claude'} with a single click or drag to select an area
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    console.log('[record] annotation tip dismissed');
+                    setShowAnnotationTip(false);
+                  }}
+                  style={{
+                    appearance: 'none',
+                    border: 'none',
+                    background: 'transparent',
+                    color: '#fff',
+                    fontSize: 30,
+                    lineHeight: 1,
+                    cursor: 'pointer',
+                    padding: 0,
+                    marginLeft: 'auto',
+                    flexShrink: 0,
+                    opacity: 0.95,
+                  }}
+                  aria-label="Dismiss annotation tip"
+                >
+                  ×
+                </button>
+                <div
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute',
+                    right: -9,
+                    top: 42,
+                    width: 18,
+                    height: 18,
+                    background: '#0b63d9',
+                    transform: 'rotate(45deg)',
+                    borderRadius: 2,
+                  }}
+                />
+              </div>
+            )}
+
             {/* For localhost URLs, load in iframe. For external sites, skip iframe and show bookmarklet flow immediately */}
             {loadedUrl && !looksExternallyHosted(loadedUrl) && (
               <iframe
@@ -673,6 +746,7 @@ function RecordPageInner() {
                 sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
                 title="Page being annotated"
                 onLoad={() => {
+                  console.log('[record] iframe loaded', loadedUrl);
                   setIframeLikelyBlocked(false);
                 }}
               />
@@ -699,28 +773,40 @@ function RecordPageInner() {
                     <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
                       <div style={{ width: 32, height: 32, borderRadius: 8, background: '#312e81', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 14, flexShrink: 0 }}>1</div>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 700, marginBottom: 6 }}>Drag this to your bookmarks bar</div>
-                        <a
-                          ref={bookmarkletLinkRef}
-                          href="#"
-                          onClick={e => e.preventDefault()}
-                          onDragStart={(e) => {
-                            e.dataTransfer.setData('text/uri-list', bookmarkletHref);
-                            e.dataTransfer.setData('text/plain', bookmarkletHref);
+                        <div style={{ fontWeight: 700, marginBottom: 6 }}>Copy the bookmarklet URL</div>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(bookmarkletHref);
+                              setCopiedLauncher(true);
+                              window.setTimeout(() => setCopiedLauncher(false), 1800);
+                              console.log('[record] bookmarklet copied to clipboard');
+                            } catch (error) {
+                              console.error('[record] bookmarklet copy failed', error);
+                            }
                           }}
-                          draggable
                           style={{
-                            display: 'inline-flex', alignItems: 'center', gap: 6,
-                            padding: '9px 16px', borderRadius: 9,
-                            background: '#eef2ff', color: '#312e81',
-                            fontWeight: 800, fontSize: 13, textDecoration: 'none',
-                            border: '1.5px dashed #818cf8', cursor: 'grab', userSelect: 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            padding: '9px 16px',
+                            borderRadius: 9,
+                            background: copiedLauncher ? '#059669' : '#eef2ff',
+                            color: copiedLauncher ? '#fff' : '#312e81',
+                            fontWeight: 800,
+                            fontSize: 13,
+                            border: '1.5px solid #818cf8',
+                            cursor: 'pointer',
+                            userSelect: 'none',
                           }}
-                          title="Drag to bookmarks bar"
+                          title="Copy the bookmarklet URL"
                         >
-                          ⬡ FeedbackAgent — {fetchedTitle || id.slice(0, 8)}
-                        </a>
-                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 5 }}>Already in your bar? Skip this step.</div>
+                          {copiedLauncher ? '✓ Copied launcher URL' : `📋 Copy ${fetchedTitle || `FeedbackAgent — ${id.slice(0, 8)}`}`}
+                        </button>
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 5, lineHeight: 1.5 }}>
+                          Create a bookmark named <strong>FeedbackAgent</strong>, paste the copied URL into the bookmark field, and keep it for this session.
+                        </div>
                       </div>
                     </div>
 
@@ -728,15 +814,18 @@ function RecordPageInner() {
                     <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 12, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
                       <div style={{ width: 32, height: 32, borderRadius: 8, background: '#312e81', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 14, flexShrink: 0 }}>2</div>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 700, marginBottom: 8 }}>Open the page and click the bookmarklet</div>
+                        <div style={{ fontWeight: 700, marginBottom: 8 }}>Open the page and click the bookmark</div>
                         <button
-                          onClick={() => window.open(loadedUrl, '_blank', 'noopener,noreferrer')}
+                          onClick={() => {
+                            console.log('[record] opening target page in new tab', loadedUrl);
+                            window.open(loadedUrl, '_blank', 'noopener,noreferrer');
+                          }}
                           style={{ padding: '9px 18px', borderRadius: 9, background: '#0f172a', color: '#f8fafc', border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 13 }}
                         >
                           Open {(() => { try { return new URL(loadedUrl).hostname; } catch { return loadedUrl; } })()} ↗
                         </button>
                         <div style={{ fontSize: 12, color: '#64748b', marginTop: 6, lineHeight: 1.5 }}>
-                          Once the page loads, click <strong>⬡ FeedbackAgent</strong> in your bookmarks bar. The overlay will appear on that real page — already linked to this session.
+                          Once the page loads, click <strong>⬡ FeedbackAgent</strong> in your bookmarks bar. The overlay will appear on that real page and stay linked to this session.
                         </div>
                       </div>
                     </div>

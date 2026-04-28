@@ -39,8 +39,9 @@ export default function SessionsPage() {
   const [creatingSession, setCreatingSession] = useState(false);
   const [createdSessionId, setCreatedSessionId] = useState('');
   const [createdSessionTitle, setCreatedSessionTitle] = useState('');
+  const [copiedBanner, setCopiedBanner] = useState(false);
+  const [copiedSession, setCopiedSession] = useState(false);
   const bookmarkletLinkRef = useRef<HTMLAnchorElement>(null);
-  const sessionBookmarkletRef = useRef<HTMLAnchorElement>(null);
 
   async function loadSessions() {
     try {
@@ -170,13 +171,6 @@ export default function SessionsPage() {
     }
   }, [bookmarkletHref]);
 
-  useEffect(() => {
-    // Set session-specific bookmarklet href imperatively (same reason as above)
-    if (sessionBookmarkletRef.current) {
-      sessionBookmarkletRef.current.setAttribute('href', sessionBookmarkletHref);
-    }
-  }, [sessionBookmarkletHref]);
-
   return (
     <main style={{ maxWidth: 1200, margin: '0 auto', padding: '24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
@@ -193,45 +187,51 @@ export default function SessionsPage() {
         </button>
       </div>
 
-      {/* Bookmarklet banner — primary overlay launcher users can reuse across pages */}
+      {/* Bookmarklet banner — primary overlay launcher */}
       <div style={{
-        marginBottom: 32, padding: '14px 18px', borderRadius: 10,
-        background: '#0f172a',
-        border: '1px solid #1e293b', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+        marginBottom: 32, padding: '16px 20px', borderRadius: 12,
+        background: '#0f172a', border: '1px solid #1e293b',
       }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#94a3b8', marginBottom: 2 }}>
-            Overlay launcher
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#94a3b8', marginBottom: 4 }}>
+              ⬡ Overlay launcher bookmarklet
+            </div>
+            <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.6 }}>
+              Install once → click on any page to launch the annotation overlay.
+            </div>
           </div>
-          <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.5 }}>
-            Drag <strong style={{ color: '#818cf8' }}>⬡ FeedbackAgent</strong> to your bookmarks bar once, then click it on any page to launch the real-page overlay without leaving that product tab.
-          </div>
-          <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: 4 }}>
-            If you saved an older launcher before today, delete it and drag this one again.
-          </div>
+          <button
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(bookmarkletHref);
+                setCopiedBanner(true);
+                setTimeout(() => setCopiedBanner(false), 3000);
+              } catch {
+                // fallback: select the hidden input
+                bookmarkletLinkRef.current?.focus();
+              }
+            }}
+            style={{
+              padding: '9px 18px', borderRadius: 8, border: 'none',
+              background: copiedBanner ? '#059669' : '#6366f1',
+              color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', flexShrink: 0,
+              transition: 'background 0.2s',
+            }}
+          >
+            {copiedBanner ? '✓ Copied!' : '📋 Copy bookmarklet URL'}
+          </button>
         </div>
-        {/* Draggable bookmarklet */}
-        <a
-          ref={bookmarkletLinkRef}
-          href="#"
-          onClick={e => e.preventDefault()}
-          onDragStart={(e) => {
-            e.dataTransfer.setData('text/uri-list', bookmarkletHref);
-            e.dataTransfer.setData('text/plain', bookmarkletHref);
-          }}
-          draggable
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '8px 16px', borderRadius: 7,
-            background: '#1e293b', color: '#818cf8',
-            fontWeight: 700, fontSize: 13, textDecoration: 'none',
-            border: '1.5px dashed #334155',
-            cursor: 'grab', userSelect: 'none', flexShrink: 0,
-          }}
-          title="Drag this to your bookmarks bar"
-        >
-          ⬡ FeedbackAgent
-        </a>
+        {/* Install instructions */}
+        <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: 8, background: '#1e293b', fontSize: '0.78rem', color: '#94a3b8', lineHeight: 1.8 }}>
+          <strong style={{ color: '#e2e8f0' }}>How to install:</strong>{' '}
+          1. Click <strong style={{ color: '#818cf8' }}>Copy bookmarklet URL</strong> above&nbsp;&nbsp;
+          2. Right-click your bookmarks bar → <em>Add page…</em> (Chrome) or <em>Add Bookmark…</em> (Safari)&nbsp;&nbsp;
+          3. Set the <strong style={{ color: '#818cf8' }}>name</strong> to <code style={{ background: '#0f172a', padding: '1px 5px', borderRadius: 3 }}>⬡ FeedbackAgent</code>&nbsp;&nbsp;
+          4. <strong style={{ color: '#e2e8f0' }}>Replace the URL field</strong> with the copied text → Save
+        </div>
+        {/* Hidden anchor so the ref still works for any fallback */}
+        <a ref={bookmarkletLinkRef} href="#" style={{ display: 'none' }} tabIndex={-1} aria-hidden>bookmarklet</a>
       </div>
 
       {/* Create Session Modal */}
@@ -311,30 +311,39 @@ export default function SessionsPage() {
                     <div style={{ width: 30, height: 30, borderRadius: 8, background: '#6366f1', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 13, flexShrink: 0 }}>1</div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700, color: '#f8fafc', marginBottom: 8, fontSize: '0.92rem' }}>
-                        Drag to your bookmarks bar <span style={{ color: '#94a3b8', fontWeight: 400, fontSize: '0.8rem' }}>(only needed once)</span>
+                        Copy the session bookmarklet URL <span style={{ color: '#94a3b8', fontWeight: 400, fontSize: '0.8rem' }}>(only needed once)</span>
                       </div>
-                      <a
-                        ref={sessionBookmarkletRef}
-                        href="#"
-                        onClick={e => e.preventDefault()}
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData('text/uri-list', sessionBookmarkletHref);
-                          e.dataTransfer.setData('text/plain', sessionBookmarkletHref);
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(sessionBookmarkletHref);
+                            setCopiedSession(true);
+                            window.setTimeout(() => setCopiedSession(false), 1800);
+                          } catch (error) {
+                            console.error('[sessions] session bookmarklet copy failed', error);
+                          }
                         }}
-                        draggable
                         style={{
-                          display: 'inline-flex', alignItems: 'center', gap: 8,
-                          padding: '10px 18px', borderRadius: 10,
-                          background: '#1e293b', color: '#818cf8',
-                          fontWeight: 800, fontSize: 13, textDecoration: 'none',
-                          border: '1.5px dashed #6366f1', cursor: 'grab', userSelect: 'none',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '10px 18px',
+                          borderRadius: 10,
+                          background: copiedSession ? '#059669' : '#1e293b',
+                          color: '#f8fafc',
+                          fontWeight: 800,
+                          fontSize: 13,
+                          border: '1.5px solid #6366f1',
+                          cursor: 'pointer',
+                          userSelect: 'none',
                         }}
-                        title="Drag this to your bookmarks bar"
+                        title="Copy the bookmarklet URL to your clipboard"
                       >
-                        ⬡ {createdSessionTitle || 'FeedbackAgent Overlay'}
-                      </a>
-                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>
-                        This bookmarklet already knows this session ID — no prompts needed.
+                        {copiedSession ? '✓ Copied session launcher' : `📋 Copy ${createdSessionTitle || 'FeedbackAgent Overlay'}`}
+                      </button>
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, lineHeight: 1.6 }}>
+                        This launcher already knows this session ID. Paste it into a bookmark's URL field, then click that bookmark on the target tab.
                       </div>
                     </div>
                   </div>
@@ -344,10 +353,11 @@ export default function SessionsPage() {
                     <div style={{ width: 30, height: 30, borderRadius: 8, background: '#6366f1', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 13, flexShrink: 0 }}>2</div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700, color: '#f8fafc', marginBottom: 6, fontSize: '0.92rem' }}>
-                        Switch to the new tab and click the bookmarklet
+                        Add a bookmark manually, then switch tabs and click it
                       </div>
                       <div style={{ fontSize: '0.84rem', color: '#94a3b8', lineHeight: 1.6 }}>
-                        The annotation overlay will appear directly on <code style={{ background: '#1e293b', padding: '1px 5px', borderRadius: 4, color: '#93c5fd' }}>{targetUrl}</code>. Draw boxes, add notes, then click Submit — you'll land on the summary page automatically.
+                        Create a new bookmark named <code style={{ background: '#1e293b', padding: '1px 5px', borderRadius: 4, color: '#93c5fd' }}>⬡ {createdSessionTitle || 'FeedbackAgent Overlay'}</code>, replace the URL with the copied launcher, then open <code style={{ background: '#1e293b', padding: '1px 5px', borderRadius: 4, color: '#93c5fd' }}>{targetUrl}</code> and click the bookmark.
+                        The annotation overlay will appear directly on the page. Draw boxes, add notes, then click Submit — you'll land on the summary page automatically.
                       </div>
                     </div>
                   </div>
