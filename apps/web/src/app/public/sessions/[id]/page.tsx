@@ -1,6 +1,6 @@
 import type { FeedbackSession } from '@feedbackagent/shared';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:3001';
 
 async function getSession(id: string): Promise<FeedbackSession | null> {
   try {
@@ -46,7 +46,7 @@ export default async function PublicSessionPage({
       {/* Header */}
       <div style={{ marginBottom: 32 }}>
         <div style={{ fontSize: '0.75rem', color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
-          FeedbackAgent · Public Report
+          debugr.ai · Public Report
         </div>
         <h1 style={{ fontSize: '1.75rem', fontWeight: 700, marginBottom: 8 }}>{session.title}</h1>
         <div style={{ display: 'flex', gap: 12, color: '#888', fontSize: '0.875rem' }}>
@@ -131,7 +131,7 @@ export default async function PublicSessionPage({
       )}
 
       <footer style={{ borderTop: '1px solid #e5e5e5', paddingTop: 20, color: '#aaa', fontSize: '0.75rem' }}>
-        Powered by FeedbackAgent
+        Powered by debugr.ai
       </footer>
     </main>
   );

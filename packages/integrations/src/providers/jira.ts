@@ -17,7 +17,7 @@ export class JiraProvider implements IntegrationProvider {
     const description = [
       task.description,
       '',
-      `FeedbackAgent session: ${task.sessionTitle ?? task.sessionId}`,
+      `debugr.ai session: ${task.sessionTitle ?? task.sessionId}`,
       `Session ID: ${task.sessionId}`,
     ].join('\n');
 
@@ -43,7 +43,7 @@ export class JiraProvider implements IntegrationProvider {
             ],
           },
           issuetype: { name: 'Bug' },
-          labels: ['feedbackagent'],
+          labels: ['debugr'],
         },
       }),
     });

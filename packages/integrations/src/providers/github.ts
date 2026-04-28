@@ -17,7 +17,7 @@ export class GitHubProvider implements IntegrationProvider {
       task.description,
       '',
       '---',
-      `**FeedbackAgent session:** ${task.sessionTitle ?? task.sessionId}`,
+      `**debugr.ai session:** ${task.sessionTitle ?? task.sessionId}`,
       `**Session ID:** \`${task.sessionId}\``,
     ].join('\n');
 
@@ -34,7 +34,7 @@ export class GitHubProvider implements IntegrationProvider {
         body: JSON.stringify({
           title: task.title,
           body,
-          labels: ['feedbackagent'],
+          labels: ['debugr'],
         }),
       }
     );

@@ -64,7 +64,7 @@ export const tools = [
   // ─── V2: Feedback → Claude Code Handoff ──────────────────────────────────
   {
     name: 'push_feedback_to_claude',
-    description: 'Push feedback from FeedbackAgent to Claude Code for implementation. Returns task ID for tracking.',
+    description: 'Push feedback from debugr.ai to Claude Code for implementation. Returns task ID for tracking.',
     inputSchema: {
       type: 'object',
       properties: {

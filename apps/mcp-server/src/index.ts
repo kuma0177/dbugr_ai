@@ -282,7 +282,7 @@ async function handleRegisterCompletedTask(args: {
         task_id: updated.id,
         pr_url: args.pr_url,
         pr_number: args.pr_number,
-        message: 'Task registered. PR is now tracked in FeedbackAgent.',
+        message: 'Task registered. PR is now tracked in debugr.ai.',
       }, null, 2),
     }],
   };
@@ -291,7 +291,7 @@ async function handleRegisterCompletedTask(args: {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('FeedbackAgent MCP server running on stdio');
+  console.error('debugr.ai MCP server running on stdio');
 }
 
 main().catch(console.error);
