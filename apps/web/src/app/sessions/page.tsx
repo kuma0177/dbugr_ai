@@ -1,14 +1,13 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
-import { buildOverlayBookmarklet, type OverlayTarget } from '@/lib/overlayBookmarklet';
 import type { FeedbackSession } from '@feedbackagent/shared';
 
 const RECENT_URLS_KEY = 'feedbackagent_recent_urls';
-const DEFAULT_DEBUG_URLS = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173', 'http://localhost:4200'];
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
+const DEFAULT_DEBUG_URLS = ['http://127.0.0.1:3000', 'http://127.0.0.1:3001', 'http://127.0.0.1:5173', 'http://127.0.0.1:4200'];
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:3001/api';
 
 interface ChromeTab {
   title: string;
@@ -35,13 +34,10 @@ export default function SessionsPage() {
   const [chromeTabs, setChromeTabs] = useState<ChromeTab[]>([]);
   const [tabsLoading, setTabsLoading] = useState(false);
   const [tabsError, setTabsError] = useState('');
-  const [handoffTarget, setHandoffTarget] = useState<OverlayTarget>('claude');
   const [creatingSession, setCreatingSession] = useState(false);
   const [createdSessionId, setCreatedSessionId] = useState('');
   const [createdSessionTitle, setCreatedSessionTitle] = useState('');
-  const [copiedBanner, setCopiedBanner] = useState(false);
-  const [copiedSession, setCopiedSession] = useState(false);
-  const bookmarkletLinkRef = useRef<HTMLAnchorElement>(null);
+  const [handoffTarget, setHandoffTarget] = useState<'claude' | 'codex'>('claude');
 
   async function loadSessions() {
     try {
@@ -124,22 +120,24 @@ export default function SessionsPage() {
 
     setCreatingSession(true);
     const normalizedUrl = normalizeUrl(targetUrl);
-
-    // Open the target tab immediately inside the click handler so popup blockers allow it.
-    window.open(normalizedUrl, '_blank', 'noopener,noreferrer');
-
     try {
       const session = await api.sessions.create('proj_demo', {
         title: title.trim(),
         visibility: 'private',
       });
 
+      console.log('[sessions] created session', {
+        sessionId: session.id,
+        title: session.title,
+        target: handoffTarget,
+        url: normalizedUrl,
+      });
+
       const nextRecentUrls = [normalizedUrl, ...recentUrls.filter((entry) => entry !== normalizedUrl)].slice(0, 6);
       localStorage.setItem(RECENT_URLS_KEY, JSON.stringify(nextRecentUrls));
       setRecentUrls(nextRecentUrls);
 
-      // Stay in the modal — advance to Step 3 which shows the session-specific bookmarklet.
-      // The user switches to the newly opened tab and clicks it there.
+      // Stay in the modal — advance to Step 3 which confirms the native desktop flow is ready.
       setCreatedSessionId(session.id);
       setCreatedSessionTitle(session.title);
       setCreatingSession(false);
@@ -147,29 +145,10 @@ export default function SessionsPage() {
     } catch (err) {
       console.error('[sessions] Create error:', err);
       const msg = err instanceof Error ? err.message : String(err);
-      alert(`Failed to create session: ${msg}\n\nCheck that the API server is running at http://localhost:3001`);
+      alert(`Failed to create session: ${msg}\n\nCheck that the API server is running at http://127.0.0.1:3001`);
       setCreatingSession(false);
     }
   };
-
-  // Build bookmarklet href (must be a single expression, no newlines)
-  const webOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
-  const bookmarkletHref = buildOverlayBookmarklet({ webOrigin });
-
-  // Session-specific bookmarklet — pre-configured with session ID, title, and target
-  const sessionBookmarkletHref = buildOverlayBookmarklet({
-    webOrigin,
-    sessionId: createdSessionId,
-    title: createdSessionTitle,
-    target: handoffTarget,
-  });
-
-  useEffect(() => {
-    // React/Next sanitize javascript: href values. Set it imperatively so the bookmarklet remains functional.
-    if (bookmarkletLinkRef.current) {
-      bookmarkletLinkRef.current.setAttribute('href', bookmarkletHref);
-    }
-  }, [bookmarkletHref]);
 
   return (
     <main style={{ maxWidth: 1200, margin: '0 auto', padding: '24px' }}>
@@ -187,51 +166,20 @@ export default function SessionsPage() {
         </button>
       </div>
 
-      {/* Bookmarklet banner — primary overlay launcher */}
       <div style={{
-        marginBottom: 32, padding: '16px 20px', borderRadius: 12,
-        background: '#0f172a', border: '1px solid #1e293b',
+        marginBottom: 32,
+        padding: '18px 20px',
+        borderRadius: 12,
+        background: 'linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)',
+        border: '1px solid #dbeafe',
+        color: '#0f172a',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-          <div>
-            <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#94a3b8', marginBottom: 4 }}>
-              ⬡ Overlay launcher bookmarklet
-            </div>
-            <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.6 }}>
-              Install once → click on any page to launch the annotation overlay.
-            </div>
-          </div>
-          <button
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(bookmarkletHref);
-                setCopiedBanner(true);
-                setTimeout(() => setCopiedBanner(false), 3000);
-              } catch {
-                // fallback: select the hidden input
-                bookmarkletLinkRef.current?.focus();
-              }
-            }}
-            style={{
-              padding: '9px 18px', borderRadius: 8, border: 'none',
-              background: copiedBanner ? '#059669' : '#6366f1',
-              color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', flexShrink: 0,
-              transition: 'background 0.2s',
-            }}
-          >
-            {copiedBanner ? '✓ Copied!' : '📋 Copy bookmarklet URL'}
-          </button>
+        <div style={{ fontSize: '0.82rem', fontWeight: 800, color: '#2563eb', marginBottom: 6, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+          Native app first
         </div>
-        {/* Install instructions */}
-        <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: 8, background: '#1e293b', fontSize: '0.78rem', color: '#94a3b8', lineHeight: 1.8 }}>
-          <strong style={{ color: '#e2e8f0' }}>How to install:</strong>{' '}
-          1. Click <strong style={{ color: '#818cf8' }}>Copy bookmarklet URL</strong> above&nbsp;&nbsp;
-          2. Right-click your bookmarks bar → <em>Add page…</em> (Chrome) or <em>Add Bookmark…</em> (Safari)&nbsp;&nbsp;
-          3. Set the <strong style={{ color: '#818cf8' }}>name</strong> to <code style={{ background: '#0f172a', padding: '1px 5px', borderRadius: 3 }}>⬡ FeedbackAgent</code>&nbsp;&nbsp;
-          4. <strong style={{ color: '#e2e8f0' }}>Replace the URL field</strong> with the copied text → Save
+        <div style={{ fontSize: '0.95rem', lineHeight: 1.8 }}>
+          debugr.ai is now Mac app first. Open the DMG app to capture the screen, confirm the linked repo context, and submit to Claude or Codex. This web dashboard is the review surface for saved sessions.
         </div>
-        {/* Hidden anchor so the ref still works for any fallback */}
-        <a ref={bookmarkletLinkRef} href="#" style={{ display: 'none' }} tabIndex={-1} aria-hidden>bookmarklet</a>
       </div>
 
       {/* Create Session Modal */}
@@ -291,73 +239,46 @@ export default function SessionsPage() {
             </div>
 
             {createStep === 3 ? (
-              /* ── Step 3: Tab is open, show session-specific bookmarklet ── */
+              /* ── Step 3: Native desktop app handoff ── */
               <>
                 {/* Success banner */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 12, background: '#f0fdf4', border: '1px solid #86efac', marginBottom: 22 }}>
                   <span style={{ fontSize: 22 }}>✅</span>
                   <div>
-                    <div style={{ fontWeight: 700, color: '#166534', fontSize: '0.95rem' }}>Tab opened — session ready</div>
+                    <div style={{ fontWeight: 700, color: '#166534', fontSize: '0.95rem' }}>Native capture flow ready</div>
                     <div style={{ color: '#15803d', fontSize: '0.82rem', marginTop: 2 }}>
                       <strong>{createdSessionTitle}</strong> · Sending to <strong>{handoffTarget === 'codex' ? 'Codex' : 'Claude'}</strong>
+                    </div>
+                    <div style={{ color: '#166534', fontSize: '0.78rem', marginTop: 4 }}>
+                      Open the debugr.ai desktop app, freeze the right screenshot, confirm it matches the linked repo, then send it from the native canvas.
                     </div>
                   </div>
                 </div>
 
                 {/* Numbered steps */}
                 <div style={{ display: 'grid', gap: 14, marginBottom: 22 }}>
-                  {/* Step A: bookmarklet (only needed once) */}
+                  {/* Step A: native capture */}
                   <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '16px 18px', borderRadius: 14, background: '#0f172a', border: '1px solid #1e293b' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 8, background: '#6366f1', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 13, flexShrink: 0 }}>1</div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700, color: '#f8fafc', marginBottom: 8, fontSize: '0.92rem' }}>
-                        Copy the session bookmarklet URL <span style={{ color: '#94a3b8', fontWeight: 400, fontSize: '0.8rem' }}>(only needed once)</span>
+                        Open the desktop app
                       </div>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(sessionBookmarkletHref);
-                            setCopiedSession(true);
-                            window.setTimeout(() => setCopiedSession(false), 1800);
-                          } catch (error) {
-                            console.error('[sessions] session bookmarklet copy failed', error);
-                          }
-                        }}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          padding: '10px 18px',
-                          borderRadius: 10,
-                          background: copiedSession ? '#059669' : '#1e293b',
-                          color: '#f8fafc',
-                          fontWeight: 800,
-                          fontSize: 13,
-                          border: '1.5px solid #6366f1',
-                          cursor: 'pointer',
-                          userSelect: 'none',
-                        }}
-                        title="Copy the bookmarklet URL to your clipboard"
-                      >
-                        {copiedSession ? '✓ Copied session launcher' : `📋 Copy ${createdSessionTitle || 'FeedbackAgent Overlay'}`}
-                      </button>
                       <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, lineHeight: 1.6 }}>
-                        This launcher already knows this session ID. Paste it into a bookmark's URL field, then click that bookmark on the target tab.
+                        Open <code style={{ background: '#1e293b', padding: '1px 5px', borderRadius: 4, color: '#93c5fd' }}>debugr.ai</code> on macOS and choose whether to capture a browser page or another app on screen.
                       </div>
                     </div>
                   </div>
 
-                  {/* Step B: switch tab and click */}
+                  {/* Step B: submit */}
                   <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '16px 18px', borderRadius: 14, background: '#0f172a', border: '1px solid #1e293b' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 8, background: '#6366f1', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 13, flexShrink: 0 }}>2</div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700, color: '#f8fafc', marginBottom: 6, fontSize: '0.92rem' }}>
-                        Add a bookmark manually, then switch tabs and click it
+                        Confirm repo context, then submit
                       </div>
                       <div style={{ fontSize: '0.84rem', color: '#94a3b8', lineHeight: 1.6 }}>
-                        Create a new bookmark named <code style={{ background: '#1e293b', padding: '1px 5px', borderRadius: 4, color: '#93c5fd' }}>⬡ {createdSessionTitle || 'FeedbackAgent Overlay'}</code>, replace the URL with the copied launcher, then open <code style={{ background: '#1e293b', padding: '1px 5px', borderRadius: 4, color: '#93c5fd' }}>{targetUrl}</code> and click the bookmark.
-                        The annotation overlay will appear directly on the page. Draw boxes, add notes, then click Submit — you'll land on the summary page automatically.
+                        After the screenshot is frozen, Debugr asks the user to confirm it belongs to the current Claude or Codex work and linked GitHub repo before sending it.
                       </div>
                     </div>
                   </div>
@@ -399,7 +320,7 @@ export default function SessionsPage() {
                   disabled={creatingSession}
                 />
                 <div style={{ background: '#dbeafe', border: '1px solid #93c5fd', borderRadius: 12, padding: '14px 16px', color: '#1e3a8a', fontSize: '0.9rem', lineHeight: 1.6, marginBottom: 22 }}>
-                  Next we’ll ask which browser tab or page you want to debug, then we’ll launch the overlay flow on the real page instead of trapping you inside an iframe preview.
+                  Next we’ll ask which browser tab or page you want to debug, then we’ll hand the session to the native desktop app instead of trapping you inside an iframe preview.
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button className="btn btn-ghost" onClick={closeCreateModal} disabled={creatingSession} style={{ flex: 1 }}>
@@ -440,7 +361,7 @@ export default function SessionsPage() {
                     Quick picks
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {[...recentUrls, ...DEFAULT_DEBUG_URLS.filter((url) => !recentUrls.includes(url))].slice(0, 6).map((url) => (
+                    {[...new Set([...recentUrls, ...DEFAULT_DEBUG_URLS])].slice(0, 6).map((url) => (
                       <button
                         key={url}
                         type="button"
@@ -500,11 +421,11 @@ export default function SessionsPage() {
                       </div>
                     ) : chromeTabs.length === 0 ? (
                       <div style={{ padding: '10px 12px', borderRadius: 12, background: '#f8fafc', color: '#64748b', fontSize: '0.88rem', lineHeight: 1.5 }}>
-                        No Chrome tabs were returned. If Chrome is open, local tab access may be blocked on this machine. You can still paste a URL above and continue with the overlay flow.
+                        No Chrome tabs were returned. If Chrome is open, local tab access may be blocked on this machine. You can still paste a URL above and continue with the native desktop flow.
                       </div>
-                    ) : chromeTabs.map((tab) => (
+                    ) : chromeTabs.map((tab, index) => (
                       <button
-                        key={`${tab.url}-${tab.title}`}
+                        key={`${tab.url}-${tab.title}-${index}`}
                         type="button"
                         onClick={() => setTargetUrl(tab.url)}
                         style={{
@@ -528,7 +449,7 @@ export default function SessionsPage() {
                 </div>
 
                 <div style={{ marginTop: -4, marginBottom: 18, padding: '12px 14px', borderRadius: 12, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', fontSize: '0.84rem', lineHeight: 1.6 }}>
-                  Chrome tab picking is a local convenience, not a browser standard. If the list is empty, the most reliable fallback is to paste the target URL or open the page first and use the FeedbackAgent overlay launcher from that page.
+                  Chrome tab picking is only a convenience for finding a page quickly. The product now completes annotation inside the native desktop app.
                 </div>
 
                 <div style={{ marginBottom: 18 }}>
@@ -562,7 +483,7 @@ export default function SessionsPage() {
                 </div>
 
                 <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: 12, padding: '14px 16px', color: '#334155', fontSize: '0.88rem', lineHeight: 1.6, marginBottom: 22 }}>
-                  We’ll open the target page in a new browser tab, then give you a ready-to-use overlay launcher that already knows this session title and whether to send it to Claude or Codex.
+                  We’ll give you a ready-to-use native session that already knows this session title and whether to send it to Claude or Codex.
                 </div>
 
                 <div style={{ display: 'flex', gap: 10 }}>
@@ -575,7 +496,7 @@ export default function SessionsPage() {
                     disabled={creatingSession || !title.trim() || !targetUrl.trim()}
                     style={{ flex: 2 }}
                   >
-                    {creatingSession ? 'Preparing overlay...' : 'Launch Overlay'}
+                    {creatingSession ? 'Preparing session...' : 'Open Desktop App'}
                   </button>
                 </div>
               </>

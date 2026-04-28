@@ -42,8 +42,19 @@ const patchSchema = z.object({
   visibility: z.enum(['private', 'public', 'org']).optional(),
   aiSummary: z.string().optional(),
   aiTaskBrief: z.string().optional(),
-  userIntent: z.string().optional(), // stores serialised annotation data from bookmarklet
+  userIntent: z.string().optional(), // stores serialized native capture annotations
 });
+
+function getRepoContext() {
+  const repoUrl = process.env.TARGET_REPO_URL?.trim()
+    || (process.env.GITHUB_OWNER && process.env.GITHUB_REPO
+      ? `https://github.com/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}`
+      : '');
+  const repoBranch = process.env.TARGET_REPO_BRANCH?.trim() || 'main';
+  const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+  const repoName = match ? `${match[1]}/${match[2].replace(/\.git$/, '')}` : '';
+  return { repoUrl, repoName, repoBranch };
+}
 
 // POST /api/feedback-sessions/upload (from recorder)
 feedbackSessionRouter.post(
@@ -206,13 +217,27 @@ feedbackSessionRouter.post('/feedback-sessions/:id/send-to-claude', async (req: 
     },
   });
 
+  const resolvedTarget = target === 'codex' ? 'codex' : 'claude';
+  const targetLabel = resolvedTarget === 'codex' ? 'Codex' : 'Claude Code';
+  const { repoUrl, repoName, repoBranch } = getRepoContext();
+  const repoLabel = repoName || 'your linked GitHub repo';
+
   return res.status(201).json({
     data: {
       task_id: task.id,
       feedback_id: session.id,
-      message: `Feedback sent to ${target || 'claude'}. Your Claude Code instance can now call the 'get_feedback_details' MCP tool to access the full context.`,
+      message: `Feedback sent to ${resolvedTarget}. ${targetLabel} can now call the 'get_feedback_details' MCP tool to access the full context.`,
+      agent_feedback: {
+        title: `${targetLabel} is ready to review this capture`,
+        summary: `The screenshot, annotation boxes, and notes are now attached to feedback session ${session.id} for ${repoLabel}${repoUrl ? ` on branch ${repoBranch}` : ''}.`,
+        next_steps: [
+          `Confirm the issue is in scope for ${repoLabel}.`,
+          `Open ${targetLabel} and pull feedback session ${session.id} into the active work session.`,
+          'Generate the implementation diff or PR, then register the completed task back in Debugr.',
+        ],
+      },
       mcp_instructions: `
-In your Claude Code instance:
+In your ${targetLabel} instance:
 1. Call get_feedback_details with feedback_id: "${session.id}"
 2. Implement the code changes
 3. Call register_completed_task with the PR details when done

@@ -6,9 +6,30 @@ const execFileAsync = promisify(execFile);
 
 export const systemRouter = Router();
 
+const smokeLogEntries: Array<{
+  timestamp: string;
+  stage: string;
+  sessionId: string | null;
+  title: string | null;
+  target: string | null;
+  url: string | null;
+  details: unknown;
+}> = [];
+
 interface ChromeTab {
   title: string;
   url: string;
+}
+
+function getRepoContext() {
+  const repoUrl = process.env.TARGET_REPO_URL?.trim()
+    || (process.env.GITHUB_OWNER && process.env.GITHUB_REPO
+      ? `https://github.com/${process.env.GITHUB_OWNER}/${process.env.GITHUB_REPO}`
+      : '');
+  const repoBranch = process.env.TARGET_REPO_BRANCH?.trim() || 'main';
+  const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+  const repoName = match ? `${match[1]}/${match[2].replace(/\.git$/, '')}` : '';
+  return { repoUrl, repoName, repoBranch };
 }
 
 async function readChromeTabs(): Promise<ChromeTab[]> {
@@ -50,7 +71,7 @@ systemRouter.get('/system/chrome-tabs', async (_req: Request, res: Response) => 
     if (tabs.length === 0) {
       return res.status(503).json({
         error:
-          'Chrome tab access returned no pages. If Chrome is open, macOS may be blocking local tab inspection for this app. Paste a URL instead or use the overlay launcher directly from the target page.',
+          'Chrome tab access returned no pages. If Chrome is open, macOS may be blocking local tab inspection for this app. Paste a URL instead or keep going and capture another app or browser window from the native screen picker.',
       });
     }
     return res.json({ data: tabs });
@@ -60,4 +81,46 @@ systemRouter.get('/system/chrome-tabs', async (_req: Request, res: Response) => 
       error: `Could not read Chrome tabs. Make sure Google Chrome is running and that local automation access is allowed. Details: ${message}`,
     });
   }
+});
+
+systemRouter.get('/system/handoff-context', (req: Request, res: Response) => {
+  const target = req.query.target === 'codex' ? 'codex' : 'claude';
+  const { repoUrl, repoName, repoBranch } = getRepoContext();
+
+  return res.json({
+    data: {
+      target,
+      agentLabel: target === 'codex' ? 'Codex' : 'Claude Code',
+      agentSessionLabel: target === 'codex' ? 'Current Codex work session' : 'Current Claude Code session',
+      repoUrl: repoUrl || null,
+      repoName: repoName || null,
+      repoBranch,
+      ready: Boolean(repoUrl),
+      warning: repoUrl
+        ? null
+        : 'No linked GitHub repo is configured for this target yet. Set TARGET_REPO_URL or GITHUB_OWNER/GITHUB_REPO before sending feedback.',
+    },
+  });
+});
+
+systemRouter.post('/system/smoke-log', (req: Request, res: Response) => {
+  const stage = typeof req.body?.stage === 'string' ? req.body.stage : 'unknown';
+  const entry = {
+    timestamp: new Date().toISOString(),
+    stage,
+    sessionId: typeof req.body?.sessionId === 'string' ? req.body.sessionId : null,
+    title: typeof req.body?.title === 'string' ? req.body.title : null,
+    target: typeof req.body?.target === 'string' ? req.body.target : null,
+    url: typeof req.body?.url === 'string' ? req.body.url : null,
+    details: req.body?.details ?? null,
+  };
+
+  smokeLogEntries.unshift(entry);
+  smokeLogEntries.splice(100);
+  console.log('[system] smoke log:', JSON.stringify(entry));
+  return res.status(201).json({ data: entry });
+});
+
+systemRouter.get('/system/smoke-log', (_req: Request, res: Response) => {
+  return res.json({ data: smokeLogEntries });
 });

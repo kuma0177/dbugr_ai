@@ -7,10 +7,8 @@ import type { FeedbackSession } from '@feedbackagent/shared';
 
 interface Note {
   id: string;
-  type: 'voice' | 'text';
-  content: string;
-  duration?: number;
-  timestamp: number;
+  text: string;
+  createdAt?: string;
 }
 
 interface Box {
@@ -24,9 +22,16 @@ interface Box {
 }
 
 interface SessionMeta {
-  loadedUrl?: string;
-  viewportWidth?: number;
-  viewportHeight?: number;
+  captureUrl?: string;
+  canvasWidth?: number;
+  canvasHeight?: number;
+  capturedAt?: string;
+}
+
+interface AgentFeedback {
+  title: string;
+  summary: string;
+  next_steps: string[];
 }
 
 const AI_TARGETS = [
@@ -71,42 +76,45 @@ function SummaryPageInner() {
   const [sending, setSending] = useState(false);
   const [expandedTarget, setExpandedTarget] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
-  const [autoSendStarted, setAutoSendStarted] = useState(false);
+  const submittedTarget = searchParams.get('submitted') === '1' ? searchParams.get('target') : null;
 
   useEffect(() => {
     async function load() {
       console.log('[summary] loading session:', id);
       try {
         const sessionData = await api.sessions.get(id);
-        console.log('[summary] session loaded:', sessionData.id, 'status:', sessionData.status, 'userIntent length:', sessionData.userIntent?.length ?? 0);
+        console.log(
+          '[summary] session loaded:',
+          sessionData.id,
+          'status:',
+          sessionData.status,
+          'userIntent length:',
+          sessionData.userIntent?.length ?? 0,
+        );
         setSession(sessionData);
 
-        // 1. Try sessionStorage first (iframe/record-tab flow)
-        const storedBoxes = sessionStorage.getItem(`session_${id}_boxes`);
-        const storedMeta  = sessionStorage.getItem(`session_${id}_meta`);
-
-        if (storedBoxes) {
-          const parsed = JSON.parse(storedBoxes);
-          console.log('[summary] loaded', parsed.length, 'boxes from sessionStorage');
-          setBoxes(parsed);
-          if (storedMeta) setMeta(JSON.parse(storedMeta));
-        } else if (sessionData.userIntent) {
-          // 2. Fall back to userIntent saved by the bookmarklet
-          console.log('[summary] no sessionStorage — parsing userIntent from API');
+        if (sessionData.userIntent) {
+          console.log('[summary] parsing native capture payload from API');
           try {
             const parsed = JSON.parse(sessionData.userIntent);
-            console.log('[summary] userIntent parsed — boxes:', parsed.boxes?.length ?? 0, 'pageUrl:', parsed.pageUrl);
+            console.log(
+              '[summary] native payload parsed — boxes:',
+              parsed.boxes?.length ?? 0,
+              'captureUrl:',
+              parsed.captureUrl,
+            );
             if (parsed.boxes) setBoxes(parsed.boxes);
             setMeta({
-              loadedUrl: parsed.pageUrl,
-              viewportWidth: parsed.viewportWidth,
-              viewportHeight: parsed.viewportHeight,
+              captureUrl: parsed.captureUrl,
+              canvasWidth: parsed.canvasWidth,
+              canvasHeight: parsed.canvasHeight,
+              capturedAt: parsed.capturedAt,
             });
           } catch (parseErr) {
             console.error('[summary] userIntent JSON parse failed:', parseErr);
           }
         } else {
-          console.log('[summary] no sessionStorage and no userIntent — session has no annotations yet');
+          console.log('[summary] no userIntent found — session has no native annotations yet');
         }
       } catch (e) {
         console.error('[summary] load error:', e);
@@ -117,7 +125,7 @@ function SummaryPageInner() {
     load();
   }, [id]);
 
-  const [sentData, setSentData] = useState<{ taskId: string; feedbackId: string; message: string } | null>(null);
+  const [sentData, setSentData] = useState<{ taskId: string; feedbackId: string; message: string; agentFeedback?: AgentFeedback } | null>(null);
 
   const handleSend = async (target: 'claude' | 'codex') => {
     if (!session) return;
@@ -135,7 +143,12 @@ function SummaryPageInner() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'Failed to send');
       console.log('[summary] task created:', json.data.task_id);
-      setSentData({ taskId: json.data.task_id, feedbackId: json.data.feedback_id, message: json.data.message });
+      setSentData({
+        taskId: json.data.task_id,
+        feedbackId: json.data.feedback_id,
+        message: json.data.message,
+        agentFeedback: json.data.agent_feedback as AgentFeedback | undefined,
+      });
       setSent(target);
     } catch (err) {
       console.error('[summary] send error:', err);
@@ -144,18 +157,6 @@ function SummaryPageInner() {
       setSending(false);
     }
   };
-
-  useEffect(() => {
-    const requestedTarget = searchParams.get('target');
-    const autoSend = searchParams.get('autoSend') === '1';
-    console.log('[summary] autoSend check — autoSend:', autoSend, 'target:', requestedTarget, 'sessionReady:', !!session, 'alreadyStarted:', autoSendStarted);
-    if (!autoSend || autoSendStarted || !session) return;
-    if (requestedTarget !== 'claude' && requestedTarget !== 'codex') return;
-
-    console.log('[summary] triggering autoSend to', requestedTarget);
-    setAutoSendStarted(true);
-    handleSend(requestedTarget);
-  }, [autoSendStarted, searchParams, session]);
 
   if (loading) return <p className="muted" style={{ padding: 32 }}>Loading summary…</p>;
   if (!session) return <p className="muted" style={{ padding: 32 }}>Session not found.</p>;
@@ -173,12 +174,20 @@ function SummaryPageInner() {
         {sentData && (
           <div style={{ textAlign: 'left', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 14, padding: '18px 20px', marginBottom: 28 }}>
             <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#6366f1', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>
-              Next steps
+              Agent feedback
             </div>
             <div style={{ color: '#334155', fontSize: '0.92rem', lineHeight: 1.7 }}>
               <div>Task created: <strong>{sentData.taskId}</strong></div>
               <div>Feedback session: <strong>{sentData.feedbackId}</strong></div>
-              <div>{sentData.message}</div>
+              <div style={{ marginTop: 10, fontWeight: 700 }}>{sentData.agentFeedback?.title || 'Handoff accepted'}</div>
+              <div>{sentData.agentFeedback?.summary || sentData.message}</div>
+              {sentData.agentFeedback?.next_steps?.length ? (
+                <ol style={{ marginTop: 10 }}>
+                  {sentData.agentFeedback.next_steps.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ol>
+              ) : null}
             </div>
           </div>
         )}
@@ -199,10 +208,16 @@ function SummaryPageInner() {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <span className={`badge badge-${session.status}`}>{session.status}</span>
           <span className="muted">{boxes.length} annotation{boxes.length !== 1 ? 's' : ''}</span>
-          {meta.loadedUrl && <span className="muted" style={{ fontSize: '0.8rem' }}>on <code style={{ background: '#f1f5f9', padding: '1px 6px', borderRadius: 4 }}>{meta.loadedUrl}</code></span>}
+          {meta.captureUrl && <span className="muted" style={{ fontSize: '0.8rem' }}>on <code style={{ background: '#f1f5f9', padding: '1px 6px', borderRadius: 4 }}>{meta.captureUrl}</code></span>}
           <span className="muted">{new Date(session.createdAt).toLocaleString()}</span>
         </div>
       </div>
+
+      {submittedTarget === 'claude' || submittedTarget === 'codex' ? (
+        <div style={{ marginBottom: 24, padding: '16px 18px', borderRadius: 12, background: '#ecfdf3', border: '1px solid #86efac', color: '#166534' }}>
+          Native capture submitted to <strong>{submittedTarget === 'codex' ? 'Codex' : 'Claude Code'}</strong>. You can review the saved annotations below.
+        </div>
+      ) : null}
 
       {boxes.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px 24px', color: '#999' }}>
@@ -222,35 +237,6 @@ function SummaryPageInner() {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={box.screenshot} alt={`Annotation #${i + 1}`}
                     style={{ width: '100%', height: 160, objectFit: 'cover', objectPosition: 'top', display: 'block', borderBottom: '1px solid #f1f5f9' }} />
-                ) : meta.loadedUrl ? (
-                  /* Live mini-preview: scaled iframe with box overlay */
-                  <div style={{ position: 'relative', height: 160, overflow: 'hidden', background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
-                    <iframe
-                      src={meta.loadedUrl}
-                      style={{
-                        position: 'absolute',
-                        width: `${meta.viewportWidth ?? 1280}px`,
-                        height: `${meta.viewportHeight ?? 800}px`,
-                        border: 'none',
-                        pointerEvents: 'none',
-                        transformOrigin: 'top left',
-                        transform: `scale(${300 / (meta.viewportWidth ?? 1280)})`,
-                      }}
-                      sandbox="allow-same-origin allow-scripts"
-                      title={`Preview of annotation #${i + 1}`}
-                    />
-                    {/* Box highlight scaled to preview */}
-                    <div style={{
-                      position: 'absolute',
-                      left: `${(box.x / (meta.viewportWidth ?? 1280)) * 300}px`,
-                      top: `${(box.y / (meta.viewportHeight ?? 800)) * 160}px`,
-                      width: `${(box.width / (meta.viewportWidth ?? 1280)) * 300}px`,
-                      height: `${(box.height / (meta.viewportHeight ?? 800)) * 160}px`,
-                      border: '2px solid #ef4444',
-                      background: 'rgba(239,68,68,0.2)',
-                      pointerEvents: 'none',
-                    }} />
-                  </div>
                 ) : (
                   /* Dot-grid placeholder with box visualisation */
                   <div style={{
@@ -262,10 +248,10 @@ function SummaryPageInner() {
                   }}>
                     <div style={{
                       position: 'absolute',
-                      left: `${Math.min(box.x / (meta.viewportWidth ?? 1280) * 300, 240)}px`,
-                      top: `${Math.min(box.y / (meta.viewportHeight ?? 800) * 160, 120)}px`,
-                      width: `${Math.min(box.width / (meta.viewportWidth ?? 1280) * 300, 80)}px`,
-                      height: `${Math.min(box.height / (meta.viewportHeight ?? 800) * 160, 60)}px`,
+                      left: `${Math.min(box.x / (meta.canvasWidth ?? 1280) * 300, 240)}px`,
+                      top: `${Math.min(box.y / (meta.canvasHeight ?? 800) * 160, 120)}px`,
+                      width: `${Math.min(box.width / (meta.canvasWidth ?? 1280) * 300, 80)}px`,
+                      height: `${Math.min(box.height / (meta.canvasHeight ?? 800) * 160, 60)}px`,
                       border: '2px solid #6366f1',
                       background: 'rgba(99,102,241,0.15)',
                     }} />
@@ -287,8 +273,8 @@ function SummaryPageInner() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {box.notes.map(note => (
                         <div key={note.id} style={{ fontSize: '0.85rem', color: '#374151', background: '#f9fafb', borderRadius: 6, padding: '8px 10px', border: '1px solid #f1f5f9' }}>
-                          <span style={{ marginRight: 6 }}>{note.type === 'voice' ? '🎤' : '📝'}</span>
-                          {note.content}
+                          <span style={{ marginRight: 6 }}>📝</span>
+                          {note.text}
                         </div>
                       ))}
                     </div>
@@ -298,63 +284,60 @@ function SummaryPageInner() {
             ))}
           </div>
 
-          {/* ── Send to AI ─────────────────────────────────────────────────── */}
-          <div style={{ border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden', marginBottom: 24 }}>
-            <div style={{ padding: '20px 24px', background: '#f8fafc', borderBottom: '1px solid #e5e7eb' }}>
-              <h2 style={{ margin: 0, fontSize: '1.1rem' }}>Send to AI for code fixes</h2>
-              <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: '0.875rem' }}>
-                Your {boxes.length} annotation{boxes.length > 1 ? 's' : ''} and notes will be packaged into a structured prompt.
-                The AI reads the coordinates, screenshots, and your descriptions to generate targeted code changes.
-              </p>
-            </div>
+          {submittedTarget !== 'claude' && submittedTarget !== 'codex' ? (
+            <div style={{ border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden', marginBottom: 24 }}>
+              <div style={{ padding: '20px 24px', background: '#f8fafc', borderBottom: '1px solid #e5e7eb' }}>
+                <h2 style={{ margin: 0, fontSize: '1.1rem' }}>Send to AI for code fixes</h2>
+                <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: '0.875rem' }}>
+                  Your {boxes.length} annotation{boxes.length > 1 ? 's' : ''} and notes will be packaged into a structured prompt.
+                  The AI reads the coordinates, screenshots, and your descriptions to generate targeted code changes.
+                </p>
+              </div>
 
-            <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {AI_TARGETS.map(target => (
-                <div key={target.key} style={{ border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
-
-                  {/* Target row */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px' }}>
-                    <span style={{ fontSize: '1.4rem' }}>{target.icon}</span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#111' }}>{target.label}</div>
-                      <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 2 }}>{target.what}</div>
+              <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {AI_TARGETS.map(target => (
+                  <div key={target.key} style={{ border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px' }}>
+                      <span style={{ fontSize: '1.4rem' }}>{target.icon}</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#111' }}>{target.label}</div>
+                        <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 2 }}>{target.what}</div>
+                      </div>
+                      <button
+                        onClick={() => setExpandedTarget(expandedTarget === target.key ? null : target.key)}
+                        style={{ padding: '4px 10px', background: 'none', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}
+                      >
+                        {expandedTarget === target.key ? '▲ Hide' : '▼ What happens?'}
+                      </button>
+                      <button
+                        onClick={() => handleSend(target.key as 'claude' | 'codex')}
+                        disabled={sending}
+                        style={{
+                          padding: '9px 20px', borderRadius: 8, border: 'none', cursor: sending ? 'not-allowed' : 'pointer',
+                          background: sending ? '#e5e7eb' : target.color,
+                          color: sending ? '#9ca3af' : '#fff',
+                          fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', flexShrink: 0,
+                        }}
+                      >
+                        {sending ? '⏳ Sending…' : `→ ${target.label}`}
+                      </button>
                     </div>
-                    {/* "What happens?" toggle */}
-                    <button
-                      onClick={() => setExpandedTarget(expandedTarget === target.key ? null : target.key)}
-                      style={{ padding: '4px 10px', background: 'none', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}
-                    >
-                      {expandedTarget === target.key ? '▲ Hide' : '▼ What happens?'}
-                    </button>
-                    <button
-                      onClick={() => handleSend(target.key as 'claude' | 'codex')}
-                      disabled={sending}
-                      style={{
-                        padding: '9px 20px', borderRadius: 8, border: 'none', cursor: sending ? 'not-allowed' : 'pointer',
-                        background: sending ? '#e5e7eb' : target.color,
-                        color: sending ? '#9ca3af' : '#fff',
-                        fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', flexShrink: 0,
-                      }}
-                    >
-                      {sending ? '⏳ Sending…' : `→ ${target.label.replace('Send to ', 'Send to ')}`}
-                    </button>
+
+                    {expandedTarget === target.key && (
+                      <div style={{ background: '#f8fafc', borderTop: '1px solid #e5e7eb', padding: '14px 16px' }}>
+                        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#6b7280', marginBottom: 10, letterSpacing: 0.5 }}>WHAT HAPPENS STEP BY STEP</div>
+                        <ol style={{ margin: 0, padding: '0 0 0 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {target.how.map((step, i) => (
+                            <li key={i} style={{ fontSize: '0.85rem', color: '#374151', lineHeight: 1.5 }}>{step}</li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
                   </div>
-
-                  {/* Expanded "what happens" panel */}
-                  {expandedTarget === target.key && (
-                    <div style={{ background: '#f8fafc', borderTop: '1px solid #e5e7eb', padding: '14px 16px' }}>
-                      <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#6b7280', marginBottom: 10, letterSpacing: 0.5 }}>WHAT HAPPENS STEP BY STEP</div>
-                      <ol style={{ margin: 0, padding: '0 0 0 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {target.how.map((step, i) => (
-                          <li key={i} style={{ fontSize: '0.85rem', color: '#374151', lineHeight: 1.5 }}>{step}</li>
-                        ))}
-                      </ol>
-                    </div>
-                  )}
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          ) : null}
 
           <button className="btn btn-ghost" onClick={() => router.push('/sessions')} style={{ padding: '10px 20px' }}>
             ← Back to Sessions

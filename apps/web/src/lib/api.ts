@@ -7,7 +7,7 @@ import type {
   CreateTaskRequest,
 } from '@feedbackagent/shared';
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:3001/api';
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {

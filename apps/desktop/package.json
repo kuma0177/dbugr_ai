@@ -1,0 +1,19 @@
+{
+  "name": "@feedbackagent/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "vite": "vite",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "typescript": "^5.4.0",
+    "vite": "^6.0.0"
+  }
+}

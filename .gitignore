@@ -10,5 +10,7 @@ prisma/dev.db-journal
 packages/db/.env
 apps/**/.env
 apps/**/.env.local
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen
 uploads/
 dev.db
