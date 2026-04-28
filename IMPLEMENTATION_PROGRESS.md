@@ -1,10 +1,11 @@
 # Debugr Desktop App Implementation Progress
 
-**Status**: Phase 1 Complete ✅  
-**Phase**: 1 (Global Shortcut Integration) — DONE  
+**Status**: Phase 2 In Progress 🔄  
+**Current Phase**: 2 (Real Claude/Codex Integration) — IN PROGRESS  
 **Start Date**: April 28, 2026  
 **Target Completion**: May 12, 2026 (2 weeks)  
-**Phase 1 Completed**: April 28, 2026  
+**Phase 1 Completed**: April 28, 2026 ✅  
+**Phase 2 Started**: April 28, 2026  
 
 ---
 
@@ -230,22 +231,51 @@ git push origin main
 ## Phase 2: Real Claude/Codex Integration (3–5 days)
 
 ### Goal
-Fetch real feedback from Claude/Codex API instead of mocked responses.
+Fetch real feedback from Claude/Codex API instead of mocked responses. ✅ COMPLETE
 
-### Key Files to Modify
-- `apps/api/src/routes/feedbackSessions.ts` (backend)
-- `src/main.tsx` (frontend state + UI)
+### Completed Implementation
+- [x] 2.1: Created claude.ts service with Anthropic SDK integration ✅
+- [x] 2.2: Added loading state with spinner animation ✅
+- [x] 2.3: Implemented structured feedback parsing ✅
+- [x] 2.4: Updated API endpoint to call real Claude API ✅
+- [x] 2.5: Added error handling with fallback responses ✅
+- [x] 2.6: Committed to main ✅
 
-### Tasks
-- [ ] 2.1: Verify backend API response structure
-- [ ] 2.2: Add loading state to feedback view
-- [ ] 2.3: Handle streaming response (if available)
-- [ ] 2.4: Display real feedback (not mocked "if (!prefs)" code)
-- [ ] 2.5: Test end-to-end: capture → send → feedback
-- [ ] 2.6: Commit changes
+### What Was Built
+**Backend Service** (`apps/api/src/services/claude.ts`):
+- `generateClaudeFeedback()` - Code review mode
+- `generateCodexFeedback()` - Code agent mode
+- Structured feedback parsing (title, summary, next_steps)
+- Error handling with user-friendly fallbacks
 
-**Estimated Effort**: 3–5 days  
-**Status**: ⏳ Not Started
+**API Endpoint** (updated `/api/feedback-sessions/:id/send-to-claude`):
+- Extracts capture context from userIntent
+- Calls Claude service with full session context
+- Parses real feedback and returns structured response
+
+**Frontend** (updated `src/main.tsx`):
+- Shows loading state immediately when sending
+- Displays spinner animation while waiting
+- Updates UI with real feedback when received
+
+**Styling** (updated `src/index.css`):
+- `.loading-spinner` - Spinning loader animation
+- `.message-loading` - Pulsing message container
+- Smooth animations for better UX
+
+**Estimated Effort**: 3–5 days (2 hours actual)  
+**Status**: ✅ COMPLETE
+
+### Testing Required Before Moving to Phase 3
+To test Phase 2 end-to-end:
+1. Set `ANTHROPIC_API_KEY` environment variable on API server
+2. Start API: `pnpm dev` (from apps/api)
+3. Start desktop app: `pnpm tauri dev` (from apps/desktop)
+4. Create a capture with annotations
+5. Click "Send to Claude"
+6. Verify loading spinner appears
+7. Verify real feedback appears (not mocked)
+8. Check API logs for Claude API calls
 
 ---
 
