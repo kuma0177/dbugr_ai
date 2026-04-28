@@ -176,7 +176,7 @@ backdrop.innerHTML=
 '<button id="__fa_tab_voice" style="flex:1;padding:9px 10px;border-radius:10px;border:1px solid #dbe4f0;background:#fff;color:#475569;font-weight:700;cursor:pointer;">Voice</button>'+
 '</div>'+
 '<div id="__fa_text_wrap">'+
-'<textarea id="__fa_note_text" placeholder="Describe the issue you\'re seeing…" style="width:100%;height:90px;padding:10px 12px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:14px;resize:none;outline:none;line-height:1.5;color:#111;"></textarea>'+
+'<textarea id="__fa_note_text" placeholder="Describe the issue you\\'re seeing…" style="width:100%;height:90px;padding:10px 12px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:14px;resize:none;outline:none;line-height:1.5;color:#111;"></textarea>'+
 '<div id="__fa_text_count" style="font-size:11px;color:#9ca3af;text-align:right;margin:4px 0 12px;">0/1000</div>'+
 '</div>'+
 '<div id="__fa_voice_wrap" style="display:none;margin-bottom:12px;">'+
@@ -302,7 +302,7 @@ document.getElementById('__fa_close').addEventListener('click',function(){root.r
 var titlePill=document.getElementById('__fa_title_pill');
 if(titlePill&&sessionId)titlePill.textContent='→ "'+presetTitle+'"';
 if(!sessionId){
-var promptTitle=prompt('FeedbackAgent — what are you annotating?\n(Enter a short title for this session)');
+var promptTitle=prompt('FeedbackAgent — what are you annotating?\\n(Enter a short title for this session)');
 if(!promptTitle||!promptTitle.trim()){root.remove();style.remove();window.__FA_ACTIVE=false;return;}
 fetch(API+'/projects/'+PROJ+'/feedback-sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:promptTitle.trim(),visibility:'private'})})
 .then(function(r){return r.json();})
