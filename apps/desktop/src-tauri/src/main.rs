@@ -7,6 +7,24 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+// ── macOS: force-activate the app so overlay windows actually appear ──────────
+// LSUIElement=true (accessory/menu-bar mode) means macOS never makes us the
+// active app, so any window.show() call is silently ignored.  We must call
+// -[NSApplication activateIgnoringOtherApps:YES] first.
+
+#[cfg(target_os = "macos")]
+fn macos_activate() {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![app, activateIgnoringOtherApps: true];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_activate() {}
+
 // ── CoreGraphics for screen-capture permissions ───────────────────────────────
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -99,6 +117,7 @@ fn capture_interactive_screenshot(app: AppHandle) -> Result<String, String> {
 /// Called from frontend (tray Sessions menu or "New Annotation" button).
 #[tauri::command]
 fn show_overlay(app: AppHandle) -> Result<(), String> {
+    macos_activate();
     trigger_overlay(&app);
     Ok(())
 }
@@ -171,9 +190,29 @@ fn trigger_overlay(app: &AppHandle) {
             let _ = overlay.hide();
             return;
         }
+    } else {
+        eprintln!("Debugr overlay window not found");
     }
 
-    // Capture the screen in a background thread so we don't block the shortcut handler
+    // Show the native overlay immediately so the toolbar/inspector are visible
+    // even if capture permission is slow or unavailable.
+    //
+    // IMPORTANT: LSUIElement=true means we're an accessory app — macOS will
+    // never make us the active application on its own, so window.show() +
+    // set_focus() have no visual effect unless we activate first.
+    macos_activate();
+
+    if let Some(overlay) = app.get_webview_window("overlay") {
+        eprintln!("Debugr overlay window found");
+        if let Err(e) = overlay.show() {
+            eprintln!("Failed to show overlay: {e}");
+        }
+        if let Err(e) = overlay.set_focus() {
+            eprintln!("Failed to focus overlay: {e}");
+        }
+    }
+
+    // Capture the screen in a background thread so we don't block the shortcut handler.
     let app = app.clone();
     std::thread::spawn(move || {
         // Small delay so the Debugr window has time to hide if needed
@@ -190,8 +229,6 @@ fn trigger_overlay(app: &AppHandle) {
                     let _ = overlay.emit("set-screenshot", String::new());
                 }
             }
-            let _ = overlay.show();
-            let _ = overlay.set_focus();
         }
     });
 }

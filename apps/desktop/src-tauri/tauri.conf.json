@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "security": {
       "csp": null
     },
@@ -26,9 +27,11 @@
       {
         "label": "overlay",
         "title": "Debugr Annotation",
-        "url": "http://127.0.0.1:5173/overlay.html",
+        "url": "overlay.html",
         "decorations": false,
         "alwaysOnTop": true,
+        "transparent": true,
+        "backgroundColor": "#00000000",
         "visible": false,
         "resizable": false,
         "skipTaskbar": true,
