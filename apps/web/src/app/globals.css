@@ -25,7 +25,19 @@ a:hover { color: var(--accent-hover); }
   padding: 0 24px; height: 56px; border-bottom: 1px solid var(--border);
   position: sticky; top: 0; background: var(--bg); z-index: 100;
 }
-.nav-brand { font-weight: 700; font-size: 1.1rem; color: var(--text); }
+.nav-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--text);
+}
+.nav-brand-icon {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
 .nav-links { display: flex; gap: 20px; font-size: 0.9rem; color: var(--muted); }
 .nav-links a { color: var(--muted); }
 .nav-links a:hover { color: var(--text); }

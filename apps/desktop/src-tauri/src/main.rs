@@ -2,6 +2,7 @@
 
 use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Emitter, Manager};
+use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -128,6 +129,39 @@ fn hide_main_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn tray_template_icon() -> Image<'static> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("icons/trayTemplate.png");
+    let file = std::fs::File::open(&path)
+        .unwrap_or_else(|_| panic!("No tray template icon found — add {}", path.display()));
+
+    let mut decoder = png::Decoder::new(file);
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().expect("Failed to read tray template PNG");
+    let mut data = vec![0; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut data)
+        .expect("Failed to decode tray template PNG");
+
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => data[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgb => data[..info.buffer_size()]
+            .chunks_exact(3)
+            .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
+            .collect(),
+        png::ColorType::Grayscale => data[..info.buffer_size()]
+            .iter()
+            .flat_map(|&g| [g, g, g, 255])
+            .collect(),
+        png::ColorType::GrayscaleAlpha => data[..info.buffer_size()]
+            .chunks_exact(2)
+            .flat_map(|ga| [ga[0], ga[0], ga[0], ga[1]])
+            .collect(),
+        png::ColorType::Indexed => unreachable!("normalize_to_color8 should expand indexed PNGs"),
+    };
+
+    Image::new_owned(rgba, info.width, info.height)
+}
+
 // ── Core: trigger annotation overlay ─────────────────────────────────────────
 
 fn trigger_overlay(app: &AppHandle) {
@@ -184,6 +218,8 @@ fn main() {
                 .build()?;
 
             let _tray = TrayIconBuilder::new()
+                .icon(tray_template_icon())
+                .icon_as_template(true)   // renders correctly in both light & dark menu bar
                 .menu(&menu)
                 .tooltip("Debugr — ⌘⌥A to annotate")
                 .on_menu_event(|app, event| match event.id().as_ref() {

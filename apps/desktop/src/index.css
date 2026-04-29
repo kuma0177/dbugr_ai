@@ -64,15 +64,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   width: 64px;
   height: 64px;
   margin: 0 auto 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 18px;
-  background: linear-gradient(135deg, #42a5ff, var(--blue2));
-  color: #fff;
-  font-size: 26px;
-  font-weight: 900;
-  box-shadow: 0 10px 28px rgba(15, 109, 253, 0.32);
+  display: block;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 28px rgba(15, 109, 253, 0.20));
 }
 
 .welcome-card h1 {
@@ -191,10 +185,20 @@ kbd {
 .traffic-light.green  { background: #28c840; }
 
 .topbar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13.5px;
   font-weight: 700;
   letter-spacing: -0.01em;
   text-align: center;
+}
+
+.topbar-brand-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  object-fit: contain;
 }
 
 .topbar-actions {

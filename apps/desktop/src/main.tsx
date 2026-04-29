@@ -3,6 +3,8 @@ import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import './index.css';
 
+const brandIconUrl = new URL('./assets/brand-icon.png', import.meta.url).href;
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type Target = 'claude' | 'codex';
@@ -154,7 +156,7 @@ function renderWelcome() {
   app.innerHTML = `
     <div class="welcome-shell">
       <div class="welcome-card">
-        <div class="app-icon">D</div>
+        <img class="app-icon" src="${brandIconUrl}" alt="Debugr logo" />
         <h1>Debugr is ready</h1>
         <p>Press the shortcut anytime to annotate your current screen and send to Claude or Codex.</p>
         <div class="shortcut-row">
@@ -190,7 +192,10 @@ function renderSession() {
           <div class="traffic-light yellow"></div>
           <div class="traffic-light green"></div>
         </div>
-        <div class="topbar-title">Debugr</div>
+        <div class="topbar-title">
+          <img class="topbar-brand-icon" src="${brandIconUrl}" alt="" />
+          <span>Debugr</span>
+        </div>
         <div class="topbar-actions">
           <button class="btn-new-capture" id="new-ann-btn">+ New Capture</button>
         </div>

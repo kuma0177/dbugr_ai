@@ -743,6 +743,7 @@ dependencies = [
 name = "feedbackagent-desktop"
 version = "0.0.1"
 dependencies = [
+ "png",
  "serde",
  "serde_json",
  "tauri",
