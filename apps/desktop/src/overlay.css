@@ -333,6 +333,46 @@ html, body {
   background: var(--blue-soft); color: var(--blue-dark); font-weight: 600;
 }
 
+/* ── Responsive overlay ─────────────────────────────────────────────────── */
+
+/* Small screens: move note panel to bottom-centre above toolbar */
+@media (max-width: 680px) {
+  .note-panel {
+    right: 12px;
+    left: 12px;
+    width: auto;
+    top: auto;
+    bottom: 86px;   /* sit just above the toolbar */
+    max-height: 40vh;
+  }
+  .session-switcher {
+    top: auto;
+    bottom: 86px;
+    right: 12px;
+    left: auto;
+  }
+  .ann-counter {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+}
+
+/* Very small screens: wrap toolbar */
+@media (max-width: 480px) {
+  .toolbar {
+    width: calc(100% - 32px);
+    flex-wrap: wrap;
+    justify-content: center;
+    bottom: 16px;
+  }
+}
+
+/* Large screens: widen note panel */
+@media (min-width: 1400px) {
+  .note-panel { width: 320px; }
+}
+
 /* ── Save annotation button ─────────────────────────────────────────────── */
 .save-ann-btn {
   width: 100%; height: 36px;

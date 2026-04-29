@@ -11,12 +11,24 @@ type Target = 'claude' | 'codex';
 type AppMode = 'welcome' | 'session';
 type RightPanel = 'none' | 'share' | 'feedback';
 
-interface Annotation { id: string; number: number; x: number; y: number; text: string; tags: string[]; timestamp: string; }
+interface Annotation {
+  id: string;
+  number: number;
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  kind?: 'pin' | 'region';
+  text: string;
+  tags: string[];
+  timestamp: string;
+}
 interface CaptureCard { id: string; title: string; preview: string; screenshotUrl?: string; annotations: Annotation[]; timestamp: string; }
 interface Session { id: string; title: string; captures: CaptureCard[]; createdAt: string; status: 'draft' | 'sent' | 'responded'; }
 interface AgentFeedback { title: string; summary: string; rootCause?: string; suggestedFix?: string; codeSnippet?: string; nextSteps: string[]; }
 
 const API = 'http://127.0.0.1:3001/api';
+const MAX_ANNOTATIONS = 5;
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -135,9 +147,18 @@ function groupSessions() {
 
 // ── Enter session mode (resize window) ───────────────────────────────────────
 
+function sessionWindowSize(): [number, number] {
+  // Target ~80% of screen width / 78% height, clamped to sensible min/max.
+  // window.screen gives the logical pixel dimensions of the current display.
+  const w = Math.round(Math.max(720, Math.min(1280, window.screen.width  * 0.80)));
+  const h = Math.round(Math.max(560, Math.min( 860, window.screen.height * 0.78)));
+  return [w, h];
+}
+
 async function enterSessionMode() {
   appMode = 'session';
-  await win.setSize(new LogicalSize(1060, 700));
+  const [w, h] = sessionWindowSize();
+  await win.setSize(new LogicalSize(w, h));
   await win.setResizable(true);
   await win.center();
   render();
@@ -153,6 +174,7 @@ function render() {
 // ── Welcome screen ────────────────────────────────────────────────────────────
 
 function renderWelcome() {
+  const recentSessions = [...sessions].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)).slice(0, 4);
   app.innerHTML = `
     <div class="welcome-shell">
       <div class="welcome-card">
@@ -164,6 +186,20 @@ function renderWelcome() {
           <kbd>⌘</kbd><kbd>⌥</kbd><kbd>A</kbd>
         </div>
         <button class="btn-primary" id="start-bg-btn">Start background mode</button>
+        <div class="recent-sessions">
+          <div class="recent-sessions-head">
+            <span>Recent sessions</span>
+            <button class="recent-sessions-link" id="open-sessions-btn">Open all</button>
+          </div>
+          <div class="recent-session-list">
+            ${recentSessions.map(session => `
+              <button class="recent-session-item" data-session-id="${session.id}">
+                <strong>${session.title}</strong>
+                <span>${session.captures.length} capture${session.captures.length === 1 ? '' : 's'} · ${fmtTime(session.createdAt)}</span>
+              </button>
+            `).join('')}
+          </div>
+        </div>
         <p class="welcome-footer">Debugr stays in your menu bar — use ⌘⌥A from any app.</p>
       </div>
     </div>
@@ -173,6 +209,30 @@ function renderWelcome() {
     // Register shortcut then hide
     try { await invoke('register_global_shortcut'); } catch { /* ignore if already registered */ }
     await invoke('hide_main_window');
+  });
+
+  document.getElementById('open-sessions-btn')?.addEventListener('click', async () => {
+    appMode = 'session';
+    rightPanel = 'none';
+    await win.setSize(new LogicalSize(1060, 700));
+    await win.setResizable(true);
+    await win.center();
+    render();
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('.recent-session-item').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const sessionId = btn.dataset.sessionId;
+      if (!sessionId) return;
+      activeSessionId = sessionId;
+      activeCaptureId = sessions.find(s => s.id === sessionId)?.captures[0]?.id ?? null;
+      appMode = 'session';
+      rightPanel = 'none';
+      await win.setSize(new LogicalSize(...sessionWindowSize()));
+      await win.setResizable(true);
+      await win.center();
+      render();
+    });
   });
 }
 
@@ -208,7 +268,7 @@ function renderSession() {
         <aside class="sidebar">
           <div class="sidebar-label">Sessions</div>
           <div id="session-list"></div>
-          <button class="view-all-link">View all sessions →</button>
+          <button class="view-all-link" id="view-all-sessions-btn">View all sessions →</button>
           <div class="perm-note" id="perm-note">Checking permissions…</div>
         </aside>
 
@@ -533,6 +593,17 @@ function bindSessionActions() {
   document.getElementById('new-ann-btn')?.addEventListener('click', async () => {
     await invoke('show_overlay');
   });
+
+  document.getElementById('view-all-sessions-btn')?.addEventListener('click', async () => {
+    appMode = 'session';
+    rightPanel = 'none';
+    activeSessionId = sessions[0]?.id ?? null;
+    activeCaptureId = activeSession()?.captures[0]?.id ?? null;
+    await win.setSize(new LogicalSize(1060, 700));
+    await win.setResizable(true);
+    await win.center();
+    render();
+  });
 }
 
 // ── Permission check ──────────────────────────────────────────────────────────
@@ -581,32 +652,64 @@ async function loadSessionsFromApi() {
 // ── Listen for events from overlay ───────────────────────────────────────────
 
 async function listenForAnnotations() {
-  await listen<{ annotations: Array<{ id: string; number: number; x: number; y: number; text: string; tags: string[]; timestamp: string }> }>(
+  await listen<{ annotations: Array<{ id: string; number: number; x: number; y: number; width?: number; height?: number; kind?: 'pin' | 'region'; text: string; tags: string[]; timestamp: string }> }>(
     'annotations-saved',
     async (event) => {
       // Create a new capture from the overlay annotations
       const anns = event.payload.annotations;
+      const sessionMode = (event.payload as { sessionMode?: 'append' | 'new' }).sessionMode ?? 'append';
       if (anns.length === 0) return;
 
+      const normalized = anns.slice(0, MAX_ANNOTATIONS);
       const newCapture: CaptureCard = {
         id: `cap_${Date.now()}`,
-        title: anns[0].text.slice(0, 40) || `Capture ${new Date().toLocaleTimeString()}`,
-        preview: anns.map(a => a.text).filter(Boolean).join(' · ') || 'No description',
-        annotations: anns,
+        title: normalized[0].text.slice(0, 40) || `Capture ${new Date().toLocaleTimeString()}`,
+        preview: normalized.map(a => a.text).filter(Boolean).join(' · ') || 'No description',
+        annotations: normalized,
         timestamp: new Date().toISOString(),
       };
 
       // Add to active session or create new one
-      if (activeSessionId) {
+      if (sessionMode === 'append' && activeSessionId) {
         const sess = sessions.find(s => s.id === activeSessionId);
         if (sess) {
-          sess.captures.push(newCapture);
+          const used = sess.captures.reduce((n, c) => n + c.annotations.length, 0);
+          const remaining = MAX_ANNOTATIONS - used;
+          if (remaining <= 0) {
+            console.warn(`Session ${sess.id} already has ${MAX_ANNOTATIONS} annotations. Starting a new session instead.`);
+            const overflowSession: Session = {
+              id: `session_${Date.now()}`,
+              title: `Session ${new Date().toLocaleTimeString()}`,
+              status: 'draft',
+              createdAt: new Date().toISOString(),
+              captures: [newCapture],
+            };
+            sessions.unshift(overflowSession);
+            activeSessionId = overflowSession.id;
+            activeCaptureId = newCapture.id;
+          } else {
+            newCapture.annotations = normalized.slice(0, remaining);
+            newCapture.preview = newCapture.annotations.map(a => a.text).filter(Boolean).join(' · ') || 'No description';
+            newCapture.title = newCapture.annotations[0]?.text.slice(0, 40) || newCapture.title;
+            sess.captures.push(newCapture);
+            activeCaptureId = newCapture.id;
+          }
+        } else {
+          const newSession: Session = {
+            id: `session_${Date.now()}`,
+            title: `Session ${new Date().toLocaleTimeString()}`,
+            status: 'draft',
+            createdAt: new Date().toISOString(),
+            captures: [newCapture],
+          };
+          sessions.unshift(newSession);
+          activeSessionId = newSession.id;
           activeCaptureId = newCapture.id;
         }
       } else {
         const newSession: Session = {
           id: `session_${Date.now()}`,
-          title: `Session ${new Date().toLocaleTimeString()}`,
+          title: sessionMode === 'new' ? `New session ${new Date().toLocaleTimeString()}` : `Session ${new Date().toLocaleTimeString()}`,
           status: 'draft',
           createdAt: new Date().toISOString(),
           captures: [newCapture],
@@ -619,7 +722,7 @@ async function listenForAnnotations() {
       // Show session window (already triggered from overlay, but ensure mode)
       appMode = 'session';
       rightPanel = 'share';
-      await win.setSize(new LogicalSize(1060, 700));
+      await win.setSize(new LogicalSize(...sessionWindowSize()));
       await win.setResizable(true);
       await win.center();
       render();

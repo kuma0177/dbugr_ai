@@ -205,22 +205,27 @@ fn trigger_overlay(app: &AppHandle) {
     if let Some(overlay) = app.get_webview_window("overlay") {
         eprintln!("Debugr overlay window found");
 
-        // Resize the overlay to exactly cover the primary monitor using logical pixels.
-        // The tauri.conf.json has a large fallback size; this corrects it at runtime
-        // so that CSS `position:fixed; bottom:24px` lands on screen, not 800px below it.
-        let monitor = overlay.primary_monitor()
+        // Resize the overlay to cover the monitor the user is currently working on.
+        // Prefer current_monitor (the screen where the cursor/window is) so that
+        // multi-monitor setups work correctly; fall back to primary monitor.
+        // We convert physical → logical pixels using the scale factor so that
+        // CSS `position:fixed; bottom:24px` always lands on screen.
+        let monitor = overlay.current_monitor()
             .ok()
             .flatten()
-            .or_else(|| overlay.current_monitor().ok().flatten());
+            .or_else(|| overlay.primary_monitor().ok().flatten());
 
         if let Some(mon) = monitor {
-            let phys   = mon.size();
-            let scale  = mon.scale_factor();
+            let phys  = mon.size();
+            let pos   = mon.position();
+            let scale = mon.scale_factor();
             let lw = (phys.width  as f64 / scale).round() as u32;
             let lh = (phys.height as f64 / scale).round() as u32;
-            eprintln!("Monitor logical size: {lw}×{lh} (scale={scale})");
+            let lx = (pos.x as f64 / scale).round();
+            let ly = (pos.y as f64 / scale).round();
+            eprintln!("Overlay → logical {lw}×{lh} at ({lx},{ly}) scale={scale}");
             let _ = overlay.set_size(tauri::LogicalSize::new(lw, lh));
-            let _ = overlay.set_position(tauri::LogicalPosition::new(0.0, 0.0));
+            let _ = overlay.set_position(tauri::LogicalPosition::new(lx, ly));
         }
 
         // Tell the frontend to reset state BEFORE we make the window visible
