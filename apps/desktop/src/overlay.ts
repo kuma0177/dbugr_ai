@@ -2,248 +2,403 @@ import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import './overlay.css';
 
+declare const __DEBUGR_BUILD_STAMP__: string;
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface Annotation {
   id: string;
   number: number;
-  x: number;
-  y: number;
+  x: number; y: number;
+  width?: number; height?: number;
+  kind: 'pin' | 'region';
   text: string;
   tags: string[];
   timestamp: string;
 }
 
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const MAX_ANNOTATIONS = 5;
+const MIN_REGION = 36;
+const TAGS = ['Bug', 'UX', 'Blocking', 'Question'];
+
 // ── State ────────────────────────────────────────────────────────────────────
 
-const TAGS = ['Bug', 'UX', 'Blocking', 'Question'];
 let annotations: Annotation[] = [];
-let activeTool: 'select' | 'pin' | 'text' | 'arrow' | 'blur' = 'pin';
-let currentNoteCardEl: HTMLDivElement | null = null;
+let activeTool: 'select' | 'pin' | 'region' | 'arrow' | 'blur' = 'pin';
+let selectedId: string | null = null;
+let sessionMode: 'append' | 'new' = 'append';
 
-// ── Root element ─────────────────────────────────────────────────────────────
+// region-drag state
+let dragging = false;
+let dragStart: { x: number; y: number } | null = null;
+
+// annotation drag/resize state
+let moveState: {
+  id: string; mode: 'move' | 'resize';
+  handle?: string;
+  ptId: number;
+  sx: number; sy: number;
+  initial: { left: number; top: number; width: number; height: number };
+} | null = null;
+
+// ── DOM Scaffold ─────────────────────────────────────────────────────────────
 
 const root = document.getElementById('overlay-root')!;
 
-// ── Scaffold ─────────────────────────────────────────────────────────────────
-
 root.innerHTML = `
-  <!-- Screenshot background -->
   <div id="screenshot-bg"></div>
-
-  <!-- Dim layer -->
   <div id="dim-layer"></div>
 
-  <!-- Top toast -->
+  <!-- Top-center toast -->
   <div class="toast" id="toast">
     <kbd>⌘</kbd><kbd>⌥</kbd><kbd>A</kbd>
-    <span>Annotation mode — click anywhere to add a note.</span>
+    <span id="toast-text">Click anywhere to add an annotation. Right-drag to draw a region.</span>
   </div>
 
-  <!-- Annotation count badge -->
+  <!-- Top-right: session + counter -->
+  <div class="session-switcher" id="session-switcher">
+    <button class="session-switch active" data-mode="append">Append session</button>
+    <button class="session-switch" data-mode="new">New session</button>
+  </div>
   <div class="ann-counter" id="ann-counter"></div>
 
-  <!-- SVG connector layer -->
+  <!-- SVG connectors -->
   <svg class="ann-connector" id="connectors" xmlns="http://www.w3.org/2000/svg"></svg>
 
-  <!-- Loading indicator (shown while screenshot loads) -->
-  <div id="loading-overlay" style="
-    position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
-    z-index:500;background:#0a0f1a;color:rgba(255,255,255,0.5);font-size:14px;
-    font-family:inherit;gap:12px;
-  ">
-    <div style="width:18px;height:18px;border:2px solid rgba(255,255,255,0.2);
-      border-top-color:rgba(255,255,255,0.7);border-radius:50%;
-      animation:spin 0.6s linear infinite;"></div>
-    Capturing screen…
+  <!-- Note inspector (right side) -->
+  <div class="note-panel" id="note-panel" style="display:none;">
+    <div class="note-panel-header">
+      <div class="note-panel-title">
+        <strong id="note-title">Annotation</strong>
+        <span id="note-subtitle">Add notes and tags</span>
+      </div>
+      <button class="note-panel-close" id="note-close" title="Close">×</button>
+    </div>
+    <div class="note-panel-body" id="note-body">
+      <div class="note-panel-empty">Select an annotation to edit it.</div>
+    </div>
   </div>
 
-  <!-- Floating toolbar -->
-  <div class="toolbar" id="toolbar" style="display:none;">
-    <button class="tool-btn" id="tool-select">↖<div class="tool-label">Select</div></button>
-    <button class="tool-btn active" id="tool-pin">●<div class="tool-label">Pin</div></button>
-    <button class="tool-btn" id="tool-text">T<div class="tool-label">Text</div></button>
-    <button class="tool-btn" id="tool-arrow">↗<div class="tool-label">Arrow</div></button>
-    <button class="tool-btn" id="tool-blur">▧<div class="tool-label">Blur</div></button>
+  <!-- Drag-select rubber band -->
+  <div class="selection-rect" id="sel-rect" style="display:none;"></div>
+
+  <!-- Bottom toolbar — matches handoff design (light, frosted glass) -->
+  <div class="toolbar" id="toolbar">
+    <button class="tool-btn active" id="tool-pin" title="Pin (click to annotate)">
+      ●<div class="tool-label">Pin</div>
+    </button>
+    <button class="tool-btn" id="tool-region" title="Region (drag to draw)">
+      ⬚<div class="tool-label">Region</div>
+    </button>
+    <button class="tool-btn" id="tool-select" title="Select">
+      ↖<div class="tool-label">Select</div>
+    </button>
     <div class="toolbar-divider"></div>
     <button class="tool-btn cancel" id="tool-cancel">Esc</button>
-    <button class="tool-btn save-btn" id="tool-save">Save</button>
+    <button class="tool-btn save-btn" id="tool-save">Save →</button>
   </div>
+
+  <div class="build-stamp">${__DEBUGR_BUILD_STAMP__}</div>
 `;
 
-const screenshotBg  = document.getElementById('screenshot-bg')!;
-const loadingEl     = document.getElementById('loading-overlay')!;
-const toolbarEl     = document.getElementById('toolbar')!;
-const counterEl     = document.getElementById('ann-counter')!;
-const toastEl       = document.getElementById('toast')!;
-const connectorsEl  = document.getElementById('connectors')!;
+// ── DOM refs ─────────────────────────────────────────────────────────────────
 
-// ── Listen for screenshot from backend ───────────────────────────────────────
+const screenshotBg   = document.getElementById('screenshot-bg')!;
+const toastTextEl    = document.getElementById('toast-text')!;
+const notePanelEl    = document.getElementById('note-panel') as HTMLDivElement;
+const noteTitleEl    = document.getElementById('note-title')!;
+const noteSubtitleEl = document.getElementById('note-subtitle')!;
+const noteBodyEl     = document.getElementById('note-body') as HTMLDivElement;
+const counterEl      = document.getElementById('ann-counter')!;
+const connectorsEl   = document.getElementById('connectors')!;
+const selRectEl      = document.getElementById('sel-rect') as HTMLDivElement;
+const sessionSwitcherEl = document.getElementById('session-switcher')!;
 
-void listen<string>('set-screenshot', (event) => {
-  const dataUrl = event.payload;
-  if (dataUrl) {
-    screenshotBg.style.backgroundImage = `url("${dataUrl}")`;
-  } else {
-    // No screenshot — show dark background with grid pattern
-    screenshotBg.style.background =
-      'radial-gradient(circle at 50% 40%, #1e2a3a 0%, #0a0f1a 100%)';
-  }
-  loadingEl.style.display = 'none';
-  toolbarEl.style.display = 'flex';
-  toastEl.style.display = 'flex';
-});
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function clamp(v: number, lo: number, hi: number) { return Math.min(Math.max(v, lo), hi); }
+
+function clampBox(b: { left: number; top: number; width: number; height: number }) {
+  const w = clamp(b.width, MIN_REGION, window.innerWidth - 8);
+  const h = clamp(b.height, MIN_REGION, window.innerHeight - 8);
+  return {
+    left: clamp(b.left, 4, window.innerWidth - w - 4),
+    top:  clamp(b.top,  4, window.innerHeight - h - 4),
+    width: w, height: h,
+  };
+}
+
+function boxOf(ann: Annotation) {
+  const w = Math.max(ann.width ?? 120, MIN_REGION);
+  const h = Math.max(ann.height ?? 60, MIN_REGION);
+  return ann.kind === 'region'
+    ? { left: ann.x - w / 2, top: ann.y - h / 2, width: w, height: h }
+    : { left: ann.x - 60,   top: ann.y - 30,     width: 120, height: 60 };
+}
+
+function setToast(msg: string) { toastTextEl.textContent = msg; }
+
+function updateCounter() {
+  const n = annotations.length;
+  counterEl.classList.toggle('visible', n > 0);
+  if (n > 0) counterEl.textContent = `${n} / ${MAX_ANNOTATIONS} annotations`;
+  setToast(n > 0
+    ? `${n} annotation${n > 1 ? 's' : ''} added — click Save when done.`
+    : `Click anywhere to add an annotation. Right-drag to draw a region.`);
+}
 
 // ── Tool selection ────────────────────────────────────────────────────────────
 
-function setTool(tool: typeof activeTool) {
-  activeTool = tool;
-  ['select', 'pin', 'text', 'arrow', 'blur'].forEach((t) => {
-    document.getElementById(`tool-${t}`)?.classList.toggle('active', t === tool);
+function setTool(t: typeof activeTool) {
+  activeTool = t;
+  (['pin', 'region', 'select'] as const).forEach(id => {
+    document.getElementById(`tool-${id}`)?.classList.toggle('active', id === t);
   });
-  root.style.cursor = (tool === 'pin' || tool === 'text') ? 'crosshair' : 'default';
+  root.style.cursor = t === 'pin' ? 'crosshair' : t === 'region' ? 'cell' : 'default';
 }
 
-document.getElementById('tool-select')?.addEventListener('click', (e) => { e.stopPropagation(); setTool('select'); });
-document.getElementById('tool-pin')?.addEventListener('click',    (e) => { e.stopPropagation(); setTool('pin'); });
-document.getElementById('tool-text')?.addEventListener('click',   (e) => { e.stopPropagation(); setTool('text'); });
-document.getElementById('tool-arrow')?.addEventListener('click',  (e) => { e.stopPropagation(); setTool('arrow'); });
-document.getElementById('tool-blur')?.addEventListener('click',   (e) => { e.stopPropagation(); setTool('blur'); });
+document.getElementById('tool-pin')?.addEventListener('click',    e => { e.stopPropagation(); setTool('pin'); });
+document.getElementById('tool-region')?.addEventListener('click', e => { e.stopPropagation(); setTool('region'); });
+document.getElementById('tool-select')?.addEventListener('click', e => { e.stopPropagation(); setTool('select'); });
+
+sessionSwitcherEl.querySelectorAll<HTMLButtonElement>('.session-switch').forEach(btn => {
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    sessionMode = btn.dataset.mode === 'new' ? 'new' : 'append';
+    sessionSwitcherEl.querySelectorAll('.session-switch').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
 
 // ── Cancel / Escape ───────────────────────────────────────────────────────────
 
 async function cancelOverlay() {
   await invoke('hide_overlay');
-  setTimeout(resetState, 350);
+  setTimeout(resetState, 300);
 }
 
-document.getElementById('tool-cancel')?.addEventListener('click', (e) => {
-  e.stopPropagation();
-  void cancelOverlay();
+document.getElementById('tool-cancel')?.addEventListener('click', e => {
+  e.stopPropagation(); void cancelOverlay();
 });
-
-document.addEventListener('keydown', (e) => {
+document.getElementById('note-close')?.addEventListener('click', e => {
+  e.stopPropagation(); deselectAnnotation();
+});
+document.addEventListener('keydown', e => {
   if (e.key === 'Escape') void cancelOverlay();
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void saveAll();
 });
 
-// ── Save all annotations ──────────────────────────────────────────────────────
+// ── Save ──────────────────────────────────────────────────────────────────────
 
-async function saveAllAnnotations() {
+async function saveAll() {
   if (annotations.length === 0) { void cancelOverlay(); return; }
-  await emit('annotations-saved', { annotations });
+  await emit('annotations-saved', { annotations, sessionMode });
   await invoke('show_session_window');
   await invoke('hide_overlay');
   setTimeout(resetState, 400);
 }
 
-document.getElementById('tool-save')?.addEventListener('click', (e) => {
-  e.stopPropagation();
-  void saveAllAnnotations();
+document.getElementById('tool-save')?.addEventListener('click', e => {
+  e.stopPropagation(); void saveAll();
 });
 
-// ── Click to annotate ─────────────────────────────────────────────────────────
+// ── Place annotation ──────────────────────────────────────────────────────────
 
-root.addEventListener('click', (e) => {
-  const target = e.target as HTMLElement;
-  if (target.closest('.toolbar') || target.closest('.note-card') || target.closest('.ann-pin')) return;
-  if (loadingEl.style.display !== 'none') return; // still loading
-  if (activeTool === 'pin' || activeTool === 'text' || activeTool === 'select') {
-    placeAnnotation(e.clientX, e.clientY);
+function placePin(x: number, y: number) {
+  if (annotations.length >= MAX_ANNOTATIONS) {
+    setToast(`Maximum ${MAX_ANNOTATIONS} annotations per session.`);
+    return;
   }
-});
-
-function placeAnnotation(x: number, y: number) {
-  dismissCurrentCard();
-  const number = annotations.length + 1;
   const ann: Annotation = {
-    id: `ann_${Date.now()}`, number, x, y,
+    id: `ann_${Date.now()}`,
+    number: annotations.length + 1,
+    x, y, kind: 'pin',
     text: '', tags: [],
     timestamp: new Date().toISOString(),
   };
   annotations.push(ann);
-  renderAnnotationPin(ann);
-  showNoteCard(ann);
+  renderPin(ann);
+  selectAnnotation(ann);
   updateCounter();
 }
 
-// ── Render pin + highlight ────────────────────────────────────────────────────
+function placeRegion(x: number, y: number, w: number, h: number) {
+  if (annotations.length >= MAX_ANNOTATIONS) {
+    setToast(`Maximum ${MAX_ANNOTATIONS} annotations per session.`);
+    return;
+  }
+  const box = clampBox({ left: x, top: y, width: w, height: h });
+  const ann: Annotation = {
+    id: `ann_${Date.now()}`,
+    number: annotations.length + 1,
+    x: box.left + box.width / 2,
+    y: box.top  + box.height / 2,
+    width: box.width, height: box.height,
+    kind: 'region', text: '', tags: [],
+    timestamp: new Date().toISOString(),
+  };
+  annotations.push(ann);
+  renderRegion(ann);
+  selectAnnotation(ann);
+  updateCounter();
+}
 
-function renderAnnotationPin(ann: Annotation) {
-  const hlW = 120, hlH = 60;
+// ── Render pin ────────────────────────────────────────────────────────────────
+
+function renderPin(ann: Annotation) {
+  const pin = document.createElement('div');
+  pin.className = 'ann-pin';
+  pin.id = `pin_${ann.id}`;
+  pin.style.cssText = `left:${ann.x}px;top:${ann.y}px;`;
+  pin.textContent = String(ann.number);
+  pin.addEventListener('click', e => { e.stopPropagation(); selectAnnotation(ann); });
+  root.appendChild(pin);
 
   const hl = document.createElement('div');
   hl.className = 'ann-highlight';
   hl.id = `hl_${ann.id}`;
-  hl.style.cssText = `left:${ann.x - hlW/2}px;top:${ann.y - hlH/2}px;width:${hlW}px;height:${hlH}px;z-index:252;`;
+  hl.style.cssText = `left:${ann.x - 60}px;top:${ann.y - 30}px;width:120px;height:60px;pointer-events:none;`;
+  root.appendChild(hl);
+  syncSel();
+}
+
+// ── Render region ─────────────────────────────────────────────────────────────
+
+function renderRegion(ann: Annotation) {
+  const b = boxOf(ann);
+
+  const hl = document.createElement('div');
+  hl.className = 'ann-highlight ann-region';
+  hl.id = `hl_${ann.id}`;
+  hl.style.cssText = `left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;`;
+
+  // resize handles
+  (['nw','n','ne','e','se','s','sw','w'] as const).forEach(name => {
+    const hnd = document.createElement('div');
+    hnd.className = `ann-handle ${name}`;
+    hnd.id = `h_${ann.id}_${name}`;
+    const [hx, hy] = handleOffset(name, b.width, b.height);
+    hnd.style.left = `${hx}px`;
+    hnd.style.top  = `${hy}px`;
+    hnd.addEventListener('pointerdown', e => {
+      e.stopPropagation(); e.preventDefault();
+      const box = boxOf(ann);
+      moveState = { id: ann.id, mode: 'resize', handle: name,
+        ptId: e.pointerId, sx: e.clientX, sy: e.clientY, initial: box };
+      hnd.setPointerCapture(e.pointerId);
+    });
+    hl.appendChild(hnd);
+  });
+
+  hl.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('.ann-handle')) return;
+    e.stopPropagation();
+    const box = boxOf(ann);
+    moveState = { id: ann.id, mode: 'move',
+      ptId: e.pointerId, sx: e.clientX, sy: e.clientY, initial: box };
+    hl.setPointerCapture(e.pointerId);
+  });
+  hl.addEventListener('click', e => { e.stopPropagation(); selectAnnotation(ann); });
   root.appendChild(hl);
 
   const pin = document.createElement('div');
   pin.className = 'ann-pin';
   pin.id = `pin_${ann.id}`;
-  pin.style.cssText = `left:${ann.x}px;top:${ann.y - hlH/2 - 18}px;z-index:302;`;
+  pin.style.cssText = `left:${b.left + b.width / 2}px;top:${b.top + b.height / 2}px;`;
   pin.textContent = String(ann.number);
-  pin.addEventListener('click', (e) => { e.stopPropagation(); showNoteCard(ann); });
+  pin.addEventListener('click', e => { e.stopPropagation(); selectAnnotation(ann); });
   root.appendChild(pin);
+  syncSel();
 }
 
-// ── Connector line ────────────────────────────────────────────────────────────
-
-function drawConnector(ann: Annotation, cardEl: HTMLDivElement) {
-  connectorsEl.querySelector(`#line_${ann.id}`)?.remove();
-  const pinEl = document.getElementById(`pin_${ann.id}`);
-  if (!pinEl) return;
-  const pr = pinEl.getBoundingClientRect();
-  const cr = cardEl.getBoundingClientRect();
-  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-  line.id = `line_${ann.id}`;
-  line.setAttribute('x1', String(pr.left + pr.width / 2));
-  line.setAttribute('y1', String(pr.top + pr.height / 2));
-  line.setAttribute('x2', String(cr.left));
-  line.setAttribute('y2', String(cr.top + 20));
-  line.setAttribute('stroke', '#0f6dfd');
-  line.setAttribute('stroke-width', '2');
-  line.setAttribute('stroke-dasharray', '5,4');
-  line.setAttribute('opacity', '0.7');
-  connectorsEl.appendChild(line);
+function handleOffset(name: string, w: number, h: number): [number, number] {
+  const cx = w / 2, cy = h / 2;
+  return (
+    name === 'nw' ? [0, 0] : name === 'n' ? [cx, 0] : name === 'ne' ? [w, 0] :
+    name === 'e'  ? [w, cy] : name === 'se' ? [w, h] : name === 's'  ? [cx, h] :
+    name === 'sw' ? [0, h]  : /* w */ [0, cy]
+  );
 }
 
-// ── Note card ─────────────────────────────────────────────────────────────────
+function updateRegionDOM(ann: Annotation) {
+  const b = clampBox(boxOf(ann));
+  ann.x = b.left + b.width / 2;
+  ann.y = b.top  + b.height / 2;
+  ann.width = b.width; ann.height = b.height;
 
-function showNoteCard(ann: Annotation) {
-  dismissCurrentCard();
-  const card = document.createElement('div');
-  card.className = 'note-card';
-  card.id = `card_${ann.id}`;
+  const hl = document.getElementById(`hl_${ann.id}`) as HTMLDivElement | null;
+  if (hl) {
+    hl.style.left = `${b.left}px`; hl.style.top = `${b.top}px`;
+    hl.style.width = `${b.width}px`; hl.style.height = `${b.height}px`;
+  }
+  const pin = document.getElementById(`pin_${ann.id}`) as HTMLDivElement | null;
+  if (pin) {
+    pin.style.left = `${b.left + b.width / 2}px`;
+    pin.style.top  = `${b.top  + b.height / 2}px`;
+  }
+  (['nw','n','ne','e','se','s','sw','w'] as const).forEach(name => {
+    const h = document.getElementById(`h_${ann.id}_${name}`) as HTMLDivElement | null;
+    if (!h) return;
+    const [hx, hy] = handleOffset(name, b.width, b.height);
+    h.style.left = `${hx}px`; h.style.top = `${hy}px`;
+  });
+  syncSel();
+  if (selectedId === ann.id) drawConnector(ann);
+}
 
-  const cardW = 260, margin = 24;
-  let cx = ann.x + 60, cy = ann.y - 80;
-  if (cx + cardW > window.innerWidth - margin) cx = ann.x - cardW - 60;
-  if (cy < margin) cy = margin;
-  if (cy + 230 > window.innerHeight - 100) cy = window.innerHeight - 330;
-  card.style.cssText = `left:${cx}px;top:${cy}px;z-index:312;`;
+// ── Selection ─────────────────────────────────────────────────────────────────
 
-  card.innerHTML = `
-    <div class="note-card-head">
-      <strong>Annotation ${ann.number}</strong>
-      <span>Screen capture</span>
-    </div>
-    <textarea placeholder="What should Claude / Codex know about this?">${ann.text}</textarea>
+function syncSel() {
+  root.querySelectorAll<HTMLElement>('.ann-pin, .ann-highlight').forEach(el => {
+    const rawId = el.id.replace(/^(pin_|hl_)/, '');
+    el.classList.toggle('active', rawId === selectedId);
+  });
+}
+
+function selectAnnotation(ann: Annotation) {
+  selectedId = ann.id;
+  syncSel();
+  showNotePanel(ann);
+}
+
+function deselectAnnotation() {
+  selectedId = null;
+  syncSel();
+  connectorsEl.innerHTML = '';
+  notePanelEl.style.display = 'none';
+}
+
+// ── Note panel ────────────────────────────────────────────────────────────────
+
+function showNotePanel(ann: Annotation) {
+  noteTitleEl.textContent = `Annotation ${ann.number}`;
+  noteSubtitleEl.textContent = ann.kind === 'region' ? 'Region — resize by dragging edges' : 'Pin annotation';
+  noteBodyEl.innerHTML = `
+    <div class="note-label">Notes</div>
+    <textarea id="note-ta" placeholder="What should Claude know about this area?">${ann.text}</textarea>
+    <div class="note-label">Tags</div>
     <div class="chips">
-      ${TAGS.map(tag => `<button class="chip${ann.tags.includes(tag) ? ' active' : ''}" data-tag="${tag}">${tag}</button>`).join('')}
+      ${TAGS.map(t => `<button class="chip${ann.tags.includes(t) ? ' active' : ''}" data-tag="${t}">${t}</button>`).join('')}
     </div>
-    <button class="save-ann-btn">Save annotation  ⌘↵</button>
+    <button class="save-ann-btn" id="save-ann">Save annotation  ⌘↵</button>
   `;
 
-  const ta = card.querySelector('textarea')!;
+  const ta = noteBodyEl.querySelector<HTMLTextAreaElement>('#note-ta')!;
   ta.addEventListener('input', () => { ann.text = ta.value; });
-  ta.addEventListener('click', (e) => e.stopPropagation());
-  ta.addEventListener('keydown', (e) => {
+  ta.addEventListener('click', e => e.stopPropagation());
+  ta.addEventListener('keydown', e => {
     e.stopPropagation();
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') dismissCurrentCard();
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      setToast(`Annotation ${ann.number} saved.`);
+    }
   });
 
-  card.querySelectorAll<HTMLButtonElement>('.chip').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+  noteBodyEl.querySelectorAll<HTMLButtonElement>('.chip').forEach(btn => {
+    btn.addEventListener('click', e => {
       e.stopPropagation();
       const tag = btn.dataset.tag!;
       if (ann.tags.includes(tag)) { ann.tags = ann.tags.filter(t => t !== tag); btn.classList.remove('active'); }
@@ -251,49 +406,161 @@ function showNoteCard(ann: Annotation) {
     });
   });
 
-  card.querySelector('.save-ann-btn')!.addEventListener('click', (e) => {
+  noteBodyEl.querySelector('#save-ann')?.addEventListener('click', e => {
     e.stopPropagation();
-    dismissCurrentCard();
+    setToast(`Annotation ${ann.number} saved.`);
   });
 
-  root.appendChild(card);
-  currentNoteCardEl = card;
-  requestAnimationFrame(() => drawConnector(ann, card));
+  notePanelEl.style.display = 'block';
+  requestAnimationFrame(() => drawConnector(ann));
   ta.focus();
 }
 
-function dismissCurrentCard() {
-  currentNoteCardEl?.remove();
-  currentNoteCardEl = null;
-  connectorsEl.innerHTML = '';
+// ── Connector line ────────────────────────────────────────────────────────────
+
+function drawConnector(ann: Annotation) {
+  connectorsEl.querySelector(`#ln_${ann.id}`)?.remove();
+  const pinEl = document.getElementById(`pin_${ann.id}`);
+  if (!pinEl || notePanelEl.style.display === 'none') return;
+  const pr = pinEl.getBoundingClientRect();
+  const cr = notePanelEl.getBoundingClientRect();
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  line.id = `ln_${ann.id}`;
+  line.setAttribute('x1', String(pr.left + pr.width / 2));
+  line.setAttribute('y1', String(pr.top  + pr.height / 2));
+  line.setAttribute('x2', String(cr.left));
+  line.setAttribute('y2', String(cr.top + 28));
+  line.setAttribute('stroke', '#0f6dfd');
+  line.setAttribute('stroke-width', '1.5');
+  line.setAttribute('stroke-dasharray', '5,4');
+  line.setAttribute('opacity', '0.6');
+  connectorsEl.appendChild(line);
 }
 
-// ── Counter badge ─────────────────────────────────────────────────────────────
+// ── Pointer events on canvas ──────────────────────────────────────────────────
 
-function updateCounter() {
-  const n = annotations.length;
-  counterEl.classList.toggle('visible', n > 0);
-  if (n > 0) counterEl.textContent = `${n} annotation${n === 1 ? '' : 's'}`;
-  toastEl.querySelector('span')!.textContent = n > 0
-    ? `${n} annotation${n === 1 ? '' : 's'} added — click to add more, or press Save.`
-    : 'Annotation mode — click anywhere to add a note.';
+root.addEventListener('contextmenu', e => e.preventDefault());
+
+root.addEventListener('pointerdown', e => {
+  const target = e.target as HTMLElement;
+  if (target.closest('.toolbar, .note-panel, .session-switcher, .ann-pin, .ann-highlight')) return;
+
+  // Left-click: pin or select
+  if (e.button === 0) {
+    if (activeTool === 'pin') {
+      placePin(e.clientX, e.clientY);
+    } else if (activeTool === 'select') {
+      deselectAnnotation();
+    } else if (activeTool === 'region') {
+      // start rubber-band drag
+      dragging = true;
+      dragStart = { x: e.clientX, y: e.clientY };
+      selRectEl.style.display = 'block';
+      updateSelRect(e.clientX, e.clientY, e.clientX, e.clientY);
+    }
+    return;
+  }
+
+  // Right-click: always start region drag
+  if (e.button === 2) {
+    e.preventDefault();
+    dragging = true;
+    dragStart = { x: e.clientX, y: e.clientY };
+    selRectEl.style.display = 'block';
+    updateSelRect(e.clientX, e.clientY, e.clientX, e.clientY);
+  }
+});
+
+window.addEventListener('pointermove', e => {
+  if (dragging && dragStart) {
+    updateSelRect(dragStart.x, dragStart.y, e.clientX, e.clientY);
+  }
+  if (moveState) {
+    const ann = annotations.find(a => a.id === moveState!.id);
+    if (!ann) return;
+    const dx = e.clientX - moveState.sx;
+    const dy = e.clientY - moveState.sy;
+    const b  = moveState.initial;
+    if (moveState.mode === 'move') {
+      ann.x = (b.left + dx) + (ann.width ?? 120) / 2;
+      ann.y = (b.top  + dy) + (ann.height ?? 60) / 2;
+    } else {
+      const nb = resizeBox(b, dx, dy, moveState.handle!);
+      ann.x = nb.left + nb.width  / 2;
+      ann.y = nb.top  + nb.height / 2;
+      ann.width  = nb.width;
+      ann.height = nb.height;
+    }
+    updateRegionDOM(ann);
+  }
+});
+
+window.addEventListener('pointerup', e => {
+  if (moveState && e.pointerId === moveState.ptId) {
+    const ann = annotations.find(a => a.id === moveState!.id);
+    if (ann) updateRegionDOM(ann);
+    moveState = null;
+  }
+  if (!dragging || !dragStart) return;
+  if (e.button !== 0 && e.button !== 2) return;
+  const endX = e.clientX, endY = e.clientY;
+  const w = Math.abs(endX - dragStart.x);
+  const h = Math.abs(endY - dragStart.y);
+  const x = Math.min(dragStart.x, endX);
+  const y = Math.min(dragStart.y, endY);
+  selRectEl.style.display = 'none';
+  dragging = false; dragStart = null;
+  if (w > 12 && h > 12) placeRegion(x, y, w, h);
+});
+
+function updateSelRect(x1: number, y1: number, x2: number, y2: number) {
+  selRectEl.style.left   = `${Math.min(x1, x2)}px`;
+  selRectEl.style.top    = `${Math.min(y1, y2)}px`;
+  selRectEl.style.width  = `${Math.abs(x2 - x1)}px`;
+  selRectEl.style.height = `${Math.abs(y2 - y1)}px`;
 }
 
-// ── Reset for next invocation ─────────────────────────────────────────────────
+function resizeBox(b: { left: number; top: number; width: number; height: number },
+                   dx: number, dy: number, handle: string) {
+  let { left, top, width, height } = b;
+  if (handle.includes('w')) { left += dx; width -= dx; }
+  if (handle.includes('e')) { width  += dx; }
+  if (handle.includes('n')) { top   += dy; height -= dy; }
+  if (handle.includes('s')) { height += dy; }
+  if (width  < MIN_REGION) { if (handle.includes('w')) left = b.left + (b.width - MIN_REGION); width  = MIN_REGION; }
+  if (height < MIN_REGION) { if (handle.includes('n')) top  = b.top  + (b.height - MIN_REGION); height = MIN_REGION; }
+  return clampBox({ left, top, width, height });
+}
+
+// ── Screenshot from backend ───────────────────────────────────────────────────
+
+void listen<string>('set-screenshot', event => {
+  if (event.payload) {
+    screenshotBg.style.backgroundImage = `url("${event.payload}")`;
+  }
+});
+
+// ── Reset on each new invocation ──────────────────────────────────────────────
+
+void listen('overlay-will-show', () => {
+  resetState();
+});
 
 function resetState() {
-  root.querySelectorAll('.ann-pin, .ann-highlight, .note-card').forEach(el => el.remove());
+  // Remove annotation DOM nodes
+  root.querySelectorAll('.ann-pin, .ann-highlight').forEach(el => el.remove());
   connectorsEl.innerHTML = '';
-  currentNoteCardEl = null;
   annotations = [];
-  updateCounter();
-  // Reset loading state
+  selectedId = null;
+  dragging = false; dragStart = null; moveState = null;
+  selRectEl.style.display = 'none';
   screenshotBg.style.backgroundImage = '';
-  screenshotBg.style.background = '';
-  loadingEl.style.display = 'flex';
-  toolbarEl.style.display = 'none';
+  notePanelEl.style.display = 'none';
+  updateCounter();
+  setTool('pin');
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 setTool('pin');
+updateCounter();

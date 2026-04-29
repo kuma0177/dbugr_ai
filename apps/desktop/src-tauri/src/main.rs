@@ -204,6 +204,8 @@ fn trigger_overlay(app: &AppHandle) {
 
     if let Some(overlay) = app.get_webview_window("overlay") {
         eprintln!("Debugr overlay window found");
+        // Tell the frontend to reset state BEFORE we make the window visible
+        let _ = overlay.emit("overlay-will-show", ());
         if let Err(e) = overlay.show() {
             eprintln!("Failed to show overlay: {e}");
         }
