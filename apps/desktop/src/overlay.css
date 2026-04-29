@@ -2,15 +2,17 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --blue:      #1d9bf0;
-  --blue2:     #0f6dfd;
-  --blue-dark: #095bd8;
-  --blue-soft: #e7f2ff;
-  --border:    rgba(219, 229, 242, 0.85);
-  --text:      #0f172a;
-  --muted:     #64748b;
-  --shadow:    0 12px 32px rgba(15, 23, 42, 0.12);
-  --shadow-lg: 0 24px 70px rgba(15, 23, 42, 0.18);
+  --blue:        #1d9bf0;
+  --blue2:       #0f6dfd;
+  --blue-dark:   #095bd8;
+  --blue-soft:   #e7f2ff;
+  --border:      rgba(219, 229, 242, 0.85);
+  --text:        #0f172a;
+  --muted:       #64748b;
+  --shadow:      0 12px 32px rgba(15, 23, 42, 0.12);
+  --shadow-lg:   0 24px 70px rgba(15, 23, 42, 0.18);
+  /* Set by JS from window.screen.availHeight; clears dock + 12 px gap */
+  --dock-offset: 12px;
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
     "SF Pro Text", "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -109,7 +111,10 @@ html, body {
 
 /* ── Build stamp ────────────────────────────────────────────────────────── */
 .build-stamp {
-  position: fixed; left: 20px; bottom: 20px; z-index: 705;
+  position: fixed;
+  left: 20px;
+  bottom: calc(var(--dock-offset) + 8px);
+  z-index: 705;
   padding: 5px 10px; border: 1px solid rgba(255,255,255,0.18);
   border-radius: 999px; background: rgba(15,23,42,0.55);
   color: rgba(255,255,255,0.7); font-size: 10px; font-weight: 600;
@@ -119,7 +124,9 @@ html, body {
 
 /* ── Floating toolbar — matches handoff design ──────────────────────────── */
 .toolbar {
-  position: fixed; bottom: 24px; left: 50%;
+  position: fixed;
+  bottom: calc(var(--dock-offset) + 12px);
+  left: 50%;
   transform: translateX(-50%);
   display: flex; align-items: center; gap: 6px;
   padding: 8px;
@@ -342,12 +349,13 @@ html, body {
     left: 12px;
     width: auto;
     top: auto;
-    bottom: 86px;   /* sit just above the toolbar */
+    /* sit above the toolbar (toolbar is ~58px tall + its own offset) */
+    bottom: calc(var(--dock-offset) + 82px);
     max-height: 40vh;
   }
   .session-switcher {
     top: auto;
-    bottom: 86px;
+    bottom: calc(var(--dock-offset) + 82px);
     right: 12px;
     left: auto;
   }
@@ -364,7 +372,6 @@ html, body {
     width: calc(100% - 32px);
     flex-wrap: wrap;
     justify-content: center;
-    bottom: 16px;
   }
 }
 

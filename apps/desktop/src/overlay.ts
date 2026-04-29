@@ -543,8 +543,26 @@ void listen<string>('set-screenshot', event => {
 // ── Reset on each new invocation ──────────────────────────────────────────────
 
 void listen('overlay-will-show', () => {
+  applyDockOffset();
   resetState();
 });
+
+/** Push the toolbar above the macOS Dock (and any bottom system UI).
+ *
+ *  window.screen.height      = full logical screen height
+ *  window.screen.availTop    = top inset (menu bar, ~25 px on macOS)
+ *  window.screen.availHeight = usable height (excludes menu bar + dock)
+ *
+ *  dock_height = screen.height - availTop - availHeight
+ */
+function applyDockOffset() {
+  const dockH = Math.max(
+    0,
+    window.screen.height - window.screen.availTop - window.screen.availHeight,
+  );
+  // Add 12 px breathing room above the dock edge
+  document.documentElement.style.setProperty('--dock-offset', `${dockH + 12}px`);
+}
 
 function resetState() {
   // Remove annotation DOM nodes
@@ -562,5 +580,9 @@ function resetState() {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
+applyDockOffset();
 setTool('pin');
 updateCounter();
+
+// Re-apply whenever the screen layout changes (e.g. dock auto-hide, display change)
+window.addEventListener('resize', applyDockOffset);

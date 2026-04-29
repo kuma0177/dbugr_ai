@@ -51,8 +51,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 
 .welcome-card {
-  width: 380px;
-  padding: 36px 28px 28px;
+  width: min(380px, calc(100vw - 40px));
+  padding: clamp(20px, 5vw, 36px) clamp(16px, 4vw, 28px) clamp(16px, 4vw, 28px);
   text-align: center;
   border: 1px solid var(--border);
   border-radius: 24px;
@@ -292,7 +292,7 @@ kbd {
 /* ── Sidebar ────────────────────────────────────────────────────────────── */
 
 .sidebar {
-  width: 188px;
+  width: clamp(160px, 18%, 220px);
   display: flex;
   flex-direction: column;
   padding: 16px 10px;
@@ -559,7 +559,7 @@ kbd {
 /* ── Right panel ────────────────────────────────────────────────────────── */
 
 .right-panel {
-  width: 290px;
+  width: clamp(240px, 26%, 340px);
   border-left: 1px solid var(--border);
   background: var(--surface);
   overflow-y: auto;
@@ -848,11 +848,7 @@ kbd {
   .capture-thumb     { width: 48px; height: 34px; }
 }
 
-/* Wide window: give sidebar and right-panel more room */
-@media (min-width: 1100px) {
-  .sidebar     { width: 210px; }
-  .right-panel { width: 320px; }
-}
+/* clamp() handles sidebar/right-panel sizing fluidly — no fixed overrides needed */
 
 /* Log / activity (hidden, for debugging) ─────────────────────────────── */
 
