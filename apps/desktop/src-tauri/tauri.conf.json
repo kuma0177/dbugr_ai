@@ -36,8 +36,8 @@
         "resizable": false,
         "skipTaskbar": true,
         "fullscreen": false,
-        "width": 2560,
-        "height": 1600,
+        "width": 1440,
+        "height": 900,
         "x": 0,
         "y": 0
       }
