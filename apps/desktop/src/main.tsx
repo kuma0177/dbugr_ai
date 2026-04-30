@@ -25,7 +25,16 @@ interface Annotation {
   timestamp: string;
 }
 interface CaptureCard { id: string; title: string; preview: string; screenshotUrl?: string; annotations: Annotation[]; timestamp: string; }
-interface Session { id: string; title: string; captures: CaptureCard[]; createdAt: string; status: 'draft' | 'sent' | 'responded'; }
+interface Session {
+  id: string;
+  title: string;
+  captures: CaptureCard[];
+  createdAt: string;
+  status: 'draft' | 'sent' | 'responded';
+  about?: string;
+  projectFolder?: string | null;
+  githubRepo?: string;
+}
 interface AgentFeedback { title: string; summary: string; rootCause?: string; suggestedFix?: string; codeSnippet?: string; nextSteps: string[]; }
 interface BridgeCommand {
   label: string;
@@ -790,6 +799,11 @@ async function sendSession() {
       body: JSON.stringify({
         title: session.title,
         userIntent: JSON.stringify({
+          sessionContext: {
+            about: session.about ?? '',
+            projectFolder: session.projectFolder ?? '',
+            githubRepo: session.githubRepo ?? '',
+          },
           captures: session.captures,
           target,
           contextToggles,
@@ -893,7 +907,7 @@ async function loadSessionsFromApi() {
   try {
     const res = await fetch(`${API}/feedback-sessions`);
     if (!res.ok) return;
-    const json = await res.json() as { data: Array<{ id: string; title: string; createdAt: string; status: string }> };
+    const json = await res.json() as { data: Array<{ id: string; title: string; createdAt: string; status: string; about?: string; project_folder?: string | null; github_repo?: string }> };
     if (!Array.isArray(json.data) || json.data.length === 0) return;
     const apiSessions: Session[] = json.data.slice(0, 8).map(s => ({
       id: s.id,
@@ -901,6 +915,9 @@ async function loadSessionsFromApi() {
       createdAt: s.createdAt,
       status: (s.status as Session['status']) || 'draft',
       captures: [],
+      about: s.about,
+      projectFolder: s.project_folder ?? null,
+      githubRepo: s.github_repo,
     }));
     // Merge: keep seed sessions, prepend API sessions
     const existingIds = new Set(sessions.map(s => s.id));
@@ -918,18 +935,25 @@ async function listenForAnnotations() {
   // Respond to overlay requesting the sessions list for the picker
   await listen('request-sessions', async () => {
     await emit('sessions-list', sessions.map(s => ({ id: s.id, title: s.title, createdAt: s.createdAt })));
+    void loadSessionsFromApi().then(() => {
+      void emit('sessions-list', sessions.map(s => ({ id: s.id, title: s.title, createdAt: s.createdAt })));
+    });
   });
 
   await listen<{
     annotations: Array<{ id: string; number: number; x: number; y: number; width?: number; height?: number; kind?: 'pin' | 'region'; text: string; tags: string[]; timestamp: string }>;
     targetSessionId?: string | null;
     newSessionName?: string;
+    newSessionAbout?: string;
     localFolder?: string | null;
     githubRepo?: string;
   }>('annotations-saved', async (event) => {
       const anns = event.payload.annotations;
       const targetSessionId = event.payload.targetSessionId ?? null;
       const newSessionName  = event.payload.newSessionName ?? '';
+      const newSessionAbout = event.payload.newSessionAbout ?? '';
+      const localFolder = event.payload.localFolder ?? null;
+      const githubRepo = event.payload.githubRepo ?? '';
       if (anns.length === 0) return;
       // If the overlay picked a specific session, make it active before appending
       if (targetSessionId && sessions.find(s => s.id === targetSessionId)) {
@@ -949,6 +973,9 @@ async function listenForAnnotations() {
       if (targetSessionId) {
         const sess = sessions.find(s => s.id === targetSessionId);
         if (sess) {
+          if (newSessionAbout) sess.about = newSessionAbout;
+          sess.projectFolder = localFolder;
+          sess.githubRepo = githubRepo || sess.githubRepo;
           sess.captures.push(newCapture);
           activeCaptureId = newCapture.id;
           lastSavedCapture = { sessionTitle: sess.title, annotationCount: anns.length };
@@ -962,6 +989,9 @@ async function listenForAnnotations() {
           status: 'draft',
           createdAt: new Date().toISOString(),
           captures: [newCapture],
+          about: newSessionAbout || undefined,
+          projectFolder: localFolder,
+          githubRepo: githubRepo || undefined,
         };
         sessions.unshift(newSession);
         activeSessionId = newSession.id;

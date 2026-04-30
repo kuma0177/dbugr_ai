@@ -35,6 +35,7 @@ let selectedId: string | null = null;
 // session context chosen during picking/setup
 let targetSessionId: string | null = null;   // null → create new
 let newSessionName = '';
+let newSessionAbout = '';
 let localFolder: string | null = null;
 let githubRepo = '';
 
@@ -74,19 +75,29 @@ root.innerHTML = `
   <div class="step-card" id="step-setup" style="display:none;">
     <button class="step-back" id="setup-back">← Back</button>
     <div class="step-card-title">New session</div>
-    <div class="step-card-sub">Give it a name and link your project.</div>
+    <div class="step-card-sub">Give this session enough context so Claude or Codex knows what kind of annotations to expect.</div>
 
     <label class="setup-label">Session name</label>
     <input class="setup-input" id="setup-name" placeholder="e.g. Login page crash" maxlength="60" />
+    <div class="setup-help">Use a short, clear title. It becomes the label for this session in the list and in the handoff.</div>
+
+    <label class="setup-label" style="margin-top:14px;">About this session</label>
+    <textarea class="setup-textarea" id="setup-about" maxlength="200" placeholder="What is this session about? What kind of annotations will you add?"></textarea>
+    <div class="setup-meta-row">
+      <div class="setup-help">Tell Claude or Codex what to look for so the screenshots are read with the right intent.</div>
+      <div class="setup-count" id="setup-about-count">0 / 200</div>
+    </div>
 
     <label class="setup-label" style="margin-top:14px;">Project folder <span class="setup-optional">(recommended)</span></label>
     <button class="folder-pick-btn" id="setup-folder-btn">📁 Choose folder…</button>
     <div class="folder-path" id="setup-folder-path" style="display:none;"></div>
+    <div class="setup-help">Pick the folder when this issue belongs to local code. That gives the handoff a real filesystem anchor.</div>
 
     <label class="setup-label" style="margin-top:10px;">GitHub repo <span class="setup-optional">(optional)</span></label>
     <input class="setup-input" id="setup-github" placeholder="owner/repo" />
+    <div class="setup-help">Add the repo when the work maps cleanly to GitHub. It helps Debugr reference the right project on the way out.</div>
 
-    <button class="setup-start-btn" id="setup-start">Start annotating →</button>
+    <button class="setup-start-btn" id="setup-start" disabled>Start annotating →</button>
   </div>
 
   <!-- Step 3: annotation mode -->
@@ -122,7 +133,7 @@ root.innerHTML = `
 
     <!-- Bottom toolbar -->
     <div class="toolbar" id="toolbar">
-      <button class="tool-btn active" id="tool-pin" title="Pin">
+      <button class="tool-btn" id="tool-pin" title="Pin">
         ●<div class="tool-label">Pin</div>
       </button>
       <button class="tool-btn" id="tool-region" title="Region">
@@ -156,9 +167,12 @@ const noteBodyEl     = document.getElementById('note-body') as HTMLDivElement;
 const connectorsEl   = document.getElementById('connectors')!;
 const selRectEl      = document.getElementById('sel-rect') as HTMLDivElement;
 const setupNameEl    = document.getElementById('setup-name') as HTMLInputElement;
+const setupAboutEl   = document.getElementById('setup-about') as HTMLTextAreaElement;
+const setupAboutCount = document.getElementById('setup-about-count')!;
 const setupGithubEl  = document.getElementById('setup-github') as HTMLInputElement;
 const setupFolderBtn = document.getElementById('setup-folder-btn') as HTMLButtonElement;
 const setupFolderPath = document.getElementById('setup-folder-path')!;
+const setupStartBtn = document.getElementById('setup-start') as HTMLButtonElement;
 
 // ── Step transitions ──────────────────────────────────────────────────────────
 
@@ -204,7 +218,7 @@ function updateCounter() {
 
 function renderPickerSessions(list: Array<{ id: string; title: string; createdAt: string }>) {
   if (list.length === 0) {
-    pickerListEl.innerHTML = '<div class="picker-empty">No sessions yet — create your first one.</div>';
+    pickerListEl.innerHTML = '<div class="picker-empty">No past sessions yet. Start a new one to create your first list item.</div>';
     return;
   }
   pickerListEl.innerHTML = list.map(s => `
@@ -237,11 +251,13 @@ document.getElementById('picker-new')!.addEventListener('click', e => {
   e.stopPropagation();
   targetSessionId = null;
   setupNameEl.value = '';
+  setupAboutEl.value = '';
   setupGithubEl.value = '';
   setupFolderPath.style.display = 'none';
   setupFolderBtn.textContent = '📁 Choose folder…';
   localFolder = null;
   githubRepo = '';
+  updateSetupState();
   showStep('setup');
   setTimeout(() => setupNameEl.focus(), 50);
 });
@@ -270,17 +286,44 @@ setupFolderBtn.addEventListener('click', async e => {
 
 setupNameEl.addEventListener('click', e => e.stopPropagation());
 setupNameEl.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') enterAnnotating(); });
+setupNameEl.addEventListener('input', e => { e.stopPropagation(); updateSetupState(); });
+setupAboutEl.addEventListener('click', e => e.stopPropagation());
+setupAboutEl.addEventListener('input', e => {
+  e.stopPropagation();
+  updateSetupState();
+});
 setupGithubEl.addEventListener('click', e => e.stopPropagation());
 setupGithubEl.addEventListener('keydown', e => e.stopPropagation());
-setupGithubEl.addEventListener('input', e => { e.stopPropagation(); githubRepo = setupGithubEl.value; });
-
-document.getElementById('setup-start')!.addEventListener('click', e => {
-  e.stopPropagation(); enterAnnotating();
+setupGithubEl.addEventListener('input', e => {
+  e.stopPropagation();
+  githubRepo = setupGithubEl.value;
+  updateSetupState();
 });
 
+document.getElementById('setup-start')!.addEventListener('click', e => {
+  e.stopPropagation();
+  enterAnnotating();
+});
+
+function updateSetupState() {
+  newSessionName = setupNameEl.value.trim();
+  newSessionAbout = setupAboutEl.value.trim();
+  githubRepo = setupGithubEl.value.trim();
+  setupAboutCount.textContent = `${newSessionAbout.length} / 200`;
+  setupStartBtn.disabled = !newSessionName || !newSessionAbout;
+}
+
 function enterAnnotating() {
-  newSessionName = targetSessionId ? newSessionName : (setupNameEl.value.trim() || `Session ${new Date().toLocaleTimeString()}`);
-  githubRepo = setupGithubEl?.value.trim() ?? githubRepo;
+  if (!targetSessionId) {
+    updateSetupState();
+    if (!newSessionName || !newSessionAbout) {
+      setToast('Add a title and about note before starting.');
+      setupNameEl.focus();
+      return;
+    }
+  } else {
+    newSessionAbout = '';
+  }
 
   // Show session context label in annotation mode
   const label = targetSessionId ? `Adding to: ${newSessionName}` : `New: ${newSessionName}`;
@@ -288,16 +331,16 @@ function enterAnnotating() {
   sessionLabelEl.style.display = 'block';
 
   showStep('annotating');
-  setTool('pin');
+  setTool('pin', false);
   updateCounter();
 }
 
 // ── Tool selection ────────────────────────────────────────────────────────────
 
-function setTool(t: typeof activeTool) {
+function setTool(t: typeof activeTool, markActive = true) {
   activeTool = t;
   (['pin', 'region', 'select'] as const).forEach(id => {
-    document.getElementById(`tool-${id}`)?.classList.toggle('active', id === t);
+    document.getElementById(`tool-${id}`)?.classList.toggle('active', markActive && id === t);
   });
   root.style.cursor = t === 'pin' ? 'crosshair' : t === 'region' ? 'cell' : 'default';
 }
@@ -332,6 +375,7 @@ async function saveAll() {
     annotations,
     targetSessionId,
     newSessionName,
+    newSessionAbout,
     localFolder,
     githubRepo,
   });
@@ -713,6 +757,7 @@ function resetState() {
   selectedId = null;
   targetSessionId = null;
   newSessionName = '';
+  newSessionAbout = '';
   localFolder = null;
   githubRepo = '';
   dragging = false; dragStart = null; moveState = null;
@@ -721,6 +766,14 @@ function resetState() {
   notePanelEl.style.display = 'none';
   sessionLabelEl.style.display = 'none';
   pickerListEl.innerHTML = '<div class="picker-loading">Loading sessions…</div>';
+  setupNameEl.value = '';
+  setupAboutEl.value = '';
+  setupGithubEl.value = '';
+  setupFolderPath.textContent = '';
+  setupFolderPath.style.display = 'none';
+  setupFolderBtn.textContent = '📁 Choose folder…';
+  setupAboutCount.textContent = '0 / 200';
+  setupStartBtn.disabled = true;
   showStep('picking');
 }
 
@@ -728,5 +781,6 @@ function resetState() {
 
 applyDockOffset();
 showStep('picking');
+updateSetupState();
 void emit('request-sessions');
 window.addEventListener('resize', applyDockOffset);
