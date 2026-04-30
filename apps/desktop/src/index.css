@@ -170,30 +170,61 @@ kbd {
 }
 
 .recent-session-item {
-  width: 100%;
-  padding: 12px 13px;
+  display: flex;
+  align-items: center;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--soft);
-  text-align: left;
   transition: all 120ms ease;
-}
-
-.recent-session-item strong {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 13px;
-}
-
-.recent-session-item span {
-  color: var(--muted);
-  font-size: 11.5px;
+  overflow: hidden;
 }
 
 .recent-session-item:hover {
   border-color: rgba(15, 109, 253, 0.28);
   background: #fff;
   transform: translateY(-1px);
+}
+
+.recent-session-open {
+  flex: 1;
+  padding: 12px 13px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.recent-session-open strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.recent-session-open span {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.recent-session-delete {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  margin-right: 6px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 120ms ease;
+}
+
+.recent-session-delete:hover {
+  background: #fee2e2;
+  color: var(--red);
 }
 
 /* ── Session app shell ──────────────────────────────────────────────────── */

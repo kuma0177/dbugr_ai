@@ -29,6 +29,7 @@ let annotations: Annotation[] = [];
 let activeTool: 'select' | 'pin' | 'region' | 'arrow' | 'blur' = 'pin';
 let selectedId: string | null = null;
 let sessionMode: 'append' | 'new' = 'append';
+let repoName = '';
 
 // region-drag state
 let dragging = false;
@@ -59,8 +60,12 @@ root.innerHTML = `
 
   <!-- Top-right: session + counter -->
   <div class="session-switcher" id="session-switcher">
-    <button class="session-switch active" data-mode="append">Append session</button>
+    <button class="session-switch active" data-mode="append">Add to session</button>
     <button class="session-switch" data-mode="new">New session</button>
+    <button class="session-switch" data-mode="repo">Set repo</button>
+  </div>
+  <div class="repo-input-row" id="repo-input-row" style="display:none;">
+    <input class="repo-input" id="repo-input" placeholder="owner/repo" value="" />
   </div>
   <div class="ann-counter" id="ann-counter"></div>
 
@@ -163,12 +168,23 @@ document.getElementById('tool-pin')?.addEventListener('click',    e => { e.stopP
 document.getElementById('tool-region')?.addEventListener('click', e => { e.stopPropagation(); setTool('region'); });
 document.getElementById('tool-select')?.addEventListener('click', e => { e.stopPropagation(); setTool('select'); });
 
+const repoInputRowEl = document.getElementById('repo-input-row')!;
+const repoInputEl    = document.getElementById('repo-input') as HTMLInputElement;
+
+repoInputEl.value = repoName;
+repoInputEl.addEventListener('input', e => { e.stopPropagation(); repoName = repoInputEl.value; });
+repoInputEl.addEventListener('click', e => e.stopPropagation());
+repoInputEl.addEventListener('keydown', e => e.stopPropagation());
+
 sessionSwitcherEl.querySelectorAll<HTMLButtonElement>('.session-switch').forEach(btn => {
   btn.addEventListener('click', e => {
     e.stopPropagation();
-    sessionMode = btn.dataset.mode === 'new' ? 'new' : 'append';
+    const mode = btn.dataset.mode;
+    sessionMode = mode === 'new' ? 'new' : 'append';
     sessionSwitcherEl.querySelectorAll('.session-switch').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    repoInputRowEl.style.display = mode === 'repo' ? 'flex' : 'none';
+    if (mode === 'repo') { repoInputEl.value = repoName; repoInputEl.focus(); }
   });
 });
 

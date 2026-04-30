@@ -193,10 +193,18 @@ function renderWelcome() {
           </div>
           <div class="recent-session-list">
             ${recentSessions.map(session => `
-              <button class="recent-session-item" data-session-id="${session.id}">
-                <strong>${session.title}</strong>
-                <span>${session.captures.length} capture${session.captures.length === 1 ? '' : 's'} · ${fmtTime(session.createdAt)}</span>
-              </button>
+              <div class="recent-session-item">
+                <button class="recent-session-open" data-session-id="${session.id}">
+                  <strong>${session.title}</strong>
+                  <span>${session.captures.length} capture${session.captures.length === 1 ? '' : 's'} · ${fmtTime(session.createdAt)}</span>
+                </button>
+                <button class="recent-session-delete" data-session-id="${session.id}" title="Delete session">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2 3.5h10M5.5 3.5V2.5a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1M11 3.5l-.6 7.4a1 1 0 0 1-1 .9H4.6a1 1 0 0 1-1-.9L3 3.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M5.5 6.5v3M8.5 6.5v3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                  </svg>
+                </button>
+              </div>
             `).join('')}
           </div>
         </div>
@@ -220,7 +228,7 @@ function renderWelcome() {
     render();
   });
 
-  document.querySelectorAll<HTMLButtonElement>('.recent-session-item').forEach(btn => {
+  document.querySelectorAll<HTMLButtonElement>('.recent-session-open').forEach(btn => {
     btn.addEventListener('click', async () => {
       const sessionId = btn.dataset.sessionId;
       if (!sessionId) return;
@@ -232,6 +240,17 @@ function renderWelcome() {
       await win.setResizable(true);
       await win.center();
       render();
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('.recent-session-delete').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const sessionId = btn.dataset.sessionId;
+      if (!sessionId) return;
+      sessions = sessions.filter(s => s.id !== sessionId);
+      if (activeSessionId === sessionId) activeSessionId = sessions[0]?.id ?? null;
+      renderWelcome();
     });
   });
 }
