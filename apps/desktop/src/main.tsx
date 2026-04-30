@@ -115,9 +115,10 @@ const seedSessions: Session[] = [
   },
 ];
 
-sessions = seedSessions;
-activeSessionId = 'session_demo_1';
-activeCaptureId = 'cap_1';
+const deletedIds = new Set<string>(JSON.parse(localStorage.getItem('deleted-session-ids') ?? '[]'));
+sessions = seedSessions.filter(s => !deletedIds.has(s.id));
+activeSessionId = sessions[0]?.id ?? null;
+activeCaptureId = sessions[0]?.captures[0]?.id ?? null;
 
 // ── DOM root ──────────────────────────────────────────────────────────────────
 
@@ -154,11 +155,12 @@ function sessionWindowSize(): [number, number] {
 }
 
 async function fitWindowToContent() {
-  // Let the browser finish layout, then measure the rendered content height.
   await new Promise(r => requestAnimationFrame(r));
-  const contentH = document.body.scrollHeight;
+  const card = document.querySelector<HTMLElement>('.welcome-card');
+  if (!card) return;
+  // Measure the card's true rendered height, add shell padding on both sides
   const maxH = Math.round(window.screen.availHeight * 0.88);
-  const h = Math.min(contentH + 2, maxH); // +2 for sub-pixel border
+  const h = Math.min(card.scrollHeight + 48, maxH);
   await win.setSize(new LogicalSize(420, h));
 }
 
@@ -257,6 +259,9 @@ function renderWelcome() {
       if (!sessionId) return;
       sessions = sessions.filter(s => s.id !== sessionId);
       if (activeSessionId === sessionId) activeSessionId = sessions[0]?.id ?? null;
+      const stored = new Set<string>(JSON.parse(localStorage.getItem('deleted-session-ids') ?? '[]'));
+      stored.add(sessionId);
+      localStorage.setItem('deleted-session-ids', JSON.stringify([...stored]));
       renderWelcome();
     });
   });
