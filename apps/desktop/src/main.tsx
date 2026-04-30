@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
-import { listen } from '@tauri-apps/api/event';
+import { listen, emit } from '@tauri-apps/api/event';
 import './index.css';
 
 const brandIconUrl = new URL('./assets/brand-icon.png', import.meta.url).href;
@@ -685,13 +685,22 @@ async function loadSessionsFromApi() {
 // ── Listen for events from overlay ───────────────────────────────────────────
 
 async function listenForAnnotations() {
+  // Respond to overlay requesting the sessions list for the picker
+  await listen('request-sessions', async () => {
+    await emit('sessions-list', sessions.map(s => ({ id: s.id, title: s.title, createdAt: s.createdAt })));
+  });
+
   await listen<{ annotations: Array<{ id: string; number: number; x: number; y: number; width?: number; height?: number; kind?: 'pin' | 'region'; text: string; tags: string[]; timestamp: string }> }>(
     'annotations-saved',
     async (event) => {
-      // Create a new capture from the overlay annotations
       const anns = event.payload.annotations;
       const sessionMode = (event.payload as { sessionMode?: 'append' | 'new' }).sessionMode ?? 'append';
+      const targetSessionId = (event.payload as { targetSessionId?: string | null }).targetSessionId ?? null;
       if (anns.length === 0) return;
+      // If the overlay picked a specific session, make it active before appending
+      if (targetSessionId && sessions.find(s => s.id === targetSessionId)) {
+        activeSessionId = targetSessionId;
+      }
 
       const normalized = anns.slice(0, MAX_ANNOTATIONS);
       const newCapture: CaptureCard = {

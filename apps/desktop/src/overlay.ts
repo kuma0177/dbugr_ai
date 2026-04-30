@@ -29,6 +29,7 @@ let annotations: Annotation[] = [];
 let activeTool: 'select' | 'pin' | 'region' | 'arrow' | 'blur' = 'pin';
 let selectedId: string | null = null;
 let sessionMode: 'append' | 'new' = 'append';
+let targetSessionId: string | null = null;
 let repoName = '';
 
 // region-drag state
@@ -60,10 +61,11 @@ root.innerHTML = `
 
   <!-- Top-right: session + counter -->
   <div class="session-switcher" id="session-switcher">
-    <button class="session-switch active" data-mode="append">Add to session</button>
+    <button class="session-switch active" data-mode="append" id="btn-append">Add to session ▾</button>
     <button class="session-switch" data-mode="new">New session</button>
     <button class="session-switch" data-mode="repo">Set repo</button>
   </div>
+  <div class="session-picker-dropdown" id="session-picker-dropdown" style="display:none;"></div>
   <div class="repo-input-row" id="repo-input-row" style="display:none;">
     <input class="repo-input" id="repo-input" placeholder="owner/repo" value="" />
   </div>
@@ -176,16 +178,39 @@ repoInputEl.addEventListener('input', e => { e.stopPropagation(); repoName = rep
 repoInputEl.addEventListener('click', e => e.stopPropagation());
 repoInputEl.addEventListener('keydown', e => e.stopPropagation());
 
+const sessionPickerEl = document.getElementById('session-picker-dropdown')!;
+
 sessionSwitcherEl.querySelectorAll<HTMLButtonElement>('.session-switch').forEach(btn => {
-  btn.addEventListener('click', e => {
+  btn.addEventListener('click', async e => {
     e.stopPropagation();
     const mode = btn.dataset.mode;
-    sessionMode = mode === 'new' ? 'new' : 'append';
     sessionSwitcherEl.querySelectorAll('.session-switch').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     repoInputRowEl.style.display = mode === 'repo' ? 'flex' : 'none';
     if (mode === 'repo') { repoInputEl.value = repoName; repoInputEl.focus(); }
+
+    if (mode === 'append') {
+      // Toggle dropdown
+      if (sessionPickerEl.style.display !== 'none') {
+        sessionPickerEl.style.display = 'none';
+        return;
+      }
+      sessionPickerEl.innerHTML = '<div class="session-picker-loading">Loading…</div>';
+      sessionPickerEl.style.display = 'block';
+      await emit('request-sessions');
+    } else {
+      sessionPickerEl.style.display = 'none';
+      sessionMode = mode === 'new' ? 'new' : 'append';
+    }
   });
+});
+
+// Close picker when clicking outside
+document.addEventListener('click', e => {
+  const t = e.target as HTMLElement;
+  if (!t.closest('#session-picker-dropdown') && !t.closest('#btn-append')) {
+    sessionPickerEl.style.display = 'none';
+  }
 });
 
 // ── Cancel / Escape ───────────────────────────────────────────────────────────
@@ -210,7 +235,7 @@ document.addEventListener('keydown', e => {
 
 async function saveAll() {
   if (annotations.length === 0) { void cancelOverlay(); return; }
-  await emit('annotations-saved', { annotations, sessionMode });
+  await emit('annotations-saved', { annotations, sessionMode, targetSessionId });
   await invoke('show_session_window');
   await invoke('hide_overlay');
   setTimeout(resetState, 400);
@@ -424,7 +449,13 @@ function showNotePanel(ann: Annotation) {
 
   noteBodyEl.querySelector('#save-ann')?.addEventListener('click', e => {
     e.stopPropagation();
-    setToast(`Annotation ${ann.number} saved.`);
+    const btn = noteBodyEl.querySelector<HTMLButtonElement>('#save-ann')!;
+    btn.textContent = '✓ Saved';
+    btn.style.background = '#16a34a';
+    setTimeout(() => {
+      deselectAnnotation();
+      setToast(`Annotation ${ann.number} saved — add more or click Save when done.`);
+    }, 400);
   });
 
   notePanelEl.style.display = 'block';
@@ -581,18 +612,56 @@ function applyDockOffset() {
 }
 
 function resetState() {
-  // Remove annotation DOM nodes
   root.querySelectorAll('.ann-pin, .ann-highlight').forEach(el => el.remove());
   connectorsEl.innerHTML = '';
   annotations = [];
   selectedId = null;
+  targetSessionId = null;
   dragging = false; dragStart = null; moveState = null;
   selRectEl.style.display = 'none';
+  sessionPickerEl.style.display = 'none';
   screenshotBg.style.backgroundImage = '';
   notePanelEl.style.display = 'none';
+  // Reset append button label
+  const appendBtn = document.getElementById('btn-append');
+  if (appendBtn) appendBtn.textContent = 'Add to session ▾';
+  sessionSwitcherEl.querySelectorAll('.session-switch').forEach((b, i) => b.classList.toggle('active', i === 0));
+  sessionMode = 'append';
   updateCounter();
   setTool('pin');
 }
+
+// ── Session list from main window ─────────────────────────────────────────────
+
+void listen<Array<{ id: string; title: string; createdAt: string }>>('sessions-list', event => {
+  const list = event.payload;
+  if (!sessionPickerEl || sessionPickerEl.style.display === 'none') return;
+
+  if (list.length === 0) {
+    sessionPickerEl.innerHTML = '<div class="session-picker-empty">No sessions yet — use "New session"</div>';
+    return;
+  }
+
+  sessionPickerEl.innerHTML = list.map(s => `
+    <button class="session-picker-item${targetSessionId === s.id ? ' active' : ''}" data-id="${s.id}">
+      ${s.title}
+    </button>
+  `).join('');
+
+  sessionPickerEl.querySelectorAll<HTMLButtonElement>('.session-picker-item').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      targetSessionId = btn.dataset.id ?? null;
+      sessionMode = 'append';
+      sessionPickerEl.style.display = 'none';
+      const appendBtn = document.getElementById('btn-append');
+      if (appendBtn) {
+        const title = list.find(s => s.id === targetSessionId)?.title ?? 'Add to session';
+        appendBtn.textContent = (title.length > 22 ? title.slice(0, 22) + '…' : title) + ' ▾';
+      }
+    });
+  });
+});
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 

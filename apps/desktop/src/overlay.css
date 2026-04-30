@@ -109,6 +109,33 @@ html, body {
   background: var(--blue-soft); color: var(--blue-dark);
 }
 
+/* ── Session picker dropdown ────────────────────────────────────────────── */
+.session-picker-dropdown {
+  position: fixed; top: 64px; right: 28px;
+  min-width: 200px; max-width: 280px;
+  background: rgba(255,255,255,0.98);
+  border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  z-index: 710;
+  overflow: hidden;
+}
+.session-picker-item {
+  display: block; width: 100%;
+  padding: 9px 14px;
+  text-align: left; border: none; background: transparent;
+  font-size: 12.5px; font-weight: 500; color: var(--text);
+  cursor: pointer; transition: background 80ms ease;
+}
+.session-picker-item:hover { background: var(--blue-soft); color: var(--blue-dark); }
+.session-picker-item.active { background: var(--blue-soft); color: var(--blue-dark); font-weight: 600; }
+.session-picker-loading,
+.session-picker-empty {
+  padding: 10px 14px;
+  font-size: 12px; color: var(--muted); text-align: center;
+}
+
 /* ── Repo input (shown when Set repo tab is active) ─────────────────────── */
 .repo-input-row {
   position: fixed; top: 64px; right: 28px;
