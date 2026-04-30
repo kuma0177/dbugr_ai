@@ -50,6 +50,7 @@ interface BridgeSetup {
 
 const API = 'http://127.0.0.1:3001/api';
 const MAX_ANNOTATIONS = 5;
+const SESSION_CACHE_KEY = 'debugr-session-cache';
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -173,6 +174,21 @@ function groupSessions() {
   return groups;
 }
 
+function persistSessionCache() {
+  try {
+    localStorage.setItem(
+      SESSION_CACHE_KEY,
+      JSON.stringify(sessions.map(s => ({
+        id: s.id,
+        title: s.title,
+        createdAt: s.createdAt,
+      }))),
+    );
+  } catch {
+    // Ignore cache write failures.
+  }
+}
+
 // ── Window sizing helpers ─────────────────────────────────────────────────────
 
 function sessionWindowSize(): [number, number] {
@@ -287,6 +303,7 @@ function renderWelcome() {
       if (!sessionId) return;
       sessions = sessions.filter(s => s.id !== sessionId);
       if (activeSessionId === sessionId) activeSessionId = sessions[0]?.id ?? null;
+      persistSessionCache();
       const stored = new Set<string>(JSON.parse(localStorage.getItem('deleted-session-ids') ?? '[]'));
       stored.add(sessionId);
       localStorage.setItem('deleted-session-ids', JSON.stringify([...stored]));
@@ -924,6 +941,7 @@ async function loadSessionsFromApi() {
     const newOnes = apiSessions.filter(s => !existingIds.has(s.id));
     if (newOnes.length > 0) {
       sessions = [...newOnes, ...sessions];
+      persistSessionCache();
       if (appMode === 'session') render();
     }
   } catch { /* API not running — use seed data */ }
@@ -998,6 +1016,7 @@ async function listenForAnnotations() {
         activeCaptureId = newCapture.id;
         lastSavedCapture = { sessionTitle: title, annotationCount: anns.length };
       }
+      persistSessionCache();
 
       // Show confirmation screen
       appMode = 'confirmation';
@@ -1021,6 +1040,7 @@ async function listenForAnnotations() {
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 async function init() {
+  persistSessionCache();
   render();
   await listenForAnnotations();
   void loadSessionsFromApi();

@@ -16,12 +16,18 @@ interface Annotation {
   tags: string[];
   timestamp: string;
 }
+interface PickerSession {
+  id: string;
+  title: string;
+  createdAt: string;
+}
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_ANNOTATIONS = 5;
 const MIN_REGION = 36;
 const TAGS = ['Bug', 'UX', 'Blocking', 'Question'];
+const SESSION_CACHE_KEY = 'debugr-session-cache';
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -212,6 +218,63 @@ function updateCounter() {
   setToast(n > 0
     ? `${n} annotation${n > 1 ? 's' : ''} added — click Save when done.`
     : `Click anywhere to add an annotation. Right-drag to draw a region.`);
+}
+
+function readCachedPickerSessions(): PickerSession[] {
+  try {
+    const raw = localStorage.getItem(SESSION_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as PickerSession[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function setPickerLoading() {
+  const cached = readCachedPickerSessions();
+  if (cached.length > 0) {
+    renderPickerSessions(cached);
+  } else {
+    pickerListEl.innerHTML = '<div class="picker-loading">Loading sessions…</div>';
+  }
+}
+
+function clearAnnotationDOM() {
+  root.querySelectorAll('.ann-pin, .ann-highlight, .ann-delete').forEach(el => el.remove());
+}
+
+function rerenderAnnotations() {
+  clearAnnotationDOM();
+  connectorsEl.innerHTML = '';
+  annotations.forEach((ann, index) => {
+    ann.number = index + 1;
+    if (ann.kind === 'pin') renderPin(ann);
+    else renderRegion(ann);
+  });
+  if (selectedId) {
+    const selected = annotations.find(a => a.id === selectedId);
+    if (selected) {
+      showNotePanel(selected);
+    } else {
+      deselectAnnotation();
+    }
+  }
+  updateCounter();
+}
+
+function deleteAnnotation(id: string) {
+  const idx = annotations.findIndex(a => a.id === id);
+  if (idx === -1) return;
+  const wasSelected = selectedId === id;
+  annotations.splice(idx, 1);
+  if (wasSelected) {
+    selectedId = null;
+    notePanelEl.style.display = 'none';
+    connectorsEl.innerHTML = '';
+  }
+  rerenderAnnotations();
+  setToast('Annotation deleted.');
 }
 
 // ── Step 1: Picker ────────────────────────────────────────────────────────────
@@ -437,6 +500,20 @@ function renderPin(ann: Annotation) {
   pin.id = `pin_${ann.id}`;
   pin.style.cssText = `left:${ann.x}px;top:${ann.y}px;`;
   pin.textContent = String(ann.number);
+  pin.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const box = boxOf(ann);
+    moveState = {
+      id: ann.id,
+      mode: 'move',
+      ptId: e.pointerId,
+      sx: e.clientX,
+      sy: e.clientY,
+      initial: box,
+    };
+    pin.setPointerCapture(e.pointerId);
+  });
   pin.addEventListener('click', e => { e.stopPropagation(); selectAnnotation(ann); });
   root.appendChild(pin);
 
@@ -445,6 +522,20 @@ function renderPin(ann: Annotation) {
   hl.id = `hl_${ann.id}`;
   hl.style.cssText = `left:${ann.x - 60}px;top:${ann.y - 30}px;width:120px;height:60px;pointer-events:none;`;
   root.appendChild(hl);
+
+  const del = document.createElement('button');
+  del.className = 'ann-delete';
+  del.type = 'button';
+  del.dataset.annId = ann.id;
+  del.textContent = '×';
+  del.title = 'Delete annotation';
+  del.addEventListener('click', e => {
+    e.stopPropagation();
+    deleteAnnotation(ann.id);
+  });
+  del.style.left = `${ann.x + 20}px`;
+  del.style.top = `${ann.y - 18}px`;
+  root.appendChild(del);
   syncSel();
 }
 
@@ -492,8 +583,36 @@ function renderRegion(ann: Annotation) {
   pin.id = `pin_${ann.id}`;
   pin.style.cssText = `left:${b.left + b.width / 2}px;top:${b.top + b.height / 2}px;`;
   pin.textContent = String(ann.number);
+  pin.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const box = boxOf(ann);
+    moveState = {
+      id: ann.id,
+      mode: 'move',
+      ptId: e.pointerId,
+      sx: e.clientX,
+      sy: e.clientY,
+      initial: box,
+    };
+    pin.setPointerCapture(e.pointerId);
+  });
   pin.addEventListener('click', e => { e.stopPropagation(); selectAnnotation(ann); });
   root.appendChild(pin);
+
+  const del = document.createElement('button');
+  del.className = 'ann-delete';
+  del.type = 'button';
+  del.dataset.annId = ann.id;
+  del.textContent = '×';
+  del.title = 'Delete annotation';
+  del.addEventListener('click', e => {
+    e.stopPropagation();
+    deleteAnnotation(ann.id);
+  });
+  del.style.left = `${b.left + b.width - 10}px`;
+  del.style.top = `${b.top - 10}px`;
+  root.appendChild(del);
   syncSel();
 }
 
@@ -528,6 +647,16 @@ function updateRegionDOM(ann: Annotation) {
     const [hx, hy] = handleOffset(name, b.width, b.height);
     h.style.left = `${hx}px`; h.style.top = `${hy}px`;
   });
+  const deleteBtn = [...root.querySelectorAll<HTMLButtonElement>('.ann-delete')].find(btn => btn.dataset.annId === ann.id);
+  if (deleteBtn) {
+    if (ann.kind === 'pin') {
+      deleteBtn.style.left = `${ann.x + 20}px`;
+      deleteBtn.style.top = `${ann.y - 18}px`;
+    } else {
+      deleteBtn.style.left = `${b.left + b.width - 10}px`;
+      deleteBtn.style.top = `${b.top - 10}px`;
+    }
+  }
   syncSel();
   if (selectedId === ann.id) drawConnector(ann);
 }
@@ -729,7 +858,12 @@ void listen<string>('set-screenshot', event => {
 
 // ── Sessions list from main window ────────────────────────────────────────────
 
-void listen<Array<{ id: string; title: string; createdAt: string }>>('sessions-list', event => {
+void listen<Array<PickerSession>>('sessions-list', event => {
+  try {
+    localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(event.payload));
+  } catch {
+    // Ignore cache write failures.
+  }
   renderPickerSessions(event.payload);
 });
 
@@ -740,6 +874,7 @@ void listen('overlay-will-show', () => {
   resetState();
   // Request sessions for picker
   void emit('request-sessions');
+  window.setTimeout(() => void emit('request-sessions'), 300);
 });
 
 function applyDockOffset() {
@@ -765,7 +900,7 @@ function resetState() {
   screenshotBg.style.backgroundImage = '';
   notePanelEl.style.display = 'none';
   sessionLabelEl.style.display = 'none';
-  pickerListEl.innerHTML = '<div class="picker-loading">Loading sessions…</div>';
+  setPickerLoading();
   setupNameEl.value = '';
   setupAboutEl.value = '';
   setupGithubEl.value = '';
@@ -781,6 +916,7 @@ function resetState() {
 
 applyDockOffset();
 showStep('picking');
+setPickerLoading();
 updateSetupState();
 void emit('request-sessions');
 window.addEventListener('resize', applyDockOffset);
