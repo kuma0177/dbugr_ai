@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { execFile } from 'node:child_process';
+import path from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -31,6 +32,43 @@ function getRepoContext() {
   const repoName = match ? `${match[1]}/${match[2].replace(/\.git$/, '')}` : '';
   return { repoUrl, repoName, repoBranch };
 }
+
+function getRepoRoot() {
+  return process.env.DEBUGR_REPO_ROOT?.trim() || path.resolve(__dirname, '../../../../');
+}
+
+function getApiBaseUrl() {
+  return process.env.DEBUGR_API_URL?.trim() || 'http://127.0.0.1:3001/api';
+}
+
+systemRouter.get('/system/bridge-setup', (req: Request, res: Response) => {
+  const target = req.query.target === 'codex' ? 'codex' : 'claude';
+  const repoRoot = getRepoRoot();
+  const apiBaseUrl = getApiBaseUrl();
+
+  return res.json({
+    data: {
+      target,
+      repoRoot,
+      commands: {
+        mcp: {
+          label: 'MCP server',
+          cwd: `${repoRoot}/apps/mcp-server`,
+          command: 'pnpm dev',
+          description:
+            'Launches the local stdio MCP server so Claude Desktop or Codex can point at Debugr context.',
+        },
+        script: {
+          label: 'Background script',
+          cwd: `${repoRoot}/apps/desktop`,
+          command: `node scripts/background-bridge.mjs --target ${target} --api ${apiBaseUrl}`,
+          description:
+            'Starts the local relay that watches Debugr and can hand the command to your CLI session.',
+        },
+      },
+    },
+  });
+});
 
 async function readChromeTabs(): Promise<ChromeTab[]> {
   const scriptLines = [

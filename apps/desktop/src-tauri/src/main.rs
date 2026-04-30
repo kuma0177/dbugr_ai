@@ -62,6 +62,45 @@ fn open_screen_capture_settings() -> Result<(), String> {
     Ok(())
 }
 
+fn escape_applescript_text(value: &str) -> String {
+    value.replace('\\', r"\\").replace('"', r#"\""#)
+}
+
+#[tauri::command]
+fn open_command_in_terminal(cwd: String, command: String, title: Option<String>) -> Result<(), String> {
+    let shell_command = format!("cd '{}' && {}", cwd.replace('\'', r"'\''"), command);
+    let applescript = match title {
+        Some(title) => format!(
+            r#"tell application "Terminal"
+activate
+do script "{}"
+set custom title of front window to "{}"
+end tell"#,
+            escape_applescript_text(&shell_command),
+            escape_applescript_text(&title),
+        ),
+        None => format!(
+            r#"tell application "Terminal"
+activate
+do script "{}"
+end tell"#,
+            escape_applescript_text(&shell_command),
+        ),
+    };
+
+    let status = Command::new("osascript")
+        .arg("-e")
+        .arg(applescript)
+        .status()
+        .map_err(|e| format!("Failed to open Terminal: {e}"))?;
+
+    if !status.success() {
+        return Err("Terminal command failed".into());
+    }
+
+    Ok(())
+}
+
 /// Shows a native macOS folder-picker via AppleScript.
 /// Returns the POSIX path of the chosen folder, or null if cancelled.
 #[tauri::command]
@@ -335,6 +374,7 @@ fn main() {
             request_screen_capture_permission,
             open_screen_capture_settings,
             capture_interactive_screenshot,
+            open_command_in_terminal,
             show_overlay,
             hide_overlay,
             show_session_window,

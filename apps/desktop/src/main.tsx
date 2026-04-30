@@ -10,6 +10,7 @@ const brandIconUrl = new URL('./assets/brand-icon.png', import.meta.url).href;
 type Target = 'claude' | 'codex';
 type AppMode = 'welcome' | 'session' | 'confirmation';
 type RightPanel = 'none' | 'share' | 'feedback';
+type BridgeMethod = 'mcp' | 'script';
 
 interface Annotation {
   id: string;
@@ -26,6 +27,17 @@ interface Annotation {
 interface CaptureCard { id: string; title: string; preview: string; screenshotUrl?: string; annotations: Annotation[]; timestamp: string; }
 interface Session { id: string; title: string; captures: CaptureCard[]; createdAt: string; status: 'draft' | 'sent' | 'responded'; }
 interface AgentFeedback { title: string; summary: string; rootCause?: string; suggestedFix?: string; codeSnippet?: string; nextSteps: string[]; }
+interface BridgeCommand {
+  label: string;
+  cwd: string;
+  command: string;
+  description: string;
+}
+interface BridgeSetup {
+  target: Target;
+  repoRoot: string;
+  commands: Record<BridgeMethod, BridgeCommand>;
+}
 
 const API = 'http://127.0.0.1:3001/api';
 const MAX_ANNOTATIONS = 5;
@@ -42,6 +54,9 @@ let contextToggles = { consoleLogs: true, networkLogs: true, environmentInfo: tr
 let feedback: AgentFeedback | null = null;
 let isSending = false;
 let isConnected = false; // true once MCP/script link confirmed
+let bridgeSetup: BridgeSetup | null = null;
+let bridgeSetupRequested = false;
+let bridgeLaunchMessage = '';
 // Last-saved capture info for confirmation screen
 let lastSavedCapture: { sessionTitle: string; annotationCount: number } | null = null;
 
@@ -314,6 +329,9 @@ function renderConfirmation() {
   app.querySelectorAll<HTMLInputElement>('input[name="target"]').forEach(radio => {
     radio.addEventListener('change', () => {
       target = radio.value as Target;
+      bridgeSetup = null;
+      bridgeSetupRequested = false;
+      bridgeLaunchMessage = '';
       renderConfirmation();
     });
   });
@@ -349,20 +367,81 @@ function renderConfirmation() {
   void fitWindowToContent();
 }
 
+async function loadBridgeSetup() {
+  try {
+    const res = await fetch(`${API}/system/bridge-setup?target=${target}`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.data as BridgeSetup;
+  } catch {
+    return null;
+  }
+}
+
+async function launchBridge(method: BridgeMethod) {
+  const setup = bridgeSetup || await loadBridgeSetup();
+  if (!setup) {
+    bridgeLaunchMessage = 'Could not load bridge setup.';
+    renderConnectionSetup();
+    return;
+  }
+
+  bridgeSetup = setup;
+  const command = setup.commands[method];
+  bridgeLaunchMessage = `${command.label} launched in Terminal. Keep that window open while your CLI session reads Debugr context.`;
+
+  try {
+    await invoke('open_command_in_terminal', {
+      cwd: command.cwd,
+      command: command.command,
+      title: `${command.label} · Debugr`,
+    });
+    isConnected = true;
+  } catch (error) {
+    bridgeLaunchMessage = error instanceof Error ? error.message : 'Failed to launch bridge command.';
+  }
+
+  appMode = 'session';
+  rightPanel = 'feedback';
+  feedback = null;
+  await win.setSize(new LogicalSize(...sessionWindowSize()));
+  await win.setResizable(true);
+  await win.center();
+  render();
+  void sendSession();
+}
+
 function renderConnectionSetup() {
+  if (!bridgeSetupRequested) {
+    bridgeSetupRequested = true;
+    void loadBridgeSetup().then((setup) => {
+      bridgeSetup = setup;
+      if (appMode === 'confirmation' && !isConnected) {
+        renderConnectionSetup();
+      }
+    });
+  }
+
   app.innerHTML = `
     <div class="welcome-shell">
       <div class="welcome-card confirmation-card">
         <div class="confirm-check" style="background:#f59e0b;">⚡</div>
         <h1>Connect ${target === 'claude' ? 'Claude' : 'Codex'}</h1>
-        <p class="confirm-sub">Choose how Debugr sends sessions to ${target === 'claude' ? 'Claude' : 'Codex'}.</p>
+        <p class="confirm-sub">Choose how Debugr launches the local bridge for ${target === 'claude' ? 'Claude' : 'Codex'}.</p>
+
+        ${bridgeLaunchMessage ? `
+          <div style="margin: 0 0 16px; padding: 12px 14px; border-radius: 12px; background: #ecfdf3; border: 1px solid #86efac; color: #166534; font-size: 0.88rem; line-height: 1.5;">
+            ${bridgeLaunchMessage}
+          </div>
+        ` : ''}
 
         <div class="connect-options">
           <button class="connect-option" id="connect-mcp">
             <div class="connect-option-icon">🔌</div>
             <div class="connect-option-body">
               <div class="connect-option-title">MCP server</div>
-              <div class="connect-option-desc">Connect via Model Context Protocol — best for Claude Desktop</div>
+              <div class="connect-option-desc">Launch the stdio server that Claude Desktop or Codex can attach to.</div>
+              ${bridgeSetup?.commands.mcp ? `<div style="margin-top:8px;font-family:monospace;font-size:11px;color:#334155;word-break:break-all;">${bridgeSetup.commands.mcp.cwd} · ${bridgeSetup.commands.mcp.command}</div>` : ''}
             </div>
             <span class="connect-option-badge">Recommended</span>
           </button>
@@ -370,9 +449,14 @@ function renderConnectionSetup() {
             <div class="connect-option-icon">⚙️</div>
             <div class="connect-option-body">
               <div class="connect-option-title">Background script</div>
-              <div class="connect-option-desc">Lightweight daemon that bridges Debugr to your AI tool</div>
+              <div class="connect-option-desc">Launch the local relay that can keep a CLI session attached to Debugr.</div>
+              ${bridgeSetup?.commands.script ? `<div style="margin-top:8px;font-family:monospace;font-size:11px;color:#334155;word-break:break-all;">${bridgeSetup.commands.script.cwd} · ${bridgeSetup.commands.script.command}</div>` : ''}
             </div>
           </button>
+        </div>
+
+        <div style="margin-top:16px; padding: 12px 14px; border: 1px solid #dbeafe; border-radius: 12px; background: #eff6ff; font-size: 0.84rem; line-height: 1.55; color: #1e3a8a;">
+          <strong>What this does:</strong> it opens the actual helper in Terminal instead of pretending to connect. The helper stays running while your CLI session reads the session context from Debugr.
         </div>
 
         <button class="btn-secondary" id="connect-back" style="margin-top:8px;">← Back</button>
@@ -387,17 +471,13 @@ function renderConnectionSetup() {
 
   const connect = async (method: 'mcp' | 'script') => {
     renderConnecting(method);
-    // Simulate connection handshake
-    await new Promise(r => setTimeout(r, 1800));
-    isConnected = true;
-    appMode = 'session';
-    rightPanel = 'feedback';
-    feedback = null;
-    await win.setSize(new LogicalSize(...sessionWindowSize()));
-    await win.setResizable(true);
-    await win.center();
-    render();
-    void sendSession();
+    bridgeSetup = bridgeSetup || await loadBridgeSetup();
+    if (!bridgeSetup) {
+      bridgeLaunchMessage = 'Could not load bridge setup from the API.';
+      renderConnectionSetup();
+      return;
+    }
+    await launchBridge(method);
   };
 
   document.getElementById('connect-mcp')?.addEventListener('click', () => void connect('mcp'));
@@ -412,7 +492,7 @@ function renderConnecting(method: 'mcp' | 'script') {
       <div class="welcome-card confirmation-card" style="align-items:center;text-align:center;">
         <div class="loading-spinner" style="width:32px;height:32px;margin:8px auto 16px;border-width:3px;"></div>
         <h1>Connecting…</h1>
-        <p class="confirm-sub">Setting up ${method === 'mcp' ? 'MCP server' : 'background script'} bridge</p>
+        <p class="confirm-sub">Opening the ${method === 'mcp' ? 'MCP server' : 'background script'} bridge in Terminal</p>
       </div>
     </div>
   `;

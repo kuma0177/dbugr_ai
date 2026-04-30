@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build",
+    "build": "tauri build --bundles app",
+    "bundle": "tauri build",
     "vite": "vite",
     "preview": "vite preview"
   },
