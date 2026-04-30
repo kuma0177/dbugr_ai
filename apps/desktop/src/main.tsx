@@ -145,14 +145,21 @@ function groupSessions() {
   return groups;
 }
 
-// ── Enter session mode (resize window) ───────────────────────────────────────
+// ── Window sizing helpers ─────────────────────────────────────────────────────
 
 function sessionWindowSize(): [number, number] {
-  // Target ~80% of screen width / 78% height, clamped to sensible min/max.
-  // window.screen gives the logical pixel dimensions of the current display.
   const w = Math.round(Math.max(720, Math.min(1280, window.screen.width  * 0.80)));
   const h = Math.round(Math.max(560, Math.min( 860, window.screen.height * 0.78)));
   return [w, h];
+}
+
+async function fitWindowToContent() {
+  // Let the browser finish layout, then measure the rendered content height.
+  await new Promise(r => requestAnimationFrame(r));
+  const contentH = document.body.scrollHeight;
+  const maxH = Math.round(window.screen.availHeight * 0.88);
+  const h = Math.min(contentH + 2, maxH); // +2 for sub-pixel border
+  await win.setSize(new LogicalSize(420, h));
 }
 
 async function enterSessionMode() {
@@ -253,6 +260,8 @@ function renderWelcome() {
       renderWelcome();
     });
   });
+
+  void fitWindowToContent();
 }
 
 // ── Session app ───────────────────────────────────────────────────────────────

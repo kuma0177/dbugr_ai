@@ -19,7 +19,7 @@
         "label": "main",
         "title": "debugr.ai",
         "width": 420,
-        "height": 620,
+        "height": 460,
         "resizable": false,
         "center": true,
         "visible": true
