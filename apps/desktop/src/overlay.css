@@ -53,7 +53,7 @@ html, body {
 /* ── Toast ──────────────────────────────────────────────────────────────── */
 .toast {
   position: fixed;
-  top: 22px; left: 50%;
+  top: 52px; left: 50%;
   transform: translateX(-50%);
   display: flex; align-items: center; gap: 8px;
   padding: 9px 16px 9px 12px;
@@ -75,22 +75,12 @@ html, body {
   font-family: inherit;
 }
 
-/* ── Annotation counter badge ───────────────────────────────────────────── */
-.ann-counter {
-  position: fixed; top: 22px; right: 28px;
-  padding: 6px 14px;
-  border: 1px solid rgba(22, 163, 74, 0.3);
-  border-radius: 999px;
-  background: rgba(22, 163, 74, 0.12);
-  color: #15803d; font-size: 12px; font-weight: 600;
-  pointer-events: none; z-index: 700;
-  display: none;
-}
-.ann-counter.visible { display: block; }
+/* ── Annotation counter — hidden; toast already shows the count ─────────── */
+.ann-counter { display: none !important; }
 
 /* ── Session switcher ───────────────────────────────────────────────────── */
 .session-switcher {
-  position: fixed; top: 20px; right: 28px;
+  position: fixed; top: 52px; right: 28px;
   display: flex; gap: 4px; padding: 5px;
   border: 1px solid var(--border); border-radius: 13px;
   background: rgba(255, 255, 255, 0.96);
@@ -111,7 +101,7 @@ html, body {
 
 /* ── Session picker dropdown ────────────────────────────────────────────── */
 .session-picker-dropdown {
-  position: fixed; top: 64px; right: 28px;
+  position: fixed; top: 102px; right: 28px;
   min-width: 200px; max-width: 280px;
   background: rgba(255,255,255,0.98);
   border: 1px solid var(--border); border-radius: 12px;
@@ -136,9 +126,9 @@ html, body {
   font-size: 12px; color: var(--muted); text-align: center;
 }
 
-/* ── Repo input (shown when Set repo tab is active) ─────────────────────── */
+/* ── Repo input (shown when GitHub repo tab is active) ──────────────────── */
 .repo-input-row {
-  position: fixed; top: 64px; right: 28px;
+  position: fixed; top: 102px; right: 28px;
   display: flex; align-items: center;
   z-index: 700;
 }

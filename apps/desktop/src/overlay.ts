@@ -63,7 +63,7 @@ root.innerHTML = `
   <div class="session-switcher" id="session-switcher">
     <button class="session-switch active" data-mode="append" id="btn-append">Add to session ▾</button>
     <button class="session-switch" data-mode="new">New session</button>
-    <button class="session-switch" data-mode="repo">Set repo</button>
+    <button class="session-switch" data-mode="repo">GitHub repo</button>
   </div>
   <div class="session-picker-dropdown" id="session-picker-dropdown" style="display:none;"></div>
   <div class="repo-input-row" id="repo-input-row" style="display:none;">
