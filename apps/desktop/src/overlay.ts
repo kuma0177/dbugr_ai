@@ -513,7 +513,7 @@ root.addEventListener('contextmenu', e => e.preventDefault());
 
 root.addEventListener('pointerdown', e => {
   const target = e.target as HTMLElement;
-  if (target.closest('.toolbar, .note-panel, .session-switcher, .ann-pin, .ann-highlight')) return;
+  if (target.closest('.toolbar, .note-panel, .session-switcher, .repo-input-row, .session-picker-dropdown, .ann-pin, .ann-highlight')) return;
 
   // Left-click: pin or select
   if (e.button === 0) {
