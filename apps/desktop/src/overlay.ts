@@ -30,7 +30,8 @@ let activeTool: 'select' | 'pin' | 'region' | 'arrow' | 'blur' = 'pin';
 let selectedId: string | null = null;
 let sessionMode: 'append' | 'new' = 'append';
 let targetSessionId: string | null = null;
-let repoName = '';
+let localFolder: string | null = null;
+let githubRepo = '';
 
 // region-drag state
 let dragging = false;
@@ -63,11 +64,16 @@ root.innerHTML = `
   <div class="session-switcher" id="session-switcher">
     <button class="session-switch active" data-mode="append" id="btn-append">Add to session ▾</button>
     <button class="session-switch" data-mode="new">New session</button>
-    <button class="session-switch" data-mode="repo">GitHub repo</button>
+    <button class="session-switch" data-mode="repo" id="btn-repo">Project</button>
   </div>
   <div class="session-picker-dropdown" id="session-picker-dropdown" style="display:none;"></div>
   <div class="repo-input-row" id="repo-input-row" style="display:none;">
-    <input class="repo-input" id="repo-input" placeholder="owner/repo" value="" />
+    <button class="folder-pick-btn" id="folder-pick-btn">📁 Choose folder…</button>
+    <div class="folder-path" id="folder-path" style="display:none;"></div>
+    <div class="github-row">
+      <span class="github-label">GitHub repo (optional)</span>
+      <input class="repo-input" id="repo-input" placeholder="owner/repo" value="" />
+    </div>
   </div>
   <div class="ann-counter" id="ann-counter"></div>
 
@@ -172,11 +178,28 @@ document.getElementById('tool-select')?.addEventListener('click', e => { e.stopP
 
 const repoInputRowEl = document.getElementById('repo-input-row')!;
 const repoInputEl    = document.getElementById('repo-input') as HTMLInputElement;
+const folderPickBtn  = document.getElementById('folder-pick-btn') as HTMLButtonElement;
+const folderPathEl   = document.getElementById('folder-path')!;
 
-repoInputEl.value = repoName;
-repoInputEl.addEventListener('input', e => { e.stopPropagation(); repoName = repoInputEl.value; });
+repoInputEl.value = githubRepo;
+repoInputEl.addEventListener('input', e => { e.stopPropagation(); githubRepo = repoInputEl.value; });
 repoInputEl.addEventListener('click', e => e.stopPropagation());
 repoInputEl.addEventListener('keydown', e => e.stopPropagation());
+
+folderPickBtn.addEventListener('click', async e => {
+  e.stopPropagation();
+  const path = await invoke<string | null>('pick_folder');
+  if (path) {
+    localFolder = path;
+    const short = path.replace(/\/$/, '').split('/').slice(-2).join('/');
+    folderPathEl.textContent = '📁 ' + short;
+    folderPathEl.style.display = 'block';
+    folderPickBtn.textContent = 'Change folder…';
+    // Update "Project" tab label to show folder name
+    const repoBtn = document.getElementById('btn-repo');
+    if (repoBtn) repoBtn.textContent = short.split('/').pop() || 'Project';
+  }
+});
 
 const sessionPickerEl = document.getElementById('session-picker-dropdown')!;
 
@@ -235,7 +258,7 @@ document.addEventListener('keydown', e => {
 
 async function saveAll() {
   if (annotations.length === 0) { void cancelOverlay(); return; }
-  await emit('annotations-saved', { annotations, sessionMode, targetSessionId });
+  await emit('annotations-saved', { annotations, sessionMode, targetSessionId, localFolder, githubRepo });
   await invoke('show_session_window');
   await invoke('hide_overlay');
   setTimeout(resetState, 400);
@@ -617,14 +640,21 @@ function resetState() {
   annotations = [];
   selectedId = null;
   targetSessionId = null;
+  localFolder = null;
+  githubRepo = '';
   dragging = false; dragStart = null; moveState = null;
   selRectEl.style.display = 'none';
   sessionPickerEl.style.display = 'none';
+  repoInputRowEl.style.display = 'none';
+  folderPathEl.style.display = 'none';
+  folderPickBtn.textContent = '📁 Choose folder…';
+  repoInputEl.value = '';
   screenshotBg.style.backgroundImage = '';
   notePanelEl.style.display = 'none';
-  // Reset append button label
   const appendBtn = document.getElementById('btn-append');
   if (appendBtn) appendBtn.textContent = 'Add to session ▾';
+  const repoBtn = document.getElementById('btn-repo');
+  if (repoBtn) repoBtn.textContent = 'Project';
   sessionSwitcherEl.querySelectorAll('.session-switch').forEach((b, i) => b.classList.toggle('active', i === 0));
   sessionMode = 'append';
   updateCounter();

@@ -62,6 +62,23 @@ fn open_screen_capture_settings() -> Result<(), String> {
     Ok(())
 }
 
+/// Shows a native macOS folder-picker via AppleScript.
+/// Returns the POSIX path of the chosen folder, or null if cancelled.
+#[tauri::command]
+fn pick_folder() -> Option<String> {
+    let out = Command::new("osascript")
+        .arg("-e")
+        .arg(r#"POSIX path of (choose folder with prompt "Select your project folder:")"#)
+        .output()
+        .ok()?;
+    if out.status.success() {
+        let path = String::from_utf8(out.stdout).ok()?.trim().to_string();
+        if path.is_empty() { None } else { Some(path) }
+    } else {
+        None
+    }
+}
+
 // ── Screenshot helpers ────────────────────────────────────────────────────────
 
 fn encode_image_at(path: &PathBuf) -> Result<String, String> {
@@ -322,6 +339,7 @@ fn main() {
             hide_overlay,
             show_session_window,
             hide_main_window,
+            pick_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running debugr.ai");
