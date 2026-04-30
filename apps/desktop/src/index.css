@@ -899,3 +899,87 @@ kbd {
 
 .perm-note.ok { color: #15803d; }
 .perm-note.warn { color: #b45309; }
+
+/* ── Confirmation screen ────────────────────────────────────────────────── */
+
+.confirmation-card {
+  gap: 0;
+  text-align: center;
+  align-items: center;
+}
+.confirm-check {
+  width: 52px; height: 52px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: #fff; font-size: 22px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 14px;
+  box-shadow: 0 8px 20px rgba(22,163,74,0.28);
+}
+.confirm-sub {
+  color: var(--muted); font-size: 13px; margin-bottom: 22px !important;
+}
+.confirm-section-label {
+  font-size: 11px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  align-self: flex-start; margin-bottom: 8px;
+}
+.target-radio-group {
+  display: flex; gap: 8px; width: 100%; margin-bottom: 20px;
+}
+.target-radio {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  border: 1.5px solid var(--border); border-radius: 11px;
+  cursor: pointer; transition: all 100ms ease;
+  background: #f8fafc;
+}
+.target-radio input[type="radio"] { display: none; }
+.target-radio.active {
+  border-color: var(--blue2);
+  background: var(--blue-soft);
+}
+.target-radio-icon { font-size: 16px; }
+.target-radio-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.confirm-actions {
+  display: flex; flex-direction: column; gap: 8px; width: 100%;
+}
+.btn-secondary {
+  width: 100%; height: 40px;
+  border: 1.5px solid var(--border); border-radius: 11px;
+  background: transparent; color: var(--text);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: all 100ms ease;
+}
+.btn-secondary:hover { border-color: #94a3b8; background: #f1f5f9; }
+.confirm-view-session {
+  margin-top: 10px; padding: 0; border: none; background: transparent;
+  font-size: 12px; color: var(--muted); cursor: pointer;
+  text-decoration: underline;
+}
+.confirm-view-session:hover { color: var(--text); }
+
+/* ── Connection setup screen ────────────────────────────────────────────── */
+
+.connect-options {
+  display: flex; flex-direction: column; gap: 8px;
+  width: 100%; margin: 4px 0 12px;
+}
+.connect-option {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 14px;
+  border: 1.5px solid var(--border); border-radius: 13px;
+  background: #f8fafc; cursor: pointer; text-align: left;
+  transition: all 100ms ease;
+  position: relative;
+}
+.connect-option:hover { border-color: var(--blue2); background: var(--blue-soft); }
+.connect-option-icon { font-size: 20px; flex-shrink: 0; }
+.connect-option-title { font-size: 13.5px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+.connect-option-desc { font-size: 11.5px; color: var(--muted); line-height: 1.4; }
+.connect-option-badge {
+  position: absolute; top: 10px; right: 12px;
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--blue-soft); color: var(--blue-dark);
+  font-size: 10px; font-weight: 700;
+}

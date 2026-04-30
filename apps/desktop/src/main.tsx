@@ -8,7 +8,7 @@ const brandIconUrl = new URL('./assets/brand-icon.png', import.meta.url).href;
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type Target = 'claude' | 'codex';
-type AppMode = 'welcome' | 'session';
+type AppMode = 'welcome' | 'session' | 'confirmation';
 type RightPanel = 'none' | 'share' | 'feedback';
 
 interface Annotation {
@@ -37,10 +37,13 @@ let rightPanel: RightPanel = 'none';
 let sessions: Session[] = [];
 let activeSessionId: string | null = null;
 let activeCaptureId: string | null = null;
-let target: Target = 'codex';
+let target: Target = 'claude';
 let contextToggles = { consoleLogs: true, networkLogs: true, environmentInfo: true };
 let feedback: AgentFeedback | null = null;
 let isSending = false;
+let isConnected = false; // true once MCP/script link confirmed
+// Last-saved capture info for confirmation screen
+let lastSavedCapture: { sessionTitle: string; annotationCount: number } | null = null;
 
 const win = getCurrentWindow();
 
@@ -177,6 +180,7 @@ async function enterSessionMode() {
 
 function render() {
   if (appMode === 'welcome') renderWelcome();
+  else if (appMode === 'confirmation') renderConfirmation();
   else renderSession();
 }
 
@@ -266,6 +270,152 @@ function renderWelcome() {
     });
   });
 
+  void fitWindowToContent();
+}
+
+// ── Confirmation screen ───────────────────────────────────────────────────────
+
+function renderConfirmation() {
+  const info = lastSavedCapture;
+  app.innerHTML = `
+    <div class="welcome-shell">
+      <div class="welcome-card confirmation-card">
+        <div class="confirm-check">✓</div>
+        <h1>Annotations saved</h1>
+        <p class="confirm-sub">
+          ${info ? `<strong>${info.sessionTitle}</strong> · ${info.annotationCount} annotation${info.annotationCount === 1 ? '' : 's'}` : 'Session updated.'}
+        </p>
+
+        <div class="confirm-section-label">Send to</div>
+        <div class="target-radio-group">
+          <label class="target-radio${target === 'claude' ? ' active' : ''}">
+            <input type="radio" name="target" value="claude" ${target === 'claude' ? 'checked' : ''} />
+            <span class="target-radio-icon">✺</span>
+            <span class="target-radio-name">Claude</span>
+          </label>
+          <label class="target-radio${target === 'codex' ? ' active' : ''}">
+            <input type="radio" name="target" value="codex" ${target === 'codex' ? 'checked' : ''} />
+            <span class="target-radio-icon">⬡</span>
+            <span class="target-radio-name">Codex</span>
+          </label>
+        </div>
+
+        <div class="confirm-actions">
+          <button class="btn-secondary" id="confirm-more">+ Add more annotations</button>
+          <button class="btn-primary" id="confirm-submit">Submit to ${target === 'claude' ? 'Claude' : 'Codex'} →</button>
+        </div>
+
+        <button class="confirm-view-session" id="confirm-view">View session</button>
+      </div>
+    </div>
+  `;
+
+  // Radio changes
+  app.querySelectorAll<HTMLInputElement>('input[name="target"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      target = radio.value as Target;
+      renderConfirmation();
+    });
+  });
+
+  document.getElementById('confirm-more')?.addEventListener('click', async () => {
+    await invoke('show_overlay');
+  });
+
+  document.getElementById('confirm-submit')?.addEventListener('click', () => {
+    if (!isConnected) {
+      renderConnectionSetup();
+    } else {
+      appMode = 'session';
+      rightPanel = 'feedback';
+      feedback = null;
+      void win.setSize(new LogicalSize(...sessionWindowSize()));
+      void win.setResizable(true);
+      void win.center();
+      render();
+      void sendSession();
+    }
+  });
+
+  document.getElementById('confirm-view')?.addEventListener('click', async () => {
+    appMode = 'session';
+    rightPanel = 'none';
+    await win.setSize(new LogicalSize(...sessionWindowSize()));
+    await win.setResizable(true);
+    await win.center();
+    render();
+  });
+
+  void fitWindowToContent();
+}
+
+function renderConnectionSetup() {
+  app.innerHTML = `
+    <div class="welcome-shell">
+      <div class="welcome-card confirmation-card">
+        <div class="confirm-check" style="background:#f59e0b;">⚡</div>
+        <h1>Connect ${target === 'claude' ? 'Claude' : 'Codex'}</h1>
+        <p class="confirm-sub">Choose how Debugr sends sessions to ${target === 'claude' ? 'Claude' : 'Codex'}.</p>
+
+        <div class="connect-options">
+          <button class="connect-option" id="connect-mcp">
+            <div class="connect-option-icon">🔌</div>
+            <div class="connect-option-body">
+              <div class="connect-option-title">MCP server</div>
+              <div class="connect-option-desc">Connect via Model Context Protocol — best for Claude Desktop</div>
+            </div>
+            <span class="connect-option-badge">Recommended</span>
+          </button>
+          <button class="connect-option" id="connect-script">
+            <div class="connect-option-icon">⚙️</div>
+            <div class="connect-option-body">
+              <div class="connect-option-title">Background script</div>
+              <div class="connect-option-desc">Lightweight daemon that bridges Debugr to your AI tool</div>
+            </div>
+          </button>
+        </div>
+
+        <button class="btn-secondary" id="connect-back" style="margin-top:8px;">← Back</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('connect-back')?.addEventListener('click', () => {
+    appMode = 'confirmation';
+    render();
+  });
+
+  const connect = async (method: 'mcp' | 'script') => {
+    renderConnecting(method);
+    // Simulate connection handshake
+    await new Promise(r => setTimeout(r, 1800));
+    isConnected = true;
+    appMode = 'session';
+    rightPanel = 'feedback';
+    feedback = null;
+    await win.setSize(new LogicalSize(...sessionWindowSize()));
+    await win.setResizable(true);
+    await win.center();
+    render();
+    void sendSession();
+  };
+
+  document.getElementById('connect-mcp')?.addEventListener('click', () => void connect('mcp'));
+  document.getElementById('connect-script')?.addEventListener('click', () => void connect('script'));
+
+  void fitWindowToContent();
+}
+
+function renderConnecting(method: 'mcp' | 'script') {
+  app.innerHTML = `
+    <div class="welcome-shell">
+      <div class="welcome-card confirmation-card" style="align-items:center;text-align:center;">
+        <div class="loading-spinner" style="width:32px;height:32px;margin:8px auto 16px;border-width:3px;"></div>
+        <h1>Connecting…</h1>
+        <p class="confirm-sub">Setting up ${method === 'mcp' ? 'MCP server' : 'background script'} bridge</p>
+      </div>
+    </div>
+  `;
   void fitWindowToContent();
 }
 
@@ -690,12 +840,16 @@ async function listenForAnnotations() {
     await emit('sessions-list', sessions.map(s => ({ id: s.id, title: s.title, createdAt: s.createdAt })));
   });
 
-  await listen<{ annotations: Array<{ id: string; number: number; x: number; y: number; width?: number; height?: number; kind?: 'pin' | 'region'; text: string; tags: string[]; timestamp: string }> }>(
-    'annotations-saved',
-    async (event) => {
+  await listen<{
+    annotations: Array<{ id: string; number: number; x: number; y: number; width?: number; height?: number; kind?: 'pin' | 'region'; text: string; tags: string[]; timestamp: string }>;
+    targetSessionId?: string | null;
+    newSessionName?: string;
+    localFolder?: string | null;
+    githubRepo?: string;
+  }>('annotations-saved', async (event) => {
       const anns = event.payload.annotations;
-      const sessionMode = (event.payload as { sessionMode?: 'append' | 'new' }).sessionMode ?? 'append';
-      const targetSessionId = (event.payload as { targetSessionId?: string | null }).targetSessionId ?? null;
+      const targetSessionId = event.payload.targetSessionId ?? null;
+      const newSessionName  = event.payload.newSessionName ?? '';
       if (anns.length === 0) return;
       // If the overlay picked a specific session, make it active before appending
       if (targetSessionId && sessions.find(s => s.id === targetSessionId)) {
@@ -711,47 +865,20 @@ async function listenForAnnotations() {
         timestamp: new Date().toISOString(),
       };
 
-      // Add to active session or create new one
-      if (sessionMode === 'append' && activeSessionId) {
-        const sess = sessions.find(s => s.id === activeSessionId);
+      // Add to existing session or create new one
+      if (targetSessionId) {
+        const sess = sessions.find(s => s.id === targetSessionId);
         if (sess) {
-          const used = sess.captures.reduce((n, c) => n + c.annotations.length, 0);
-          const remaining = MAX_ANNOTATIONS - used;
-          if (remaining <= 0) {
-            console.warn(`Session ${sess.id} already has ${MAX_ANNOTATIONS} annotations. Starting a new session instead.`);
-            const overflowSession: Session = {
-              id: `session_${Date.now()}`,
-              title: `Session ${new Date().toLocaleTimeString()}`,
-              status: 'draft',
-              createdAt: new Date().toISOString(),
-              captures: [newCapture],
-            };
-            sessions.unshift(overflowSession);
-            activeSessionId = overflowSession.id;
-            activeCaptureId = newCapture.id;
-          } else {
-            newCapture.annotations = normalized.slice(0, remaining);
-            newCapture.preview = newCapture.annotations.map(a => a.text).filter(Boolean).join(' · ') || 'No description';
-            newCapture.title = newCapture.annotations[0]?.text.slice(0, 40) || newCapture.title;
-            sess.captures.push(newCapture);
-            activeCaptureId = newCapture.id;
-          }
-        } else {
-          const newSession: Session = {
-            id: `session_${Date.now()}`,
-            title: `Session ${new Date().toLocaleTimeString()}`,
-            status: 'draft',
-            createdAt: new Date().toISOString(),
-            captures: [newCapture],
-          };
-          sessions.unshift(newSession);
-          activeSessionId = newSession.id;
+          sess.captures.push(newCapture);
           activeCaptureId = newCapture.id;
+          lastSavedCapture = { sessionTitle: sess.title, annotationCount: anns.length };
         }
       } else {
+        // New session
+        const title = newSessionName || `Session ${new Date().toLocaleTimeString()}`;
         const newSession: Session = {
           id: `session_${Date.now()}`,
-          title: sessionMode === 'new' ? `New session ${new Date().toLocaleTimeString()}` : `Session ${new Date().toLocaleTimeString()}`,
+          title,
           status: 'draft',
           createdAt: new Date().toISOString(),
           captures: [newCapture],
@@ -759,13 +886,13 @@ async function listenForAnnotations() {
         sessions.unshift(newSession);
         activeSessionId = newSession.id;
         activeCaptureId = newCapture.id;
+        lastSavedCapture = { sessionTitle: title, annotationCount: anns.length };
       }
 
-      // Show session window (already triggered from overlay, but ensure mode)
-      appMode = 'session';
-      rightPanel = 'share';
-      await win.setSize(new LogicalSize(...sessionWindowSize()));
-      await win.setResizable(true);
+      // Show confirmation screen
+      appMode = 'confirmation';
+      await win.setSize(new LogicalSize(420, 560));
+      await win.setResizable(false);
       await win.center();
       render();
     }

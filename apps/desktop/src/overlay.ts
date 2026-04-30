@@ -25,11 +25,16 @@ const TAGS = ['Bug', 'UX', 'Blocking', 'Question'];
 
 // ── State ────────────────────────────────────────────────────────────────────
 
+type OverlayStep = 'picking' | 'setup' | 'annotating';
+
+let step: OverlayStep = 'picking';
 let annotations: Annotation[] = [];
-let activeTool: 'select' | 'pin' | 'region' | 'arrow' | 'blur' = 'pin';
+let activeTool: 'select' | 'pin' | 'region' = 'pin';
 let selectedId: string | null = null;
-let sessionMode: 'append' | 'new' = 'append';
-let targetSessionId: string | null = null;
+
+// session context chosen during picking/setup
+let targetSessionId: string | null = null;   // null → create new
+let newSessionName = '';
 let localFolder: string | null = null;
 let githubRepo = '';
 
@@ -37,12 +42,10 @@ let githubRepo = '';
 let dragging = false;
 let dragStart: { x: number; y: number } | null = null;
 
-// annotation drag/resize state
+// annotation move/resize state
 let moveState: {
-  id: string; mode: 'move' | 'resize';
-  handle?: string;
-  ptId: number;
-  sx: number; sy: number;
+  id: string; mode: 'move' | 'resize'; handle?: string;
+  ptId: number; sx: number; sy: number;
   initial: { left: number; top: number; width: number; height: number };
 } | null = null;
 
@@ -54,63 +57,84 @@ root.innerHTML = `
   <div id="screenshot-bg"></div>
   <div id="dim-layer"></div>
 
-  <!-- Top-center toast -->
-  <div class="toast" id="toast">
-    <kbd>⌘</kbd><kbd>⌥</kbd><kbd>A</kbd>
-    <span id="toast-text">Click anywhere to add an annotation. Right-drag to draw a region.</span>
-  </div>
-
-  <!-- Top-right: session + counter -->
-  <div class="session-switcher" id="session-switcher">
-    <button class="session-switch active" data-mode="append" id="btn-append">Add to session ▾</button>
-    <button class="session-switch" data-mode="new">New session</button>
-    <button class="session-switch" data-mode="repo" id="btn-repo">Project</button>
-  </div>
-  <div class="session-picker-dropdown" id="session-picker-dropdown" style="display:none;"></div>
-  <div class="repo-input-row" id="repo-input-row" style="display:none;">
-    <button class="folder-pick-btn" id="folder-pick-btn">📁 Choose folder…</button>
-    <div class="folder-path" id="folder-path" style="display:none;"></div>
-    <div class="github-row">
-      <span class="github-label">GitHub repo (optional)</span>
-      <input class="repo-input" id="repo-input" placeholder="owner/repo" value="" />
+  <!-- Step 1: session picker -->
+  <div class="step-card" id="step-picker">
+    <div class="step-card-title">Where should this go?</div>
+    <div class="step-card-sub">Choose an existing session or start a new one.</div>
+    <div class="picker-list" id="picker-list">
+      <div class="picker-loading">Loading sessions…</div>
+    </div>
+    <div class="picker-actions">
+      <button class="picker-cancel-btn" id="picker-cancel">Cancel</button>
+      <button class="picker-new-btn" id="picker-new">+ New session</button>
     </div>
   </div>
-  <div class="ann-counter" id="ann-counter"></div>
 
-  <!-- SVG connectors -->
-  <svg class="ann-connector" id="connectors" xmlns="http://www.w3.org/2000/svg"></svg>
+  <!-- Step 2: new session setup -->
+  <div class="step-card" id="step-setup" style="display:none;">
+    <button class="step-back" id="setup-back">← Back</button>
+    <div class="step-card-title">New session</div>
+    <div class="step-card-sub">Give it a name and link your project.</div>
 
-  <!-- Note inspector (right side) -->
-  <div class="note-panel" id="note-panel" style="display:none;">
-    <div class="note-panel-header">
-      <div class="note-panel-title">
-        <strong id="note-title">Annotation</strong>
-        <span id="note-subtitle">Add notes and tags</span>
+    <label class="setup-label">Session name</label>
+    <input class="setup-input" id="setup-name" placeholder="e.g. Login page crash" maxlength="60" />
+
+    <label class="setup-label" style="margin-top:14px;">Project folder <span class="setup-optional">(recommended)</span></label>
+    <button class="folder-pick-btn" id="setup-folder-btn">📁 Choose folder…</button>
+    <div class="folder-path" id="setup-folder-path" style="display:none;"></div>
+
+    <label class="setup-label" style="margin-top:10px;">GitHub repo <span class="setup-optional">(optional)</span></label>
+    <input class="setup-input" id="setup-github" placeholder="owner/repo" />
+
+    <button class="setup-start-btn" id="setup-start">Start annotating →</button>
+  </div>
+
+  <!-- Step 3: annotation mode -->
+  <div id="annotation-ui" style="display:none;">
+    <!-- Top-center toast -->
+    <div class="toast" id="toast">
+      <kbd>⌘</kbd><kbd>⌥</kbd><kbd>A</kbd>
+      <span id="toast-text">Click anywhere to add an annotation. Right-drag to draw a region.</span>
+    </div>
+
+    <!-- Session label -->
+    <div class="session-label" id="session-label"></div>
+
+    <!-- SVG connectors -->
+    <svg class="ann-connector" id="connectors" xmlns="http://www.w3.org/2000/svg"></svg>
+
+    <!-- Note inspector -->
+    <div class="note-panel" id="note-panel" style="display:none;">
+      <div class="note-panel-header">
+        <div class="note-panel-title">
+          <strong id="note-title">Annotation</strong>
+          <span id="note-subtitle">Add notes and tags</span>
+        </div>
+        <button class="note-panel-close" id="note-close" title="Close">×</button>
       </div>
-      <button class="note-panel-close" id="note-close" title="Close">×</button>
+      <div class="note-panel-body" id="note-body">
+        <div class="note-panel-empty">Select an annotation to edit it.</div>
+      </div>
     </div>
-    <div class="note-panel-body" id="note-body">
-      <div class="note-panel-empty">Select an annotation to edit it.</div>
+
+    <!-- Drag-select rubber band -->
+    <div class="selection-rect" id="sel-rect" style="display:none;"></div>
+
+    <!-- Bottom toolbar -->
+    <div class="toolbar" id="toolbar">
+      <button class="tool-btn active" id="tool-pin" title="Pin">
+        ●<div class="tool-label">Pin</div>
+      </button>
+      <button class="tool-btn" id="tool-region" title="Region">
+        ⬚<div class="tool-label">Region</div>
+      </button>
+      <button class="tool-btn" id="tool-select" title="Select">
+        ↖<div class="tool-label">Select</div>
+      </button>
+      <div class="toolbar-divider"></div>
+      <button class="tool-btn cancel" id="tool-cancel">Esc</button>
+      <button class="tool-btn save-btn" id="tool-save">Save →</button>
     </div>
-  </div>
-
-  <!-- Drag-select rubber band -->
-  <div class="selection-rect" id="sel-rect" style="display:none;"></div>
-
-  <!-- Bottom toolbar — matches handoff design (light, frosted glass) -->
-  <div class="toolbar" id="toolbar">
-    <button class="tool-btn active" id="tool-pin" title="Pin (click to annotate)">
-      ●<div class="tool-label">Pin</div>
-    </button>
-    <button class="tool-btn" id="tool-region" title="Region (drag to draw)">
-      ⬚<div class="tool-label">Region</div>
-    </button>
-    <button class="tool-btn" id="tool-select" title="Select">
-      ↖<div class="tool-label">Select</div>
-    </button>
-    <div class="toolbar-divider"></div>
-    <button class="tool-btn cancel" id="tool-cancel">Esc</button>
-    <button class="tool-btn save-btn" id="tool-save">Save →</button>
   </div>
 
   <div class="build-stamp">${__DEBUGR_BUILD_STAMP__}</div>
@@ -119,17 +143,33 @@ root.innerHTML = `
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 
 const screenshotBg   = document.getElementById('screenshot-bg')!;
+const pickerListEl   = document.getElementById('picker-list')!;
+const stepPickerEl   = document.getElementById('step-picker')!;
+const stepSetupEl    = document.getElementById('step-setup')!;
+const annotationUiEl = document.getElementById('annotation-ui')!;
+const sessionLabelEl = document.getElementById('session-label')!;
 const toastTextEl    = document.getElementById('toast-text')!;
 const notePanelEl    = document.getElementById('note-panel') as HTMLDivElement;
 const noteTitleEl    = document.getElementById('note-title')!;
 const noteSubtitleEl = document.getElementById('note-subtitle')!;
 const noteBodyEl     = document.getElementById('note-body') as HTMLDivElement;
-const counterEl      = document.getElementById('ann-counter')!;
 const connectorsEl   = document.getElementById('connectors')!;
 const selRectEl      = document.getElementById('sel-rect') as HTMLDivElement;
-const sessionSwitcherEl = document.getElementById('session-switcher')!;
+const setupNameEl    = document.getElementById('setup-name') as HTMLInputElement;
+const setupGithubEl  = document.getElementById('setup-github') as HTMLInputElement;
+const setupFolderBtn = document.getElementById('setup-folder-btn') as HTMLButtonElement;
+const setupFolderPath = document.getElementById('setup-folder-path')!;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Step transitions ──────────────────────────────────────────────────────────
+
+function showStep(s: OverlayStep) {
+  step = s;
+  stepPickerEl.style.display   = s === 'picking'    ? 'flex' : 'none';
+  stepSetupEl.style.display    = s === 'setup'      ? 'flex' : 'none';
+  annotationUiEl.style.display = s === 'annotating' ? 'block' : 'none';
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function clamp(v: number, lo: number, hi: number) { return Math.min(Math.max(v, lo), hi); }
 
@@ -155,11 +195,101 @@ function setToast(msg: string) { toastTextEl.textContent = msg; }
 
 function updateCounter() {
   const n = annotations.length;
-  counterEl.classList.toggle('visible', n > 0);
-  if (n > 0) counterEl.textContent = `${n} / ${MAX_ANNOTATIONS} annotations`;
   setToast(n > 0
     ? `${n} annotation${n > 1 ? 's' : ''} added — click Save when done.`
     : `Click anywhere to add an annotation. Right-drag to draw a region.`);
+}
+
+// ── Step 1: Picker ────────────────────────────────────────────────────────────
+
+function renderPickerSessions(list: Array<{ id: string; title: string; createdAt: string }>) {
+  if (list.length === 0) {
+    pickerListEl.innerHTML = '<div class="picker-empty">No sessions yet — create your first one.</div>';
+    return;
+  }
+  pickerListEl.innerHTML = list.map(s => `
+    <button class="picker-session-item" data-id="${s.id}">
+      <span class="picker-session-title">${s.title}</span>
+      <span class="picker-session-time">${relativeTime(s.createdAt)}</span>
+    </button>
+  `).join('');
+  pickerListEl.querySelectorAll<HTMLButtonElement>('.picker-session-item').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      targetSessionId = btn.dataset.id ?? null;
+      newSessionName = btn.querySelector('.picker-session-title')?.textContent ?? '';
+      enterAnnotating();
+    });
+  });
+}
+
+function relativeTime(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+document.getElementById('picker-new')!.addEventListener('click', e => {
+  e.stopPropagation();
+  targetSessionId = null;
+  setupNameEl.value = '';
+  setupGithubEl.value = '';
+  setupFolderPath.style.display = 'none';
+  setupFolderBtn.textContent = '📁 Choose folder…';
+  localFolder = null;
+  githubRepo = '';
+  showStep('setup');
+  setTimeout(() => setupNameEl.focus(), 50);
+});
+
+document.getElementById('picker-cancel')!.addEventListener('click', e => {
+  e.stopPropagation(); void cancelOverlay();
+});
+
+// ── Step 2: New session setup ─────────────────────────────────────────────────
+
+document.getElementById('setup-back')!.addEventListener('click', e => {
+  e.stopPropagation(); showStep('picking');
+});
+
+setupFolderBtn.addEventListener('click', async e => {
+  e.stopPropagation();
+  const path = await invoke<string | null>('pick_folder');
+  if (path) {
+    localFolder = path;
+    const short = path.replace(/\/$/, '').split('/').slice(-2).join('/');
+    setupFolderPath.textContent = '📁 ' + short;
+    setupFolderPath.style.display = 'block';
+    setupFolderBtn.textContent = 'Change folder…';
+  }
+});
+
+setupNameEl.addEventListener('click', e => e.stopPropagation());
+setupNameEl.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') enterAnnotating(); });
+setupGithubEl.addEventListener('click', e => e.stopPropagation());
+setupGithubEl.addEventListener('keydown', e => e.stopPropagation());
+setupGithubEl.addEventListener('input', e => { e.stopPropagation(); githubRepo = setupGithubEl.value; });
+
+document.getElementById('setup-start')!.addEventListener('click', e => {
+  e.stopPropagation(); enterAnnotating();
+});
+
+function enterAnnotating() {
+  newSessionName = targetSessionId ? newSessionName : (setupNameEl.value.trim() || `Session ${new Date().toLocaleTimeString()}`);
+  githubRepo = setupGithubEl?.value.trim() ?? githubRepo;
+
+  // Show session context label in annotation mode
+  const label = targetSessionId ? `Adding to: ${newSessionName}` : `New: ${newSessionName}`;
+  sessionLabelEl.textContent = label;
+  sessionLabelEl.style.display = 'block';
+
+  showStep('annotating');
+  setTool('pin');
+  updateCounter();
 }
 
 // ── Tool selection ────────────────────────────────────────────────────────────
@@ -175,66 +305,6 @@ function setTool(t: typeof activeTool) {
 document.getElementById('tool-pin')?.addEventListener('click',    e => { e.stopPropagation(); setTool('pin'); });
 document.getElementById('tool-region')?.addEventListener('click', e => { e.stopPropagation(); setTool('region'); });
 document.getElementById('tool-select')?.addEventListener('click', e => { e.stopPropagation(); setTool('select'); });
-
-const repoInputRowEl = document.getElementById('repo-input-row')!;
-const repoInputEl    = document.getElementById('repo-input') as HTMLInputElement;
-const folderPickBtn  = document.getElementById('folder-pick-btn') as HTMLButtonElement;
-const folderPathEl   = document.getElementById('folder-path')!;
-
-repoInputEl.value = githubRepo;
-repoInputEl.addEventListener('input', e => { e.stopPropagation(); githubRepo = repoInputEl.value; });
-repoInputEl.addEventListener('click', e => e.stopPropagation());
-repoInputEl.addEventListener('keydown', e => e.stopPropagation());
-
-folderPickBtn.addEventListener('click', async e => {
-  e.stopPropagation();
-  const path = await invoke<string | null>('pick_folder');
-  if (path) {
-    localFolder = path;
-    const short = path.replace(/\/$/, '').split('/').slice(-2).join('/');
-    folderPathEl.textContent = '📁 ' + short;
-    folderPathEl.style.display = 'block';
-    folderPickBtn.textContent = 'Change folder…';
-    // Update "Project" tab label to show folder name
-    const repoBtn = document.getElementById('btn-repo');
-    if (repoBtn) repoBtn.textContent = short.split('/').pop() || 'Project';
-  }
-});
-
-const sessionPickerEl = document.getElementById('session-picker-dropdown')!;
-
-sessionSwitcherEl.querySelectorAll<HTMLButtonElement>('.session-switch').forEach(btn => {
-  btn.addEventListener('click', async e => {
-    e.stopPropagation();
-    const mode = btn.dataset.mode;
-    sessionSwitcherEl.querySelectorAll('.session-switch').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    repoInputRowEl.style.display = mode === 'repo' ? 'flex' : 'none';
-    if (mode === 'repo') { repoInputEl.value = repoName; repoInputEl.focus(); }
-
-    if (mode === 'append') {
-      // Toggle dropdown
-      if (sessionPickerEl.style.display !== 'none') {
-        sessionPickerEl.style.display = 'none';
-        return;
-      }
-      sessionPickerEl.innerHTML = '<div class="session-picker-loading">Loading…</div>';
-      sessionPickerEl.style.display = 'block';
-      await emit('request-sessions');
-    } else {
-      sessionPickerEl.style.display = 'none';
-      sessionMode = mode === 'new' ? 'new' : 'append';
-    }
-  });
-});
-
-// Close picker when clicking outside
-document.addEventListener('click', e => {
-  const t = e.target as HTMLElement;
-  if (!t.closest('#session-picker-dropdown') && !t.closest('#btn-append')) {
-    sessionPickerEl.style.display = 'none';
-  }
-});
 
 // ── Cancel / Escape ───────────────────────────────────────────────────────────
 
@@ -258,7 +328,13 @@ document.addEventListener('keydown', e => {
 
 async function saveAll() {
   if (annotations.length === 0) { void cancelOverlay(); return; }
-  await emit('annotations-saved', { annotations, sessionMode, targetSessionId, localFolder, githubRepo });
+  await emit('annotations-saved', {
+    annotations,
+    targetSessionId,
+    newSessionName,
+    localFolder,
+    githubRepo,
+  });
   await invoke('show_session_window');
   await invoke('hide_overlay');
   setTimeout(resetState, 400);
@@ -338,7 +414,6 @@ function renderRegion(ann: Annotation) {
   hl.id = `hl_${ann.id}`;
   hl.style.cssText = `left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px;`;
 
-  // resize handles
   (['nw','n','ne','e','se','s','sw','w'] as const).forEach(name => {
     const hnd = document.createElement('div');
     hnd.className = `ann-handle ${name}`;
@@ -358,8 +433,7 @@ function renderRegion(ann: Annotation) {
 
   hl.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (target.closest('.ann-handle')) return;
+    if ((e.target as HTMLElement).closest('.ann-handle')) return;
     e.stopPropagation();
     const box = boxOf(ann);
     moveState = { id: ann.id, mode: 'move',
@@ -384,7 +458,7 @@ function handleOffset(name: string, w: number, h: number): [number, number] {
   return (
     name === 'nw' ? [0, 0] : name === 'n' ? [cx, 0] : name === 'ne' ? [w, 0] :
     name === 'e'  ? [w, cy] : name === 'se' ? [w, h] : name === 's'  ? [cx, h] :
-    name === 'sw' ? [0, h]  : /* w */ [0, cy]
+    name === 'sw' ? [0, h]  : [0, cy]
   );
 }
 
@@ -456,9 +530,7 @@ function showNotePanel(ann: Annotation) {
   ta.addEventListener('click', e => e.stopPropagation());
   ta.addEventListener('keydown', e => {
     e.stopPropagation();
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      setToast(`Annotation ${ann.number} saved.`);
-    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') saveAnnotation(ann);
   });
 
   noteBodyEl.querySelectorAll<HTMLButtonElement>('.chip').forEach(btn => {
@@ -471,19 +543,22 @@ function showNotePanel(ann: Annotation) {
   });
 
   noteBodyEl.querySelector('#save-ann')?.addEventListener('click', e => {
-    e.stopPropagation();
-    const btn = noteBodyEl.querySelector<HTMLButtonElement>('#save-ann')!;
-    btn.textContent = '✓ Saved';
-    btn.style.background = '#16a34a';
-    setTimeout(() => {
-      deselectAnnotation();
-      setToast(`Annotation ${ann.number} saved — add more or click Save when done.`);
-    }, 400);
+    e.stopPropagation(); saveAnnotation(ann);
   });
 
   notePanelEl.style.display = 'block';
   requestAnimationFrame(() => drawConnector(ann));
   ta.focus();
+}
+
+function saveAnnotation(ann: Annotation) {
+  const btn = noteBodyEl.querySelector<HTMLButtonElement>('#save-ann')!;
+  btn.textContent = '✓ Saved';
+  btn.style.background = '#16a34a';
+  setTimeout(() => {
+    deselectAnnotation();
+    setToast(`Annotation ${ann.number} saved — add more or click Save when done.`);
+  }, 400);
 }
 
 // ── Connector line ────────────────────────────────────────────────────────────
@@ -512,17 +587,16 @@ function drawConnector(ann: Annotation) {
 root.addEventListener('contextmenu', e => e.preventDefault());
 
 root.addEventListener('pointerdown', e => {
+  if (step !== 'annotating') return;
   const target = e.target as HTMLElement;
-  if (target.closest('.toolbar, .note-panel, .session-switcher, .repo-input-row, .session-picker-dropdown, .ann-pin, .ann-highlight')) return;
+  if (target.closest('.toolbar, .note-panel, .session-label, .ann-pin, .ann-highlight, .step-card')) return;
 
-  // Left-click: pin or select
   if (e.button === 0) {
     if (activeTool === 'pin') {
       placePin(e.clientX, e.clientY);
     } else if (activeTool === 'select') {
       deselectAnnotation();
     } else if (activeTool === 'region') {
-      // start rubber-band drag
       dragging = true;
       dragStart = { x: e.clientX, y: e.clientY };
       selRectEl.style.display = 'block';
@@ -531,7 +605,6 @@ root.addEventListener('pointerdown', e => {
     return;
   }
 
-  // Right-click: always start region drag
   if (e.button === 2) {
     e.preventDefault();
     dragging = true;
@@ -610,27 +683,26 @@ void listen<string>('set-screenshot', event => {
   }
 });
 
+// ── Sessions list from main window ────────────────────────────────────────────
+
+void listen<Array<{ id: string; title: string; createdAt: string }>>('sessions-list', event => {
+  renderPickerSessions(event.payload);
+});
+
 // ── Reset on each new invocation ──────────────────────────────────────────────
 
 void listen('overlay-will-show', () => {
   applyDockOffset();
   resetState();
+  // Request sessions for picker
+  void emit('request-sessions');
 });
 
-/** Push the toolbar above the macOS Dock (and any bottom system UI).
- *
- *  window.screen.height      = full logical screen height
- *  window.screen.availTop    = top inset (menu bar, ~25 px on macOS)
- *  window.screen.availHeight = usable height (excludes menu bar + dock)
- *
- *  dock_height = screen.height - availTop - availHeight
- */
 function applyDockOffset() {
   const dockH = Math.max(
     0,
     window.screen.height - window.screen.availTop - window.screen.availHeight,
   );
-  // Add 12 px breathing room above the dock edge
   document.documentElement.style.setProperty('--dock-offset', `${dockH + 12}px`);
 }
 
@@ -640,64 +712,21 @@ function resetState() {
   annotations = [];
   selectedId = null;
   targetSessionId = null;
+  newSessionName = '';
   localFolder = null;
   githubRepo = '';
   dragging = false; dragStart = null; moveState = null;
   selRectEl.style.display = 'none';
-  sessionPickerEl.style.display = 'none';
-  repoInputRowEl.style.display = 'none';
-  folderPathEl.style.display = 'none';
-  folderPickBtn.textContent = '📁 Choose folder…';
-  repoInputEl.value = '';
   screenshotBg.style.backgroundImage = '';
   notePanelEl.style.display = 'none';
-  const appendBtn = document.getElementById('btn-append');
-  if (appendBtn) appendBtn.textContent = 'Add to session ▾';
-  const repoBtn = document.getElementById('btn-repo');
-  if (repoBtn) repoBtn.textContent = 'Project';
-  sessionSwitcherEl.querySelectorAll('.session-switch').forEach((b, i) => b.classList.toggle('active', i === 0));
-  sessionMode = 'append';
-  updateCounter();
-  setTool('pin');
+  sessionLabelEl.style.display = 'none';
+  pickerListEl.innerHTML = '<div class="picker-loading">Loading sessions…</div>';
+  showStep('picking');
 }
-
-// ── Session list from main window ─────────────────────────────────────────────
-
-void listen<Array<{ id: string; title: string; createdAt: string }>>('sessions-list', event => {
-  const list = event.payload;
-  if (!sessionPickerEl || sessionPickerEl.style.display === 'none') return;
-
-  if (list.length === 0) {
-    sessionPickerEl.innerHTML = '<div class="session-picker-empty">No sessions yet — use "New session"</div>';
-    return;
-  }
-
-  sessionPickerEl.innerHTML = list.map(s => `
-    <button class="session-picker-item${targetSessionId === s.id ? ' active' : ''}" data-id="${s.id}">
-      ${s.title}
-    </button>
-  `).join('');
-
-  sessionPickerEl.querySelectorAll<HTMLButtonElement>('.session-picker-item').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      targetSessionId = btn.dataset.id ?? null;
-      sessionMode = 'append';
-      sessionPickerEl.style.display = 'none';
-      const appendBtn = document.getElementById('btn-append');
-      if (appendBtn) {
-        const title = list.find(s => s.id === targetSessionId)?.title ?? 'Add to session';
-        appendBtn.textContent = (title.length > 22 ? title.slice(0, 22) + '…' : title) + ' ▾';
-      }
-    });
-  });
-});
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 applyDockOffset();
-setTool('pin');
-updateCounter();
-
-// Re-apply whenever the screen layout changes (e.g. dock auto-hide, display change)
+showStep('picking');
+void emit('request-sessions');
 window.addEventListener('resize', applyDockOffset);
