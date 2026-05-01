@@ -636,7 +636,6 @@ fn finish_annotations(
 #[tauri::command]
 fn show_overlay(app: AppHandle) -> Result<(), String> {
     log_backend("overlay.show.requested", "source=frontend");
-    macos_activate();
     trigger_overlay(&app);
     Ok(())
 }
@@ -877,15 +876,16 @@ fn show_overlay_window(app: &AppHandle) {
         if let Err(e) = overlay.show() {
             log_backend("overlay.window.show_failed", e.to_string());
         }
-        if let Err(e) = overlay.set_focus() {
-            log_backend("overlay.window.focus_failed", e.to_string());
-        }
+        // Do NOT call set_focus / macos_activate here — forcing feedbackagent to
+        // be the active app causes macOS to route all mouse events to our window
+        // first, which blocks the dock and Cmd+Tab.  The overlay sits at
+        // NSFloatingWindowLevel (3), below the dock (20), so the dock remains
+        // usable.  The user's first click on the overlay naturally focuses it.
     }
 }
 
 fn trigger_overlay(app: &AppHandle) {
     log_backend("overlay.trigger.start", "source=shortcut_or_ui");
-    macos_activate();
     // If already visible, hide it (toggle)
     if let Some(overlay) = app.get_webview_window("overlay") {
         if overlay.is_visible().unwrap_or(false) {
@@ -903,7 +903,6 @@ fn trigger_overlay(app: &AppHandle) {
         if !get_screen_capture_permission() {
             log_backend("overlay.permission.still_missing", "emit_main_warning=true");
             if let Some(main) = app.get_webview_window("main") {
-                macos_activate();
                 let _ = main.emit("screen-capture-permission-needed", ());
             }
         }
@@ -927,7 +926,6 @@ fn trigger_overlay(app: &AppHandle) {
             take_interactive_fallback_screenshot()
         });
 
-        macos_activate();
         show_overlay_window(&app);
         if let Some(overlay) = app.get_webview_window("overlay") {
             match screenshot {
