@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}};
+use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}, io::Write as _};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -232,6 +232,53 @@ fn hide_main_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Persist desktop sessions to disk so the local MCP server can read them.
+///
+/// Writes to:
+///   macOS  → ~/Library/Application Support/debugr/sessions.json
+///   Linux  → ~/.config/debugr/sessions.json
+///   Windows→ %APPDATA%\debugr\sessions.json
+#[tauri::command]
+fn save_sessions_to_disk(payload: serde_json::Value) -> Result<(), String> {
+    let dir = {
+        #[cfg(target_os = "macos")]
+        {
+            dirs_next::data_dir()
+                .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()))
+                .join("debugr")
+        }
+        #[cfg(target_os = "linux")]
+        {
+            dirs_next::config_dir()
+                .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"))
+                .join("debugr")
+        }
+        #[cfg(target_os = "windows")]
+        {
+            dirs_next::data_dir()
+                .unwrap_or_else(|| PathBuf::from("C:\\"))
+                .join("debugr")
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        {
+            PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".debugr")
+        }
+    };
+
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create data dir: {e}"))?;
+
+    let file_path = dir.join("sessions.json");
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("Serialization failed: {e}"))?;
+
+    let mut file = fs::File::create(&file_path)
+        .map_err(|e| format!("Failed to create sessions file: {e}"))?;
+    file.write_all(json.as_bytes())
+        .map_err(|e| format!("Failed to write sessions: {e}"))?;
+
+    Ok(())
+}
+
 /// Copy text to the macOS clipboard via pbcopy.
 #[tauri::command]
 fn copy_to_clipboard(text: String) -> Result<(), String> {
@@ -452,6 +499,7 @@ fn main() {
             pick_folder,
             open_in_cursor,
             copy_to_clipboard,
+            save_sessions_to_disk,
         ])
         .run(tauri::generate_context!())
         .expect("error while running debugr.ai");

@@ -242,6 +242,11 @@ function persistAppState() {
   } catch {
     // ignore persistence errors
   }
+  // Mirror sessions to disk so the local MCP server can read them.
+  // Fire-and-forget — never block the UI on this.
+  invoke('save_sessions_to_disk', { payload: { sessions } }).catch(() => {
+    // silently ignore — disk write is best-effort
+  });
 }
 
 function hydrateAppState() {
