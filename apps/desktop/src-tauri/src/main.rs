@@ -579,10 +579,7 @@ fn trigger_overlay(app: &AppHandle) {
             if let Some(main) = app.get_webview_window("main") {
                 macos_activate();
                 let _ = main.emit("screen-capture-permission-needed", ());
-                let _ = main.show();
-                let _ = main.set_focus();
             }
-            return;
         }
     }
 

@@ -54,7 +54,6 @@ interface PersistedState {
 const API = 'http://127.0.0.1:3001/api';
 const APP_STATE_KEY = 'debugr-desktop-v2-state';
 const MAX_ANNOTATIONS = 5;
-const SCREEN_CAPTURE_PERMISSION_PROMPT_KEY = 'debugr.screen-capture-permission-prompted.v1';
 
 let appMode: AppMode = 'welcome';
 let sessions: Session[] = [];
@@ -852,8 +851,8 @@ function renderSession() {
                     <span class="field-helper">Add the repo name if the team will review this session remotely or if the AI should reference the source of truth in GitHub.</span>
                   </label>
                   <div class="context-pill-row">
-                    <div class="summary-chip subtle">${session.projectFolder ? 'Local folder linked' : 'No folder linked yet'}</div>
-                    <div class="summary-chip subtle">${session.githubRepo ? 'GitHub repo linked' : 'GitHub optional'}</div>
+                    <div class="summary-chip subtle" id="session-folder-chip">${session.projectFolder ? 'Local folder linked' : 'No folder linked yet'}</div>
+                    <div class="summary-chip subtle" id="session-repo-chip">${session.githubRepo ? 'GitHub repo linked' : 'GitHub optional'}</div>
                   </div>
                 </section>
               </div>
@@ -1412,8 +1411,6 @@ function bindSessionActions() {
     render();
   });
   document.getElementById('new-ann-btn')?.addEventListener('click', async () => {
-    const allowed = await ensureScreenCaptureAccess({ promptToOpenSettings: true });
-    if (!allowed) return;
     await invoke('show_overlay');
   });
   document.getElementById('view-all-sessions-btn')?.addEventListener('click', () => {
@@ -1461,13 +1458,30 @@ function bindSessionActions() {
     persistAppState();
   });
   folderInput?.addEventListener('input', () => {
-    session.projectFolder = folderInput.value || null;
+    session.projectFolder = folderInput.value.trim() || null;
+    syncRepoContextChips(session);
     persistAppState();
   });
   repoInput?.addEventListener('input', () => {
-    session.githubRepo = repoInput.value;
+    session.githubRepo = normalizeGithubRepoInput(repoInput.value);
+    syncRepoContextChips(session);
     persistAppState();
   });
+}
+
+function normalizeGithubRepoInput(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  const fromUrl = trimmed.match(/github\.com\/([^/\s]+\/[^/\s#?]+)/i);
+  if (!fromUrl) return trimmed;
+  return fromUrl[1]?.replace(/\.git$/i, '') ?? trimmed;
+}
+
+function syncRepoContextChips(session: Session) {
+  const folderChip = document.getElementById('session-folder-chip');
+  if (folderChip) folderChip.textContent = session.projectFolder ? 'Local folder linked' : 'No folder linked yet';
+  const repoChip = document.getElementById('session-repo-chip');
+  if (repoChip) repoChip.textContent = session.githubRepo?.trim() ? 'GitHub repo linked' : 'GitHub optional';
 }
 
 async function checkPermission() {
@@ -1501,42 +1515,6 @@ async function checkPermission() {
     note.className = 'perm-note warn';
   }
 }
-
-async function ensureScreenCaptureAccess(options: { promptToOpenSettings?: boolean } = {}) {
-  try {
-    const granted = await invoke<boolean>('get_screen_capture_permission');
-    if (granted) return true;
-
-    const hasPromptedBefore = localStorage.getItem(SCREEN_CAPTURE_PERMISSION_PROMPT_KEY) === '1';
-    if (!hasPromptedBefore) {
-      localStorage.setItem(SCREEN_CAPTURE_PERMISSION_PROMPT_KEY, '1');
-      await invoke<boolean>('request_screen_capture_permission').catch(() => false);
-      await new Promise((resolve) => window.setTimeout(resolve, 250));
-      const grantedAfterPrompt = await invoke<boolean>('get_screen_capture_permission').catch(() => false);
-      if (grantedAfterPrompt) {
-        await checkPermission();
-        return true;
-      }
-    }
-
-    await checkPermission();
-    if (options.promptToOpenSettings) {
-      const shouldOpenSettings = window.confirm(
-        'Debugr needs macOS Screen & System Audio Recording permission before it can start annotating.\n\nOpen System Settings to the Screen Recording panel now?',
-      );
-      if (shouldOpenSettings) {
-        await invoke('open_screen_capture_settings').catch(() => {});
-      }
-    }
-    return false;
-  } catch {
-    if (options.promptToOpenSettings) {
-      window.alert('Debugr could not check screen-recording permissions right now. Please open System Settings → Privacy & Security → Screen Recording and enable Debugr.');
-    }
-    return false;
-  }
-}
-
 
 async function loadSessionsFromApi() {
   try {
