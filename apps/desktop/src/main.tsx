@@ -1853,6 +1853,13 @@ async function listenForAnnotations() {
       await invoke('open_screen_capture_settings').catch(() => {});
     }
   });
+
+  await listen<string>('screen-capture-failed', async () => {
+    await checkPermission();
+    window.alert(
+      'Debugr could not capture your screen in this run. Please click "Open Screen Recording settings", then ensure the active Debugr app entry is enabled. If it is already enabled, toggle it off/on and relaunch Debugr once.',
+    );
+  });
 }
 
 async function loadProviderConfig() {

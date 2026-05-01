@@ -45,12 +45,13 @@ fn temp_capture_path() -> PathBuf {
 
 #[tauri::command]
 fn get_screen_capture_permission() -> bool {
-    unsafe { CGPreflightScreenCaptureAccess() }
+    (unsafe { CGPreflightScreenCaptureAccess() }) || can_capture_screen_now()
 }
 
 #[tauri::command]
 fn request_screen_capture_permission() -> bool {
-    unsafe { CGRequestScreenCaptureAccess() }
+    let _ = unsafe { CGRequestScreenCaptureAccess() };
+    get_screen_capture_permission()
 }
 
 #[tauri::command]
@@ -305,6 +306,21 @@ fn encode_image_at(path: &PathBuf) -> Result<String, String> {
         .map_err(|e| format!("UTF-8 error: {e}"))?
         .replace('\n', "");
     Ok(format!("data:image/png;base64,{body}"))
+}
+
+/// Runtime probe: verifies that the current executable can really capture.
+/// This avoids false negatives from CGPreflight when macOS TCC state is stale.
+fn can_capture_screen_now() -> bool {
+    let path = temp_capture_path();
+    let ok = Command::new("screencapture")
+        .args(["-x", "-t", "png"])
+        .arg(&path)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+        && path.exists();
+    let _ = fs::remove_file(&path);
+    ok
 }
 
 /// Silent full-screen screenshot — used internally before showing overlay.
@@ -642,6 +658,9 @@ fn trigger_overlay(app: &AppHandle) {
                 Err(e) => {
                     eprintln!("Screenshot failed: {e}");
                     let _ = overlay.emit("set-screenshot", String::new());
+                    if let Some(main) = app.get_webview_window("main") {
+                        let _ = main.emit("screen-capture-failed", e.clone());
+                    }
                 }
             }
         }
