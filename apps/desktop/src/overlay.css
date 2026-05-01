@@ -480,16 +480,17 @@ html, body {
   color: #fecaca;
 }
 
-/* Region button with bordered icon */
+/* Region button with heavy dashed border */
 #tool-region {
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  border: 2px dashed rgba(255, 255, 255, 0.7);
+  position: relative;
 }
 #tool-region:hover {
-  border-color: rgba(255, 255, 255, 0.6);
+  border-color: rgba(255, 255, 255, 0.9);
 }
 #tool-region.active {
   background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.4);
+  border-color: #fff;
   color: #fff;
 }
 .tool-btn.save-btn {
