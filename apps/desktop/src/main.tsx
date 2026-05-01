@@ -28,24 +28,9 @@ import {
 const brandIconUrl = new URL('./assets/brand-icon.png', import.meta.url).href;
 
 type AppMode = 'welcome' | 'session' | 'confirmation';
-type BridgeMethod = 'mcp' | 'script';
-
-interface BridgeCommand {
-  label: string;
-  cwd: string;
-  command: string;
-  description: string;
-}
-
-interface BridgeSetup {
-  target: Target;
-  repoRoot: string;
-  commands: Record<BridgeMethod, BridgeCommand>;
-}
-
 interface ProviderConnection {
   connected: boolean;
-  method: BridgeMethod | null;
+  method: string | null;
   lastConnectedAt?: string;
 }
 
@@ -79,10 +64,6 @@ let target: Target = 'claude';
 let feedback: AgentFeedback | null = null;
 let isSending = false;
 let isAuthenticating = false;
-let bridgeSetup: BridgeSetup | null = null;
-let bridgeSetupRequested = false;
-let connectingTarget: Target | null = null;
-let bridgeLaunchMessage = '';
 let contextToggles = { consoleLogs: true, networkLogs: true, environmentInfo: true };
 let lastSavedCapture: { sessionTitle: string; annotationCount: number } | null = null;
 /** Inline validation when Send is blocked (e.g. missing session note). */
@@ -315,8 +296,7 @@ function buildStatusCopy(session: Session) {
 
 function render() {
   if (appMode === 'welcome') {
-    if (connectingTarget) renderConnectionSetup();
-    else renderWelcome();
+    renderWelcome();
     return;
   }
   if (appMode === 'confirmation') {
@@ -394,28 +374,27 @@ function renderWelcome() {
           </section>
 
           <section class="welcome-panel">
-            <div class="panel-kicker">Connect AI platforms</div>
-            <h2>MCP destinations</h2>
-            <p class="panel-copy">Launch the bridge you want for each AI surface. These buttons open the real helper in Terminal.</p>
-            <p class="panel-copy panel-copy-muted">No cloud MCP tokens are stored in the app — the bridge runs locally on your machine.</p>
+            <div class="panel-kicker">AI connection status</div>
+            <h2>Send to Claude or Codex</h2>
+            <p class="panel-copy">Connect your AI account once, then send annotation sessions directly from the workspace.</p>
             <div class="provider-list">
-              ${(['claude', 'codex', 'cursor'] as Target[]).map((provider) => `
+              ${([
+                { id: 'claude' as Target, label: 'Claude', connected: claudeConnected, sub: claudeConnected ? 'Connected — ready to send' : 'Connect in workspace → Submit tab' },
+                { id: 'codex' as Target, label: 'Codex', connected: codexApiKey.length > 0, sub: codexApiKey.length > 0 ? 'Connected — ready to send' : 'Connect in workspace → Submit tab' },
+                { id: 'cursor' as Target, label: 'Cursor', connected: true, sub: 'Always available — opens your project' },
+              ]).map((p) => `
                 <div class="provider-card">
                   <div>
-                    <strong>${providerLabel(provider)}</strong>
-                    <span>${providerSubtitle(provider)}</span>
+                    <strong>${p.label}</strong>
+                    <span>${p.sub}</span>
                   </div>
-                  <div class="provider-card-actions">
-                    <span class="provider-pill ${providerConnections[provider].connected ? 'connected' : ''}">
-                      ${providerConnections[provider].connected ? `Connected${providerConnections[provider].method ? ` via ${providerConnections[provider].method.toUpperCase()}` : ''}` : 'Not connected'}
-                    </span>
-                    <button class="mini-action" data-connect-provider="${provider}">
-                      ${providerConnections[provider].connected ? 'Reconnect' : 'Connect'}
-                    </button>
-                  </div>
+                  <span class="provider-pill ${p.connected ? 'connected' : ''}">
+                    ${p.connected ? '● Ready' : '○ Not connected'}
+                  </span>
                 </div>
               `).join('')}
             </div>
+            <p class="panel-copy panel-copy-muted" style="margin-top:8px">To connect, open the workspace and go to the <strong>Submit</strong> tab.</p>
           </section>
         </div>
 
@@ -487,17 +466,7 @@ function renderWelcome() {
     void enterSessionMode('notes');
   });
 
-  document.querySelectorAll<HTMLButtonElement>('[data-connect-provider]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const provider = button.dataset.connectProvider as Target | undefined;
-      if (!provider) return;
-      connectingTarget = provider;
-      bridgeLaunchMessage = '';
-      bridgeSetup = null;
-      bridgeSetupRequested = false;
-      render();
-    });
-  });
+  // Provider connection is now handled in the Submit tab, not the welcome screen.
 
   document.querySelectorAll<HTMLButtonElement>('.recent-session-tile').forEach((button) => {
     button.addEventListener('click', () => {
@@ -513,70 +482,6 @@ function renderWelcome() {
   void fitWelcomeWindow();
 }
 
-function renderConnectionSetup() {
-  const provider = connectingTarget ?? target;
-  if (!bridgeSetupRequested) {
-    bridgeSetupRequested = true;
-    void loadBridgeSetup(provider).then((setup) => {
-      bridgeSetup = setup;
-      render();
-    });
-  }
-
-  app.innerHTML = `
-    <div class="welcome-shell">
-      <div class="welcome-card confirmation-card">
-        <div class="confirm-check connect-accent">⚡</div>
-        <h1>Connect ${providerLabel(provider)}</h1>
-        <p class="confirm-sub">Choose how Debugr should launch the local bridge for ${providerLabel(provider)}.</p>
-
-        ${bridgeLaunchMessage ? `<div class="launch-message">${escapeHtml(bridgeLaunchMessage)}</div>` : ''}
-
-        <div class="connect-options">
-          ${(['mcp', 'script'] as BridgeMethod[]).map((method) => `
-            <button class="connect-option" data-bridge-method="${method}">
-              <div class="connect-option-icon">${method === 'mcp' ? '🔌' : '⚙️'}</div>
-              <div class="connect-option-body">
-                <div class="connect-option-title">${method === 'mcp' ? 'MCP server' : 'Background script'}</div>
-                <div class="connect-option-desc">
-                  ${bridgeSetup?.commands[method]?.description ?? 'Loading bridge details…'}
-                </div>
-                ${bridgeSetup?.commands[method]
-                  ? `<div class="connect-command">${escapeHtml(`${bridgeSetup.commands[method].cwd} · ${bridgeSetup.commands[method].command}`)}</div>`
-                  : ''}
-              </div>
-              ${method === 'mcp' ? '<span class="connect-option-badge">Recommended</span>' : ''}
-            </button>
-          `).join('')}
-        </div>
-
-        <div class="connect-help">
-          Debugr opens the actual helper in Terminal. Keep that helper running while the AI client reads context from this app.
-        </div>
-
-        <button class="btn-secondary" id="connect-back-btn">← Back</button>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('connect-back-btn')?.addEventListener('click', () => {
-    connectingTarget = null;
-    bridgeLaunchMessage = '';
-    bridgeSetup = null;
-    bridgeSetupRequested = false;
-    render();
-  });
-
-  document.querySelectorAll<HTMLButtonElement>('[data-bridge-method]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const method = button.dataset.bridgeMethod as BridgeMethod | undefined;
-      if (!method || !provider) return;
-      await launchBridge(provider, method);
-    });
-  });
-
-  void fitWindowToContent();
-}
 
 function renderConfirmation() {
   const info = lastSavedCapture;
@@ -1009,7 +914,8 @@ function renderWorkspacePanel() {
     const annCount = totalAnnotations(session);
     const isClaudeReady = claudeConnected;
     const isCodexReady = codexApiKey.length > 0;
-    const isReady = target === 'claude' ? isClaudeReady : target === 'codex' ? isCodexReady : true;
+    const isCursorReady = true; // Cursor needs no auth — just opens the app
+    const isReady = target === 'claude' ? isClaudeReady : target === 'codex' ? isCodexReady : isCursorReady;
 
     // ── Connect card for Claude ─────────────────────────────────────────────
     const claudeConnectCard = isClaudeReady ? '' : `
@@ -1066,13 +972,13 @@ function renderWorkspacePanel() {
 
         <div class="field-label">SEND TO</div>
         <div class="target-grid">
-          ${(['claude', 'codex'] as Target[]).map((provider) => {
-            const connected = provider === 'claude' ? isClaudeReady : isCodexReady;
+          ${(['claude', 'codex', 'cursor'] as Target[]).map((provider) => {
+            const connected = provider === 'claude' ? isClaudeReady : provider === 'codex' ? isCodexReady : isCursorReady;
             return `
               <button class="target-card ${target === provider ? 'active' : ''}" data-target="${provider}">
                 <strong>${providerLabel(provider)}</strong>
                 <span class="target-status ${connected ? 'connected' : 'not-connected'}">
-                  ${connected ? '● Connected' : '○ Not connected'}
+                  ${connected ? '● Ready' : '○ Not connected'}
                 </span>
               </button>
             `;
@@ -1080,11 +986,11 @@ function renderWorkspacePanel() {
         </div>
 
         ${isReady ? `
-          <div class="save-banner">✓ Connected and ready to send</div>
+          <div class="save-banner">✓ ${target === 'cursor' ? 'Cursor is always ready — opens your project' : 'Connected and ready to send'}</div>
           <button class="send-btn" id="send-btn" ${isSending ? 'disabled' : ''}>
             ${isSending ? 'Opening…' : `Send to ${providerLabel(target)} ⌘↵`}
           </button>
-          <div class="send-tip">Tip: set a project folder so the agent can navigate your code.</div>
+          <div class="send-tip">${target === 'cursor' ? 'Cursor will open with your project — paste the session prompt into the Cursor chat.' : 'Tip: set a project folder so the agent can navigate your code.'}</div>
           ${session.projectFolder
             ? `<div class="context-folder">📁 ${escapeHtml(session.projectFolder)}</div>`
             : `<button class="link-btn" id="add-folder-btn">+ Add project folder</button>`}
@@ -1256,8 +1162,7 @@ function bindSessionActions() {
   const session = activeSession();
   document.getElementById('back-home-btn')?.addEventListener('click', async () => {
     appMode = 'welcome';
-    connectingTarget = null;
-    bridgeLaunchMessage = '';
+    claudeConnecting = false;
     await win.setResizable(true);
     render();
   });
@@ -1333,49 +1238,6 @@ async function checkPermission() {
   }
 }
 
-async function loadBridgeSetup(provider: Target) {
-  try {
-    const response = await fetch(`${API}/system/bridge-setup?target=${provider}`);
-    if (!response.ok) return null;
-    const json = await response.json();
-    return json.data as BridgeSetup;
-  } catch {
-    return null;
-  }
-}
-
-async function launchBridge(provider: Target, method: BridgeMethod) {
-  const setup = bridgeSetup || await loadBridgeSetup(provider);
-  if (!setup) {
-    bridgeLaunchMessage = 'Could not load bridge setup from the API.';
-    render();
-    return;
-  }
-  bridgeSetup = setup;
-  const command = setup.commands[method];
-  try {
-    await invoke('open_command_in_terminal', {
-      cwd: command.cwd,
-      command: command.command,
-      title: `${command.label} · ${providerLabel(provider)} · Debugr`,
-    });
-    providerConnections[provider] = {
-      connected: true,
-      method,
-      lastConnectedAt: new Date().toISOString(),
-    };
-    authState.profileInitialized = authState.authenticated;
-    bridgeLaunchMessage = `${command.label} launched for ${providerLabel(provider)}. Keep the Terminal helper running while Debugr hands off session context.`;
-    target = provider;
-    persistAppState();
-  } catch (error) {
-    bridgeLaunchMessage = error instanceof Error ? error.message : 'Failed to launch the helper command.';
-  }
-  connectingTarget = null;
-  bridgeSetup = null;
-  bridgeSetupRequested = false;
-  render();
-}
 
 async function loadSessionsFromApi() {
   try {
