@@ -1705,25 +1705,25 @@ async function checkPermission() {
       return;
     }
     note.innerHTML = `
-      <strong>Screen capture blocked</strong>
-      <span>Enable Debugr in Screen &amp; System Audio Recording, then return here — no relaunch needed.</span>
-      <span><strong>ID:</strong> ${escapeHtml(diagnostics.bundle_identifier)}</span>
-      <button type="button" class="perm-note-action" id="open-screen-settings-btn">Open Screen Recording settings</button>
+      <strong>One-time setup needed</strong>
+      <span>System Settings just opened — find <strong>Debugr</strong> in the Screen Recording list and toggle it <strong>on</strong>, then come back. No relaunch needed.</span>
+      <button type="button" class="perm-note-action" id="open-screen-settings-btn">Re-open Screen Recording settings</button>
     `;
     note.className = 'perm-note warn';
+    // Open System Settings automatically — user just needs to flip the toggle
+    await invoke('open_screen_capture_settings').catch(() => {});
+    // Poll every 2 s until the user flips the toggle
+    let attempts = 0;
+    const poll = setInterval(async () => {
+      attempts++;
+      const result = await invoke<{ granted: boolean }>('get_screen_capture_diagnostics').catch(() => null);
+      if (result?.granted || attempts >= 15) {
+        clearInterval(poll);
+        if (result?.granted) void checkPermission();
+      }
+    }, 2000);
     document.getElementById('open-screen-settings-btn')?.addEventListener('click', async () => {
-      await invoke('request_screen_capture_permission').catch(() => false);
       await invoke('open_screen_capture_settings').catch(() => {});
-      // Poll until the user grants permission in System Settings
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        const result = await invoke<{ granted: boolean }>('get_screen_capture_diagnostics').catch(() => null);
-        if (result?.granted || attempts >= 15) {
-          clearInterval(poll);
-          if (result?.granted) void checkPermission();
-        }
-      }, 2000);
     });
     return;
   } catch {
@@ -2244,6 +2244,9 @@ async function saveProviderConfig() {
 async function init() {
   hydrateAppState();
   await loadProviderConfig();
+  // Register the app in TCC on every launch so it appears in Screen Recording
+  // settings without the user having to find and click a button first.
+  invoke('request_screen_capture_permission').catch(() => {});
   // Check Cursor installation without blocking render
   invoke<boolean>('check_cursor_installed').then((installed) => {
     cursorInstalled = installed;
