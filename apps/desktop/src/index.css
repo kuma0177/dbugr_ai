@@ -1809,6 +1809,14 @@ kbd {
   color: var(--fg);
 }
 
+.provider-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
 .wc-connect-body {
   margin-top: 10px;
   padding-top: 10px;
