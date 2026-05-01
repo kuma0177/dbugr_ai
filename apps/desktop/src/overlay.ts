@@ -517,27 +517,27 @@ async function saveAll() {
   toolSaveBtn.disabled = true;
   toolSaveBtn.textContent = 'Opening…';
   try {
-    // Clear canvas immediately so rectangles don't linger while Rust closes the window
+    // Snapshot data BEFORE clearing the canvas (resetAnnotationCanvas sets annotations = [])
+    const snapshot = {
+      annotations: annotations.slice(),
+      targetSessionId,
+      newSessionName,
+      newSessionAbout,
+      localFolder,
+      githubRepo,
+    };
+
+    // Clear canvas immediately so rectangles vanish the moment user clicks Finish
     resetAnnotationCanvas();
 
-    // Route through Rust backend which relays to main window — avoids
-    // the Tauri v2 frontend emit_to permission restriction.
-    await invoke('finish_annotations', {
-      payload: {
-        annotations,
-        targetSessionId,
-        newSessionName,
-        newSessionAbout,
-        localFolder,
-        githubRepo,
-      },
-    });
-    // Full state reset (step, form fields, screenshot) now that the command has completed
+    // Route through Rust backend — relays to main window without permission restrictions
+    await invoke('finish_annotations', { payload: snapshot });
+
+    // Full state reset after command resolves
     resetState();
   } catch (err) {
     console.error('[Debugr] Error in saveAll():', err);
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    setToast(`Error: ${errorMsg}`);
+    setToast(`Error: ${err instanceof Error ? err.message : String(err)}`);
     updateAnnotatingHints();
     toolSaveBtn.disabled = false;
     toolSaveBtn.textContent = prevLabel;
