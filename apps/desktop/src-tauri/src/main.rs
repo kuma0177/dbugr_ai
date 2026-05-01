@@ -232,6 +232,38 @@ fn hide_main_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Decode a base64 PNG data URL and save it as a file on disk.
+/// Returns the absolute path of the saved PNG so the prompt builder can
+/// reference it and the Claude / Codex CLI can view the image.
+///
+/// Saves to: ~/Library/Application Support/debugr/screenshots/<capture_id>.png
+#[tauri::command]
+fn save_screenshot(capture_id: String, data_url: String) -> Result<String, String> {
+    use base64::Engine as _;
+
+    // Strip the data URL prefix — accept png or jpeg
+    let base64_data = data_url
+        .strip_prefix("data:image/png;base64,")
+        .or_else(|| data_url.strip_prefix("data:image/jpeg;base64,"))
+        .ok_or_else(|| "Invalid data URL — expected data:image/png;base64,...".to_string())?;
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_data)
+        .map_err(|e| format!("Failed to decode screenshot: {e}"))?;
+
+    let dir = dirs_next::data_dir()
+        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()))
+        .join("debugr")
+        .join("screenshots");
+
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create screenshots dir: {e}"))?;
+
+    let path = dir.join(format!("{capture_id}.png"));
+    fs::write(&path, bytes).map_err(|e| format!("Failed to write screenshot: {e}"))?;
+
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// Persist desktop sessions to disk so the local MCP server can read them.
 ///
 /// Writes to:
@@ -500,6 +532,7 @@ fn main() {
             open_in_cursor,
             copy_to_clipboard,
             save_sessions_to_disk,
+            save_screenshot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running debugr.ai");

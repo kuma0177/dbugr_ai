@@ -128,7 +128,19 @@ export function getPendingSessions(sessions: Session[]): Session[] {
   );
 }
 
-export function buildSessionPrompt(session: Session): string {
+/**
+ * Build a structured plain-text prompt from a session.
+ *
+ * @param session       The session to build a prompt for.
+ * @param screenshotPaths  Optional map of captureId → absolute file path of the
+ *                         saved screenshot PNG.  When provided, each capture
+ *                         section includes a `Screenshot:` line so the AI CLI
+ *                         can view the image using its file-reading tools.
+ */
+export function buildSessionPrompt(
+  session: Session,
+  screenshotPaths: Map<string, string> = new Map(),
+): string {
   const lines: string[] = [];
   lines.push(`# Debugr session: ${session.title}`);
   if (session.about) lines.push(`\nContext: ${session.about}`);
@@ -140,6 +152,10 @@ export function buildSessionPrompt(session: Session): string {
     lines.push(`\n## Capture ${ci + 1}: ${capture.title || 'Untitled'}`);
     if (capture.preview && capture.preview !== 'No annotation notes yet') {
       lines.push(`Preview: ${capture.preview}`);
+    }
+    const shotPath = screenshotPaths.get(capture.id);
+    if (shotPath) {
+      lines.push(`Screenshot: ${shotPath}`);
     }
     capture.annotations.forEach((ann, ai) => {
       lines.push(`\n  Annotation ${ai + 1} (${ann.kind ?? 'pin'}):`);
@@ -153,12 +169,18 @@ export function buildSessionPrompt(session: Session): string {
   lines.push('1. The likely root cause of the issue');
   lines.push('2. A suggested fix with code if applicable');
   lines.push('3. Concrete next steps');
+  if (screenshotPaths.size > 0) {
+    lines.push('\nThe screenshots referenced above are saved locally — please read them to understand the visual context.');
+  }
 
   return lines.join('\n');
 }
 
-export function buildCombinedPrompt(sessions: Session[]): string {
-  if (sessions.length === 1) return buildSessionPrompt(sessions[0]!);
+export function buildCombinedPrompt(
+  sessions: Session[],
+  screenshotPaths: Map<string, string> = new Map(),
+): string {
+  if (sessions.length === 1) return buildSessionPrompt(sessions[0]!, screenshotPaths);
 
   const lines: string[] = [
     `# Debugr — ${sessions.length} pending sessions\n`,
@@ -168,7 +190,7 @@ export function buildCombinedPrompt(sessions: Session[]): string {
     lines.push(`\n${'='.repeat(60)}`);
     lines.push(`SESSION ${i + 1} OF ${sessions.length}`);
     lines.push('='.repeat(60));
-    lines.push(buildSessionPrompt(session));
+    lines.push(buildSessionPrompt(session, screenshotPaths));
   });
   lines.push('\n---');
   lines.push('Please address all sessions above in order.');

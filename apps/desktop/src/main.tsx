@@ -1340,11 +1340,13 @@ async function pushPendingSessions() {
 
   if (btn) { btn.disabled = true; btn.textContent = `Opening ${pending.length} session${pending.length > 1 ? 's' : ''}…`; }
 
-  // Ensure sessions.json is up to date before the CLI can read it via MCP
+  // Save sessions + screenshots to disk before the CLI reads them
   await invoke('save_sessions_to_disk', { payload: { sessions } }).catch(() => {});
+  const allCaptures = pending.flatMap((s) => s.captures);
+  const screenshotPaths = await saveScreenshots(allCaptures);
 
   try {
-    const prompt = buildCombinedPrompt(pending);
+    const prompt = buildCombinedPrompt(pending, screenshotPaths);
     const cwd = pending.find((s) => s.projectFolder?.trim())?.projectFolder?.trim() || '';
     const titleSuffix = pending.length === 1 ? pending[0]!.title : `${pending.length} pending sessions`;
 
@@ -1353,10 +1355,10 @@ async function pushPendingSessions() {
       await invoke('copy_to_clipboard', { text: prompt }).catch(() => {});
     } else {
       const cliName = target === 'codex' ? 'codex' : 'claude';
-      const escaped = prompt.replace(/'/g, "'\\''");
+      const command = buildCliCommand(cliName, prompt);
       await invoke('open_command_in_terminal', {
         cwd: cwd || process.env['HOME'] || '~',
-        command: `${cliName} '${escaped}'`,
+        command,
         title: `Debugr → ${providerLabel(target)}: ${titleSuffix}`,
       });
     }
@@ -1382,6 +1384,40 @@ async function pushPendingSessions() {
   }
 }
 
+/**
+ * Save all screenshots for a list of sessions to disk.
+ * Returns a Map of captureId → absolute PNG path.
+ * Fire-and-forget on individual failures — a missing screenshot is non-fatal.
+ */
+async function saveScreenshots(capturesToSave: Array<{ id: string; screenshotUrl?: string }>): Promise<Map<string, string>> {
+  const paths = new Map<string, string>();
+  await Promise.all(
+    capturesToSave
+      .filter((c) => c.screenshotUrl?.startsWith('data:image/'))
+      .map(async (c) => {
+        try {
+          const path = await invoke<string>('save_screenshot', {
+            captureId: c.id,
+            dataUrl: c.screenshotUrl,
+          });
+          paths.set(c.id, path);
+        } catch {
+          // screenshot save failed — prompt will just omit the path
+        }
+      }),
+  );
+  return paths;
+}
+
+/** Build the shell command string for launching the AI CLI with auth guidance. */
+function buildCliCommand(cliName: 'claude' | 'codex', prompt: string): string {
+  const escaped = prompt.replace(/'/g, "'\\''");
+  const authHint = cliName === 'claude'
+    ? `echo "💡 Not logged in? Run: claude /login" && echo "" && `
+    : `echo "💡 Not logged in? Run: codex login" && echo "" && `;
+  return `${authHint}${cliName} '${escaped}'`;
+}
+
 async function sendSession() {
   const session = activeSession();
   if (!session) return;
@@ -1393,13 +1429,14 @@ async function sendSession() {
   persistAppState();
   renderSession();
 
-  const prompt = buildSessionPrompt(session);
+  // Save screenshots to disk so the CLI can view them
+  const screenshotPaths = await saveScreenshots(session.captures);
+  const prompt = buildSessionPrompt(session, screenshotPaths);
   const cwd = session.projectFolder?.trim() || (await invoke<string>('pick_folder').catch(() => '')) || '';
   const title = `Debugr → ${providerLabel(target)}: ${session.title}`;
 
   try {
     if (target === 'cursor') {
-      // Open Cursor at the project folder — user pastes prompt manually
       await invoke('open_in_cursor', { projectFolder: cwd || null });
       feedback = {
         title: 'Cursor opened',
@@ -1408,18 +1445,15 @@ async function sendSession() {
       };
       await invoke('copy_to_clipboard', { text: prompt }).catch(() => {});
     } else {
-      // Claude CLI: `claude "prompt"` — Codex CLI: `codex "prompt"`
       const cliName = target === 'codex' ? 'codex' : 'claude';
-      // Escape single quotes in prompt for shell safety
-      const escaped = prompt.replace(/'/g, "'\\''");
-      const command = `${cliName} '${escaped}'`;
+      const command = buildCliCommand(cliName, prompt);
       await invoke('open_command_in_terminal', { cwd: cwd || process.env['HOME'] || '~', command, title });
       feedback = {
         title: `${providerLabel(target)} is running in Terminal`,
-        summary: `A Terminal window has opened with your session context. ${providerLabel(target)} CLI is now analysing your annotations.`,
+        summary: `A Terminal window has opened with your session context. ${screenshotPaths.size > 0 ? `${screenshotPaths.size} screenshot(s) saved locally and referenced in the prompt.` : ''} ${providerLabel(target)} CLI is now analysing your annotations.`.trim(),
         nextSteps: [
           'Check the Terminal window that just opened',
-          `${providerLabel(target)} will respond with its analysis there`,
+          screenshotPaths.size > 0 ? `${providerLabel(target)} will read the screenshot(s) from disk` : `${providerLabel(target)} will respond with its analysis there`,
           'Copy any suggested fixes back to your editor',
         ],
       };
@@ -1429,8 +1463,9 @@ async function sendSession() {
       title: 'Could not launch CLI',
       summary: `Failed to open ${providerLabel(target)}: ${err instanceof Error ? err.message : String(err)}. Make sure the CLI is installed and on your PATH.`,
       nextSteps: [
-        `Install ${target === 'codex' ? 'Codex' : 'Claude'} CLI if not already installed`,
-        'Check that the CLI is accessible from Terminal',
+        target === 'codex' ? 'Install Codex CLI: npm install -g @openai/codex' : 'Install Claude CLI: npm install -g @anthropic-ai/claude-code',
+        target === 'codex' ? 'Authenticate: codex login' : 'Authenticate: claude /login',
+        'Re-open the terminal and try again',
       ],
     };
   }
