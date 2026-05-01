@@ -32,18 +32,22 @@ const ANNOTATION_PAYLOAD = {
   newSessionAbout: 'Users are confused by the initial setup CTA',
   localFolder: '/Users/kumar/myapp',
   githubRepo: '',
+  screenshotUrl:
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn8x7cAAAAASUVORK5CYII=',
 };
 
 async function simulateAnnotationSave(page: Page, payload = ANNOTATION_PAYLOAD) {
-  // Fire the same event the Tauri backend emits after overlay save
   await page.evaluate((p) => {
-    window.dispatchEvent(new CustomEvent('tauri://annotations-saved', { detail: p }));
-    // Also try the Tauri event format used in listen()
-    document.dispatchEvent(
-      new CustomEvent('annotations-saved', { detail: { payload: p } }),
-    );
+    const internals = (window as unknown as {
+      __TAURI_INTERNALS__?: {
+        invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+      };
+    }).__TAURI_INTERNALS__;
+    return internals?.invoke?.('plugin:event|emit', {
+      event: 'annotations-saved',
+      payload: p,
+    });
   }, payload);
-  // Give the app time to process the event and re-render
   await page.waitForTimeout(300);
 }
 
@@ -53,8 +57,8 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
       // Stub finish_annotations: no-op (we drive the event ourselves)
       finish_annotations: null,
     });
-    await page.addInitScript(() => { localStorage.clear(); });
     await page.goto('/');
+    await page.evaluate(() => { localStorage.clear(); });
   });
 
   test('welcome screen shows before any session exists', async ({ page }) => {
@@ -99,7 +103,7 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
           contributions: [],
           collaborationReady: false,
         }],
-        authState: { authenticated: false, profileInitialized: false, name: '', email: '', avatarInitials: '', company: '', role: '' },
+        authState: { authenticated: true, profileInitialized: true, name: 'Kumar', email: 'kumar@example.com', avatarInitials: 'KU', company: '', role: '' },
         providerConnections: {
           claude: { connected: false, method: null },
           codex: { connected: false, method: null },
@@ -149,5 +153,123 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
       (await page.evaluate(() => localStorage.getItem('debugr-desktop-v2-state')))!,
     );
     expect(state.sessions[0].sessionNote).toBe('Users confused by CTA');
+  });
+
+  test('new annotation persists screenshot payload and renders note + image in workspace', async ({ page }) => {
+    await simulateAnnotationSave(page);
+
+    await expect(page.locator('.session-title')).toContainText('Onboarding flow bug');
+    await expect(page.locator('.capture-thumb img').first()).toBeVisible();
+    await expect(page.locator('.capture-payload-image')).toBeVisible();
+    await expect(page.locator('.capture-payload-note-body')).toContainText(
+      'The onboarding CTA is misleading',
+    );
+
+    const state = JSON.parse(
+      (await page.evaluate(() => localStorage.getItem('debugr-desktop-v2-state')))!,
+    );
+    expect(state.sessions).toHaveLength(1);
+    expect(state.sessions[0].captures).toHaveLength(1);
+    expect(state.sessions[0].captures[0].annotations[0].text).toContain('onboarding CTA');
+    expect(state.sessions[0].captures[0].screenshotUrl).toMatch(/^data:image\/png;base64,/);
+  });
+
+  test('full resolution preview opens for a saved screenshot payload', async ({ page }) => {
+    await simulateAnnotationSave(page);
+
+    await page.getByRole('button', { name: 'Open full resolution', exact: true }).click();
+    await expect(page.locator('#capture-preview-modal')).toBeVisible();
+    await expect(page.locator('#capture-preview-meta')).toContainText('Resolution:');
+
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(page.locator('#capture-preview-modal')).toHaveCount(0);
+  });
+
+  test('annotation can be deleted from an existing capture', async ({ page }) => {
+    const payload = {
+      ...ANNOTATION_PAYLOAD,
+      annotations: [
+        ANNOTATION_PAYLOAD.annotations[0],
+        {
+          ...ANNOTATION_PAYLOAD.annotations[0],
+          id: 'ann_test_2',
+          number: 2,
+          text: 'Spacing on the secondary CTA still looks off',
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    };
+    await simulateAnnotationSave(page, payload);
+
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.locator('[data-delete-annotation="ann_test_2"]').click();
+
+    await expect(page.locator('[data-delete-annotation="ann_test_2"]')).toHaveCount(0);
+    await expect(page.locator('.capture-time').first()).toContainText('1 annotations');
+
+    const state = JSON.parse(
+      (await page.evaluate(() => localStorage.getItem('debugr-desktop-v2-state')))!,
+    );
+    expect(state.sessions[0].captures[0].annotations).toHaveLength(1);
+    expect(state.sessions[0].captures[0].annotations[0].id).toBe('ann_test_1');
+  });
+
+  test('legacy no-screenshot captures are labeled clearly', async ({ page }) => {
+    await page.evaluate(() => {
+      const state = {
+        sessions: [{
+          id: 'legacy_session',
+          title: 'Legacy screenshot session',
+          status: 'draft',
+          sessionNote: 'This came from before screenshot persistence.',
+          about: '',
+          projectFolder: null,
+          githubRepo: '',
+          captures: [{
+            id: 'legacy_capture',
+            title: 'Legacy note without screenshot support',
+            preview: 'Legacy note without screenshot support',
+            annotations: [{
+              id: 'legacy_ann',
+              number: 1,
+              x: 10,
+              y: 20,
+              kind: 'region',
+              text: 'Legacy note without screenshot support',
+              tags: ['legacy'],
+              timestamp: '2026-05-01T08:57:00.000Z',
+            }],
+            timestamp: '2026-05-01T08:57:00.000Z',
+          }],
+          createdAt: '2026-05-01T08:57:00.000Z',
+          submissionFlow: 'direct',
+          contributions: [],
+          collaborationReady: false,
+        }],
+        authState: { authenticated: false, profileInitialized: false, name: '', email: '', avatarInitials: '', company: '', role: '' },
+        providerConnections: { claude: { connected: false, method: null }, codex: { connected: false, method: null }, cursor: { connected: false, method: null } },
+        target: 'claude',
+      };
+      localStorage.setItem('debugr-desktop-v2-state', JSON.stringify(state));
+    });
+    await page.reload();
+    await page.waitForTimeout(300);
+    await page.getByText('Legacy screenshot session').click();
+
+    await expect(page.locator('.capture-legacy-badge').first()).toContainText('Saved before screenshot support');
+    await expect(page.locator('.capture-payload-empty')).toContainText('Legacy capture: saved before screenshot support.');
+  });
+
+  test('whole session can be deleted from the header action', async ({ page }) => {
+    await simulateAnnotationSave(page);
+
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.locator('#delete-session-btn').click();
+
+    await expect(page.locator('.empty-title')).toContainText('No session selected');
+    const state = JSON.parse(
+      (await page.evaluate(() => localStorage.getItem('debugr-desktop-v2-state')))!,
+    );
+    expect(state.sessions).toHaveLength(0);
   });
 });

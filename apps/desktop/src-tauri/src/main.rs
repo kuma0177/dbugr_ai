@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}, io::Write as _};
+use core_graphics::display::CGDisplay;
 use tauri::{AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -250,7 +251,7 @@ fn verify_claude_api_key(api_key: String) -> Result<String, String> {
 
     let output = Command::new("curl")
         .args([
-            "-s", "-o", "/dev/null",
+            "-sS", "-o", "/dev/null",
             "-w", "%{http_code}",
             "--max-time", "8",
             "https://api.anthropic.com/v1/models",
@@ -259,6 +260,23 @@ fn verify_claude_api_key(api_key: String) -> Result<String, String> {
         ])
         .output()
         .map_err(|e| format!("Network check failed: {e}"))?;
+
+    if !output.status.success() {
+        let exit_code = output.status.code().unwrap_or(-1);
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let extra = if stderr.is_empty() {
+            "".to_string()
+        } else {
+            format!(" Details: {stderr}")
+        };
+        log_backend(
+            "provider.verify.claude.transport_failed",
+            format!("exit_code={exit_code} stderr={stderr}"),
+        );
+        return Err(format!(
+            "Could not re-verify Claude from this app runtime right now (curl exit {exit_code}).{extra}"
+        ));
+    }
 
     let code = String::from_utf8_lossy(&output.stdout).trim().to_string();
     match code.as_str() {
@@ -281,7 +299,7 @@ fn verify_codex_key(api_key: String) -> Result<String, String> {
 
     let output = Command::new("curl")
         .args([
-            "-s", "-o", "/dev/null",
+            "-sS", "-o", "/dev/null",
             "-w", "%{http_code}",
             "--max-time", "8",
             "https://api.openai.com/v1/models",
@@ -289,6 +307,23 @@ fn verify_codex_key(api_key: String) -> Result<String, String> {
         ])
         .output()
         .map_err(|e| format!("Network check failed: {e}"))?;
+
+    if !output.status.success() {
+        let exit_code = output.status.code().unwrap_or(-1);
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let extra = if stderr.is_empty() {
+            "".to_string()
+        } else {
+            format!(" Details: {stderr}")
+        };
+        log_backend(
+            "provider.verify.codex.transport_failed",
+            format!("exit_code={exit_code} stderr={stderr}"),
+        );
+        return Err(format!(
+            "Could not re-verify Codex from this app runtime right now (curl exit {exit_code}).{extra}"
+        ));
+    }
 
     let code = String::from_utf8_lossy(&output.stdout).trim().to_string();
     match code.as_str() {
@@ -421,45 +456,88 @@ fn encode_image_at(path: &PathBuf) -> Result<String, String> {
     Ok(format!("data:image/png;base64,{body}"))
 }
 
+fn encode_png_bytes_to_data_url(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    let body = base64::engine::general_purpose::STANDARD.encode(bytes);
+    format!("data:image/png;base64,{body}")
+}
+
+fn capture_native_png_bytes() -> Result<Vec<u8>, String> {
+    let image = CGDisplay::main()
+        .image()
+        .ok_or_else(|| "CoreGraphics did not return a display image".to_string())?;
+    let width = image.width();
+    let height = image.height();
+    let bytes_per_row = image.bytes_per_row();
+    let bits_per_pixel = image.bits_per_pixel();
+    let data = image.data();
+    let raw = data.bytes();
+
+    if width == 0 || height == 0 {
+        return Err("Captured image had zero size".into());
+    }
+    if bits_per_pixel < 32 {
+        return Err(format!("Unsupported bits per pixel for display capture: {bits_per_pixel}"));
+    }
+
+    let pixel_stride = bits_per_pixel / 8;
+    let mut rgba = vec![0u8; width * height * 4];
+
+    for y in 0..height {
+        let src_row = y * bytes_per_row;
+        let dst_row = y * width * 4;
+        for x in 0..width {
+            let src = src_row + x * pixel_stride;
+            let dst = dst_row + x * 4;
+            if src + 3 >= raw.len() || dst + 3 >= rgba.len() {
+                return Err("Captured image buffer was shorter than expected".into());
+            }
+            let b = raw[src];
+            let g = raw[src + 1];
+            let r = raw[src + 2];
+            let a = raw[src + 3];
+            rgba[dst] = r;
+            rgba[dst + 1] = g;
+            rgba[dst + 2] = b;
+            rgba[dst + 3] = a;
+        }
+    }
+
+    let mut png_bytes = Vec::new();
+    let mut encoder = png::Encoder::new(&mut png_bytes, width as u32, height as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder
+        .write_header()
+        .map_err(|e| format!("PNG header encode failed: {e}"))?;
+    writer
+        .write_image_data(&rgba)
+        .map_err(|e| format!("PNG image encode failed: {e}"))?;
+    drop(writer);
+    Ok(png_bytes)
+}
+
 /// Runtime probe: verifies that the current executable can really capture.
 /// This avoids false negatives from CGPreflight when macOS TCC state is stale.
 fn can_capture_screen_now() -> bool {
-    let path = temp_capture_path();
-    let cmd_ok = Command::new("screencapture")
-        .args(["-x", "-t", "png"])
-        .arg(&path)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false);
-    let exists = path.exists();
-    let ok = cmd_ok && exists;
-    log_backend(
-        "screenshot.probe",
-        format!("path={} command_ok={cmd_ok} exists={exists} granted={ok}", path.display()),
-    );
-    let _ = fs::remove_file(&path);
-    ok
+    match capture_native_png_bytes() {
+        Ok(bytes) => {
+            log_backend("screenshot.probe", format!("mode=native bytes={}", bytes.len()));
+            true
+        }
+        Err(error) => {
+            log_backend("screenshot.probe_failed", format!("mode=native error={error}"));
+            false
+        }
+    }
 }
 
 /// Silent full-screen screenshot — used internally before showing overlay.
 fn take_silent_screenshot() -> Result<String, String> {
-    let path = temp_capture_path();
-    log_backend("screenshot.silent.start", format!("path={}", path.display()));
-    let ok = Command::new("screencapture")
-        .args(["-x", "-t", "png"])
-        .arg(&path)
-        .status()
-        .map_err(|e| format!("screencapture failed: {e}"))?
-        .success();
-    if !ok || !path.exists() {
-        log_backend(
-            "screenshot.silent.failed",
-            format!("path={} command_ok={ok} exists={}", path.display(), path.exists()),
-        );
-        return Err("Screenshot failed".into());
-    }
-    log_backend("screenshot.silent.success", format!("path={}", path.display()));
-    encode_image_at(&path)
+    log_backend("screenshot.silent.start", "mode=native");
+    let png_bytes = capture_native_png_bytes()?;
+    log_backend("screenshot.silent.success", format!("mode=native bytes={}", png_bytes.len()));
+    Ok(encode_png_bytes_to_data_url(&png_bytes))
 }
 
 /// Interactive fallback capture when silent capture fails.
@@ -764,6 +842,42 @@ fn tray_template_icon() -> Image<'static> {
 
 // ── Core: trigger annotation overlay ─────────────────────────────────────────
 
+fn show_overlay_window(app: &AppHandle) {
+    if let Some(overlay) = app.get_webview_window("overlay") {
+        log_backend("overlay.window.found", "label=overlay");
+
+        let monitor = overlay
+            .current_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| overlay.primary_monitor().ok().flatten());
+
+        if let Some(mon) = monitor {
+            let phys = mon.size();
+            let pos = mon.position();
+            let scale = mon.scale_factor();
+            let lw = (phys.width as f64 / scale).round() as u32;
+            let lh = (phys.height as f64 / scale).round() as u32;
+            let lx = (pos.x as f64 / scale).round();
+            let ly = (pos.y as f64 / scale).round();
+            log_backend(
+                "overlay.window.bounds",
+                format!("logical_w={lw} logical_h={lh} x={lx} y={ly} scale={scale}"),
+            );
+            let _ = overlay.set_size(tauri::LogicalSize::new(lw, lh));
+            let _ = overlay.set_position(tauri::LogicalPosition::new(lx, ly));
+        }
+
+        let _ = overlay.emit("overlay-will-show", ());
+        if let Err(e) = overlay.show() {
+            log_backend("overlay.window.show_failed", e.to_string());
+        }
+        if let Err(e) = overlay.set_focus() {
+            log_backend("overlay.window.focus_failed", e.to_string());
+        }
+    }
+}
+
 fn trigger_overlay(app: &AppHandle) {
     log_backend("overlay.trigger.start", "source=shortcut_or_ui");
     macos_activate();
@@ -790,65 +904,21 @@ fn trigger_overlay(app: &AppHandle) {
         }
     }
 
-    // Show the native overlay immediately so the toolbar/inspector are visible
-    // even if capture permission is slow or unavailable.
-    //
-    // IMPORTANT: LSUIElement=true means we're an accessory app — macOS will
-    // never make us the active application on its own, so window.show() +
-    // set_focus() have no visual effect unless we activate first.
-    if let Some(overlay) = app.get_webview_window("overlay") {
-        log_backend("overlay.window.found", "label=overlay");
-
-        // Resize the overlay to cover the monitor the user is currently working on.
-        // Prefer current_monitor (the screen where the cursor/window is) so that
-        // multi-monitor setups work correctly; fall back to primary monitor.
-        // We convert physical → logical pixels using the scale factor so that
-        // CSS `position:fixed; bottom:24px` always lands on screen.
-        let monitor = overlay.current_monitor()
-            .ok()
-            .flatten()
-            .or_else(|| overlay.primary_monitor().ok().flatten());
-
-        if let Some(mon) = monitor {
-            let phys  = mon.size();
-            let pos   = mon.position();
-            let scale = mon.scale_factor();
-            let lw = (phys.width  as f64 / scale).round() as u32;
-            let lh = (phys.height as f64 / scale).round() as u32;
-            let lx = (pos.x as f64 / scale).round();
-            let ly = (pos.y as f64 / scale).round();
-            log_backend(
-                "overlay.window.bounds",
-                format!("logical_w={lw} logical_h={lh} x={lx} y={ly} scale={scale}"),
-            );
-            let _ = overlay.set_size(tauri::LogicalSize::new(lw, lh));
-            let _ = overlay.set_position(tauri::LogicalPosition::new(lx, ly));
-        }
-
-        // Tell the frontend to reset state BEFORE we make the window visible
-        let _ = overlay.emit("overlay-will-show", ());
-        if let Err(e) = overlay.show() {
-            log_backend("overlay.window.show_failed", e.to_string());
-        }
-        if let Err(e) = overlay.set_focus() {
-            log_backend("overlay.window.focus_failed", e.to_string());
-        }
-    }
-
-    // Capture the screen in a background thread so we don't block the shortcut handler.
+    // Capture the screen before showing the overlay so session-picker chrome
+    // never ends up inside the saved image.
     let app = app.clone();
     std::thread::spawn(move || {
-        // Small delay so the Debugr window has time to hide if needed
-        std::thread::sleep(std::time::Duration::from_millis(80));
+        std::thread::sleep(std::time::Duration::from_millis(60));
 
-        log_backend("overlay.capture.thread_start", "delay_ms=80");
+        log_backend("overlay.capture.thread_start", "delay_ms=60");
         let screenshot = take_silent_screenshot().or_else(|e| {
             log_backend("overlay.capture.silent_failed", e);
             take_interactive_fallback_screenshot()
         });
 
+        macos_activate();
+        show_overlay_window(&app);
         if let Some(overlay) = app.get_webview_window("overlay") {
-            // Send screenshot (or empty string on failure) to overlay frontend
             match screenshot {
                 Ok(data_url) => {
                     log_backend(
@@ -872,6 +942,19 @@ fn trigger_overlay(app: &AppHandle) {
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() {
+    if std::env::var("DEBUGR_CAPTURE_SMOKE").ok().as_deref() == Some("1") {
+        match capture_native_png_bytes() {
+            Ok(bytes) => {
+                println!("debugr_capture_smoke_ok bytes={}", bytes.len());
+                return;
+            }
+            Err(error) => {
+                eprintln!("debugr_capture_smoke_err {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {

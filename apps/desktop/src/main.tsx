@@ -58,12 +58,14 @@ const API = 'http://127.0.0.1:3001/api';
 const APP_STATE_KEY = 'debugr-desktop-v2-state';
 const MAX_ANNOTATIONS = 5;
 const UI_LOG_PREFIX = '[debugr-ui]';
+const SCREENSHOT_SUPPORT_ROLLOUT_AT = new Date('2026-05-01T11:00:00-07:00').getTime();
 
 let appMode: AppMode = 'welcome';
 let sessions: Session[] = [];
 let activeSessionId: string | null = null;
 let activeCaptureId: string | null = null;
 let activeAnnotationId: string | null = null;
+let activePreviewCaptureId: string | null = null;
 let workspaceSection: WorkspaceSection = 'notes';
 let target: Target = 'claude';
 let feedback: AgentFeedback | null = null;
@@ -132,6 +134,69 @@ function activeAnnotation() {
     if (selected) return selected;
   }
   return capture.annotations[0];
+}
+
+function activePreviewCapture() {
+  const session = activeSession();
+  if (!session || !activePreviewCaptureId) return undefined;
+  return session.captures.find((capture) => capture.id === activePreviewCaptureId);
+}
+
+function captureNeedsLegacyScreenshotLabel(capture: CaptureCard) {
+  if (capture.screenshotUrl) return false;
+  const timestamps = [
+    new Date(capture.timestamp).getTime(),
+    ...capture.annotations.map((annotation) => new Date(annotation.timestamp).getTime()),
+  ].filter((value) => !Number.isNaN(value));
+  if (timestamps.length === 0) return true;
+  return Math.min(...timestamps) <= SCREENSHOT_SUPPORT_ROLLOUT_AT;
+}
+
+function deleteCaptureFromSession(session: Session, captureId: string) {
+  const nextCaptures = session.captures.filter((capture) => capture.id !== captureId);
+  session.captures = nextCaptures;
+  if (activeCaptureId === captureId) {
+    activeCaptureId = nextCaptures[0]?.id ?? null;
+    activeAnnotationId = nextCaptures[0]?.annotations[0]?.id ?? null;
+  }
+  if (activePreviewCaptureId === captureId) {
+    activePreviewCaptureId = null;
+  }
+  persistAppState();
+}
+
+function deleteSession(sessionId: string) {
+  const index = sessions.findIndex((session) => session.id === sessionId);
+  if (index === -1) return;
+  sessions.splice(index, 1);
+  if (activeSessionId === sessionId) {
+    const nextSession = sessions[index] ?? sessions[index - 1] ?? sessions[0] ?? null;
+    activeSessionId = nextSession?.id ?? null;
+    activeCaptureId = nextSession?.captures[0]?.id ?? null;
+    activeAnnotationId = nextSession?.captures[0]?.annotations[0]?.id ?? null;
+  }
+  activePreviewCaptureId = null;
+  feedback = null;
+  persistAppState();
+}
+
+function deleteAnnotationFromCapture(session: Session, captureId: string, annotationId: string) {
+  const capture = session.captures.find((item) => item.id === captureId);
+  if (!capture) return;
+  capture.annotations = capture.annotations.filter((annotation) => annotation.id !== annotationId);
+  capture.preview = capture.annotations.map((annotation) => annotation.text).filter(Boolean).join(' · ') || 'No annotation notes yet';
+  capture.title = capture.annotations[0]?.text?.slice(0, 40) || capture.title;
+  if (capture.annotations.length === 0) {
+    deleteCaptureFromSession(session, captureId);
+    return;
+  }
+  capture.annotations.forEach((annotation, index) => {
+    annotation.number = index + 1;
+  });
+  if (activeAnnotationId === annotationId) {
+    activeAnnotationId = capture.annotations[0]?.id ?? null;
+  }
+  persistAppState();
 }
 
 function fmtTime(iso: string) {
@@ -841,6 +906,7 @@ function renderSession() {
                 </div>
                 <div class="session-header-actions">
                   <button type="button" class="mini-action" id="save-session-btn">Save session</button>
+                  <button type="button" class="mini-action mini-action-danger" id="delete-session-btn">Delete session</button>
                   <div class="session-badge responded">${escapeHtml(session.status === 'responded' ? 'Responded' : session.status === 'sent' ? 'Submitted' : 'Draft')}</div>
                 </div>
               </div>
@@ -916,7 +982,10 @@ function renderSession() {
                   </div>
                 ` : `
                   <div class="capture-preview-card">
-                    <div class="capture-preview-title">${escapeHtml(capture?.title ?? session.captures[0].title)}</div>
+                    <div class="capture-preview-title-row">
+                      <div class="capture-preview-title">${escapeHtml(capture?.title ?? session.captures[0].title)}</div>
+                      ${captureNeedsLegacyScreenshotLabel(capture ?? session.captures[0]) ? '<span class="capture-legacy-badge">Saved before screenshot support</span>' : ''}
+                    </div>
                     <div class="capture-preview-copy">${escapeHtml(capture?.preview ?? session.captures[0].preview)}</div>
                   </div>
                   <div class="capture-list" id="capture-list"></div>
@@ -968,21 +1037,40 @@ function renderSessionList() {
     labelEl.textContent = label;
     list.appendChild(labelEl);
     group.forEach((session) => {
-      const button = document.createElement('button');
-      button.className = `session-item ${session.id === activeSessionId ? 'active' : ''}`;
-      button.innerHTML = `
-        <strong>${escapeHtml(session.title)}</strong>
-        <span>${flowLabel(session.submissionFlow)} · ${fmtTime(session.createdAt)}</span>
+      const row = document.createElement('div');
+      row.className = `session-item ${session.id === activeSessionId ? 'active' : ''}`;
+      row.setAttribute('role', 'button');
+      row.tabIndex = 0;
+      row.innerHTML = `
+        <div class="session-item-copy">
+          <strong>${escapeHtml(session.title)}</strong>
+          <span>${flowLabel(session.submissionFlow)} · ${fmtTime(session.createdAt)}</span>
+        </div>
+        <button type="button" class="session-item-delete" data-delete-session="${session.id}" aria-label="Delete session">Delete</button>
       `;
-      button.addEventListener('click', () => {
+      const selectSession = () => {
         activeSessionId = session.id;
         activeCaptureId = session.captures[0]?.id ?? null;
         activeAnnotationId = session.captures[0]?.annotations[0]?.id ?? null;
         feedback = session.status === 'responded' ? feedback : null;
         persistAppState();
         renderSession();
+      };
+      row.addEventListener('click', selectSession);
+      row.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          selectSession();
+        }
       });
-      list.appendChild(button);
+      row.querySelector<HTMLButtonElement>('[data-delete-session]')?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const ok = window.confirm(`Delete session "${session.title}" and all of its captures?`);
+        if (!ok) return;
+        deleteSession(session.id);
+        renderSession();
+      });
+      list.appendChild(row);
     });
   });
 }
@@ -992,17 +1080,26 @@ function renderCaptureList(session: Session) {
   if (!list) return;
   list.innerHTML = '';
   session.captures.forEach((capture) => {
-    const button = document.createElement('button');
-    button.className = `capture-card ${capture.id === activeCaptureId ? 'active' : ''}`;
-    button.innerHTML = `
-      <div class="capture-thumb">${capture.screenshotUrl ? `<img src="${capture.screenshotUrl}" alt="" />` : '📷'}</div>
+    const showLegacyLabel = captureNeedsLegacyScreenshotLabel(capture);
+    const card = document.createElement('div');
+    card.className = `capture-card ${capture.id === activeCaptureId ? 'active' : ''}`;
+    card.setAttribute('role', 'button');
+    card.tabIndex = 0;
+    card.innerHTML = `
+      <button type="button" class="capture-thumb capture-thumb-preview" data-open-capture-preview="${capture.id}" aria-label="Preview screenshot">
+        ${capture.screenshotUrl ? `<img src="${capture.screenshotUrl}" alt="" />` : '📷'}
+      </button>
       <div class="capture-body">
-        <div class="capture-title">${escapeHtml(capture.title)}</div>
+        <div class="capture-title-row">
+          <div class="capture-title">${escapeHtml(capture.title)}</div>
+          ${showLegacyLabel ? '<span class="capture-legacy-badge">Saved before screenshot support</span>' : ''}
+        </div>
         <div class="capture-preview">${escapeHtml(capture.preview)}</div>
         <div class="capture-time">${fmtTime(capture.timestamp)} · ${capture.annotations.length} annotations</div>
       </div>
+      <button type="button" class="capture-card-delete" data-delete-capture="${capture.id}" aria-label="Delete capture">Delete</button>
     `;
-    button.addEventListener('click', () => {
+    const selectCapture = () => {
       activeCaptureId = capture.id;
       activeAnnotationId = capture.annotations[0]?.id ?? null;
       logUi('workspace_capture_selected', {
@@ -1011,8 +1108,30 @@ function renderCaptureList(session: Session) {
         annotationCount: capture.annotations.length,
       });
       renderSession();
+    };
+    card.addEventListener('click', selectCapture);
+    card.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        selectCapture();
+      }
     });
-    list.appendChild(button);
+    card.querySelector<HTMLButtonElement>('[data-delete-capture]')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const ok = window.confirm('Delete this capture and its annotations from the session?');
+      if (!ok) return;
+      deleteCaptureFromSession(session, capture.id);
+      renderSession();
+    });
+    card.querySelector<HTMLButtonElement>('[data-open-capture-preview]')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!capture.screenshotUrl) return;
+      activeCaptureId = capture.id;
+      activeAnnotationId = capture.annotations[0]?.id ?? null;
+      activePreviewCaptureId = capture.id;
+      renderSession();
+    });
+    list.appendChild(card);
   });
 }
 
@@ -1026,13 +1145,19 @@ function renderCapturePayload(session: Session) {
   }
 
   const selected = activeAnnotation() ?? capture.annotations[0];
+  const hasScreenshot = Boolean(capture.screenshotUrl);
+  const showLegacyLabel = captureNeedsLegacyScreenshotLabel(capture);
   const annotationRows = capture.annotations.map((annotation) => `
-    <button class="annotation-row ${selected?.id === annotation.id ? 'active' : ''}" data-annotation-id="${annotation.id}">
+    <div class="annotation-row ${selected?.id === annotation.id ? 'active' : ''}" data-annotation-id="${annotation.id}" role="button" tabindex="0">
       <span class="annotation-row-index">#${annotation.number}</span>
       <span class="annotation-row-text">${escapeHtml(annotation.text || 'No note text')}</span>
       <span class="annotation-row-time">${fmtTime(annotation.timestamp)}</span>
-    </button>
+      <button type="button" class="annotation-row-delete" data-delete-annotation="${annotation.id}" aria-label="Delete annotation">Delete</button>
+    </div>
   `).join('');
+
+  const previewCapture = activePreviewCapture();
+  const isPreviewOpen = previewCapture?.id === capture.id && Boolean(previewCapture.screenshotUrl);
 
   root.innerHTML = `
     <div class="capture-payload-head">
@@ -1041,9 +1166,17 @@ function renderCapturePayload(session: Session) {
     </div>
     <div class="capture-payload-grid">
       <div class="capture-payload-image-wrap">
-        ${capture.screenshotUrl
-          ? `<img class="capture-payload-image" src="${capture.screenshotUrl}" alt="Selected screenshot payload" />`
-          : '<div class="capture-payload-empty">No screenshot available for this capture.</div>'}
+        <div class="capture-payload-image-actions">
+          <button type="button" class="capture-preview-action" id="open-capture-preview" ${hasScreenshot ? '' : 'disabled'}>Open full resolution</button>
+          <span class="capture-preview-hint">${hasScreenshot
+            ? 'Check readability before sending to Claude or Codex.'
+            : showLegacyLabel
+              ? 'Legacy capture: this was saved before screenshot support shipped, so only the note payload remains.'
+              : 'This capture was saved without a screenshot. Pick a different capture or take a fresh one to send visual context.'}</span>
+        </div>
+        ${hasScreenshot
+          ? `<button type="button" class="capture-payload-image-button" id="capture-payload-image-button" aria-label="Open full resolution screenshot preview"><img class="capture-payload-image" src="${capture.screenshotUrl}" alt="Selected screenshot payload" /></button>`
+          : `<div class="capture-payload-empty">${showLegacyLabel ? 'Legacy capture: saved before screenshot support.' : 'No screenshot was saved with this capture.'}</div>`}
       </div>
       <div class="capture-payload-meta">
         <div class="capture-payload-list">
@@ -1062,11 +1195,25 @@ function renderCapturePayload(session: Session) {
         </div>
       </div>
     </div>
+    ${isPreviewOpen ? `
+      <div class="capture-preview-modal" id="capture-preview-modal">
+        <button type="button" class="capture-preview-backdrop" id="close-capture-preview" aria-label="Close screenshot preview"></button>
+        <div class="capture-preview-panel">
+          <div class="capture-preview-panel-head">
+            <strong>Screenshot quality check</strong>
+            <button type="button" class="capture-preview-close" id="close-capture-preview-x">Close</button>
+          </div>
+          <div class="capture-preview-panel-copy">This is the full image that will be saved with the session and referenced in the AI handoff.</div>
+          <img class="capture-preview-modal-image" id="capture-preview-modal-image" src="${previewCapture?.screenshotUrl}" alt="Full resolution screenshot preview" />
+          <div class="capture-preview-meta" id="capture-preview-meta">Loading resolution…</div>
+        </div>
+      </div>
+    ` : ''}
   `;
 
-  root.querySelectorAll<HTMLButtonElement>('[data-annotation-id]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const annotationId = button.dataset.annotationId;
+  root.querySelectorAll<HTMLElement>('[data-annotation-id]').forEach((row) => {
+    const selectAnnotation = () => {
+      const annotationId = row.dataset.annotationId;
       if (!annotationId) return;
       activeAnnotationId = annotationId;
       logUi('workspace_annotation_selected', {
@@ -1075,8 +1222,59 @@ function renderCapturePayload(session: Session) {
         annotationId,
       });
       renderCapturePayload(session);
+    };
+    row.addEventListener('click', selectAnnotation);
+    row.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        selectAnnotation();
+      }
     });
   });
+
+  root.querySelectorAll<HTMLElement>('[data-delete-annotation]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const annotationId = button.getAttribute('data-delete-annotation');
+      if (!annotationId) return;
+      const ok = window.confirm('Delete this annotation from the session?');
+      if (!ok) return;
+      deleteAnnotationFromCapture(session, capture.id, annotationId);
+      renderSession();
+    });
+  });
+
+  document.getElementById('open-capture-preview')?.addEventListener('click', () => {
+    if (!capture.screenshotUrl) return;
+    activePreviewCaptureId = capture.id;
+    renderCapturePayload(session);
+  });
+  document.getElementById('capture-payload-image-button')?.addEventListener('click', () => {
+    if (!capture.screenshotUrl) return;
+    activePreviewCaptureId = capture.id;
+    renderCapturePayload(session);
+  });
+  document.getElementById('close-capture-preview')?.addEventListener('click', () => {
+    activePreviewCaptureId = null;
+    renderCapturePayload(session);
+  });
+  document.getElementById('close-capture-preview-x')?.addEventListener('click', () => {
+    activePreviewCaptureId = null;
+    renderCapturePayload(session);
+  });
+
+  const previewImage = document.getElementById('capture-preview-modal-image') as HTMLImageElement | null;
+  const previewMeta = document.getElementById('capture-preview-meta');
+  if (previewImage && previewMeta) {
+    const updateMeta = () => {
+      previewMeta.textContent = `Resolution: ${previewImage.naturalWidth} × ${previewImage.naturalHeight}`;
+    };
+    if (previewImage.complete) {
+      updateMeta();
+    } else {
+      previewImage.addEventListener('load', updateMeta, { once: true });
+    }
+  }
 }
 
 function renderWorkspacePanel() {
@@ -1574,6 +1772,13 @@ function bindSessionActions() {
     persistAppState();
     renderSession();
   });
+  document.getElementById('delete-session-btn')?.addEventListener('click', () => {
+    logUi('workspace_delete_session_click', { sessionId: session.id });
+    const ok = window.confirm(`Delete session "${session.title}" and all of its captures?`);
+    if (!ok) return;
+    deleteSession(session.id);
+    renderSession();
+  });
   const titleInput = document.getElementById('session-title-input') as HTMLInputElement | null;
   const aboutInput = document.getElementById('session-about-input') as HTMLTextAreaElement | null;
   const noteInput = document.getElementById('session-note-input') as HTMLTextAreaElement | null;
@@ -1704,26 +1909,23 @@ async function checkPermission() {
       note.className = 'perm-note ok';
       return;
     }
+    const executable = diagnostics.executable_path ?? '';
+    const isDevRuntime = executable.includes('/target/debug/') || executable.endsWith('/feedbackagent-desktop');
     note.innerHTML = `
-      <strong>One-time setup needed</strong>
-      <span>System Settings just opened — find <strong>Debugr</strong> in the Screen Recording list and toggle it <strong>on</strong>, then come back. No relaunch needed.</span>
-      <button type="button" class="perm-note-action" id="open-screen-settings-btn">Re-open Screen Recording settings</button>
+      <strong>Screen capture blocked</strong>
+      <span>Debugr still cannot capture screenshots in this runtime.</span>
+      ${isDevRuntime ? '<span><strong>Why two apps appear:</strong> you are running the dev binary <code>feedbackagent-desktop</code> and the bundled app <code>debugr.ai.app</code>. macOS tracks those separately for Screen Recording.</span>' : ''}
+      <span><strong>ID:</strong> ${escapeHtml(diagnostics.bundle_identifier)}<br /><strong>Binary:</strong> ${escapeHtml(diagnostics.executable_path)}</span>
+      <button type="button" class="perm-note-action" id="open-screen-settings-btn">Open Screen Recording settings</button>
+      <button type="button" class="perm-note-action" id="reveal-runtime-btn">Reveal current runtime in Finder</button>
     `;
     note.className = 'perm-note warn';
-    // Open System Settings automatically — user just needs to flip the toggle
-    await invoke('open_screen_capture_settings').catch(() => {});
-    // Poll every 2 s until the user flips the toggle
-    let attempts = 0;
-    const poll = setInterval(async () => {
-      attempts++;
-      const result = await invoke<{ granted: boolean }>('get_screen_capture_diagnostics').catch(() => null);
-      if (result?.granted || attempts >= 15) {
-        clearInterval(poll);
-        if (result?.granted) void checkPermission();
-      }
-    }, 2000);
     document.getElementById('open-screen-settings-btn')?.addEventListener('click', async () => {
+      await invoke('request_screen_capture_permission').catch(() => false);
       await invoke('open_screen_capture_settings').catch(() => {});
+    });
+    document.getElementById('reveal-runtime-btn')?.addEventListener('click', () => {
+      void invoke('reveal_in_finder', { path: diagnostics.executable_path }).catch(() => {});
     });
     return;
   } catch {
@@ -2122,19 +2324,12 @@ async function listenForAnnotations() {
       await enterSessionMode('notes');
     }
     await checkPermission();
-    const shouldOpenSettings = window.confirm(
-      'Debugr needs macOS Screen & System Audio Recording permission before it can start annotating.\n\nOpen System Settings to the Screen Recording panel now?',
-    );
-    if (shouldOpenSettings) {
-      await invoke('request_screen_capture_permission').catch(() => {});
-      await invoke('open_screen_capture_settings').catch(() => {});
-    }
   });
 
   await listen<string>('screen-capture-failed', async () => {
     await checkPermission();
     window.alert(
-      'Debugr could not capture your screen. Click "Open Screen Recording settings" in the panel on the left, enable Debugr, then try again — no relaunch needed.',
+      'Debugr could not capture your screen. Use the permission card on the left to inspect which runtime is blocked, then try a new capture again.',
     );
   });
 }
@@ -2166,6 +2361,7 @@ function isTransientConnectionError(message: string) {
   const text = message.toLowerCase();
   return text.includes('network check failed')
     || text.includes('unexpected response')
+    || text.includes('could not re-verify')
     || text.includes('timed out')
     || text.includes('connection');
 }
@@ -2209,7 +2405,7 @@ async function revalidateStoredProviderConnections() {
       changed = true;
       notices.push('Claude disconnected: saved auth is no longer valid.');
     } else if (!result.ok && result.error) {
-      notices.push(`Claude verification skipped: ${result.error}`);
+      notices.push(`Claude re-check skipped for now: ${result.error}`);
     }
   }
 
@@ -2221,7 +2417,7 @@ async function revalidateStoredProviderConnections() {
       changed = true;
       notices.push('Codex disconnected: saved API key is no longer valid.');
     } else if (!result.ok && result.error) {
-      notices.push(`Codex verification skipped: ${result.error}`);
+      notices.push(`Codex re-check skipped for now: ${result.error}`);
     }
   }
 
