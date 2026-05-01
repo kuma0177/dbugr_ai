@@ -48,6 +48,33 @@ fn get_screen_capture_permission() -> bool {
     (unsafe { CGPreflightScreenCaptureAccess() }) || can_capture_screen_now()
 }
 
+#[derive(serde::Serialize)]
+struct ScreenCaptureDiagnostics {
+    preflight: bool,
+    probe: bool,
+    granted: bool,
+    bundle_identifier: String,
+    executable_path: String,
+}
+
+#[tauri::command]
+fn get_screen_capture_diagnostics(app: AppHandle) -> ScreenCaptureDiagnostics {
+    let preflight = unsafe { CGPreflightScreenCaptureAccess() };
+    let probe = can_capture_screen_now();
+    let bundle_identifier = app.config().identifier.clone();
+    let executable_path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.into_os_string().into_string().ok())
+        .unwrap_or_else(|| "unknown".to_string());
+    ScreenCaptureDiagnostics {
+        preflight,
+        probe,
+        granted: preflight || probe,
+        bundle_identifier,
+        executable_path,
+    }
+}
+
 #[tauri::command]
 fn request_screen_capture_permission() -> bool {
     let _ = unsafe { CGRequestScreenCaptureAccess() };
@@ -334,6 +361,21 @@ fn take_silent_screenshot() -> Result<String, String> {
         .success();
     if !ok || !path.exists() {
         return Err("Screenshot failed".into());
+    }
+    encode_image_at(&path)
+}
+
+/// Interactive fallback capture when silent capture fails.
+fn take_interactive_fallback_screenshot() -> Result<String, String> {
+    let path = temp_capture_path();
+    let ok = Command::new("screencapture")
+        .args(["-i", "-x", "-t", "png"])
+        .arg(&path)
+        .status()
+        .map_err(|e| format!("interactive screencapture failed: {e}"))?
+        .success();
+    if !ok || !path.exists() {
+        return Err("Interactive screenshot cancelled or failed".into());
     }
     encode_image_at(&path)
 }
@@ -649,7 +691,7 @@ fn trigger_overlay(app: &AppHandle) {
         // Small delay so the Debugr window has time to hide if needed
         std::thread::sleep(std::time::Duration::from_millis(80));
 
-        let screenshot = take_silent_screenshot();
+        let screenshot = take_silent_screenshot().or_else(|_| take_interactive_fallback_screenshot());
 
         if let Some(overlay) = app.get_webview_window("overlay") {
             // Send screenshot (or empty string on failure) to overlay frontend
@@ -752,6 +794,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_screen_capture_permission,
+            get_screen_capture_diagnostics,
             request_screen_capture_permission,
             open_screen_capture_settings,
             capture_interactive_screenshot,

@@ -1488,7 +1488,14 @@ async function checkPermission() {
   const note = document.getElementById('perm-note');
   if (!note) return;
   try {
-    const granted = await invoke<boolean>('get_screen_capture_permission');
+    const diagnostics = await invoke<{
+      preflight: boolean;
+      probe: boolean;
+      granted: boolean;
+      bundle_identifier: string;
+      executable_path: string;
+    }>('get_screen_capture_diagnostics');
+    const granted = diagnostics.granted;
     if (granted) {
       note.innerHTML = `
         <strong>Screen capture ready</strong>
@@ -1499,7 +1506,8 @@ async function checkPermission() {
     }
     note.innerHTML = `
       <strong>Screen capture blocked</strong>
-      <span>Debugr still needs macOS Screen &amp; System Audio Recording access. Open the Screen Recording panel, enable Debugr, then quit and reopen the app if macOS asks.</span>
+      <span>Debugr still cannot capture in this runtime. In Screen &amp; System Audio Recording, enable the exact app identity below, then relaunch Debugr.</span>
+      <span><strong>ID:</strong> ${escapeHtml(diagnostics.bundle_identifier)}<br /><strong>Binary:</strong> ${escapeHtml(diagnostics.executable_path)}</span>
       <button type="button" class="perm-note-action" id="open-screen-settings-btn">Open Screen Recording settings</button>
     `;
     note.className = 'perm-note warn';
@@ -1857,7 +1865,7 @@ async function listenForAnnotations() {
   await listen<string>('screen-capture-failed', async () => {
     await checkPermission();
     window.alert(
-      'Debugr could not capture your screen in this run. Please click "Open Screen Recording settings", then ensure the active Debugr app entry is enabled. If it is already enabled, toggle it off/on and relaunch Debugr once.',
+      'Debugr could not capture your screen in this run. We attempted both silent and interactive capture and both failed. Click "Open Screen Recording settings", enable the exact Debugr runtime shown in the card, and relaunch once.',
     );
   });
 }
