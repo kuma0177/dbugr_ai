@@ -1065,10 +1065,15 @@ function renderSessionList() {
       });
       row.querySelector<HTMLButtonElement>('[data-delete-session]')?.addEventListener('click', (event) => {
         event.stopPropagation();
-        const ok = window.confirm(`Delete session "${session.title}" and all of its captures?`);
-        if (!ok) return;
-        deleteSession(session.id);
-        renderSession();
+        const btn = event.currentTarget as HTMLButtonElement;
+        if (btn.dataset.confirming) {
+          deleteSession(session.id);
+          renderSession();
+        } else {
+          btn.dataset.confirming = '1';
+          btn.textContent = 'Sure?';
+          setTimeout(() => { if (btn.dataset.confirming) { delete btn.dataset.confirming; btn.textContent = 'Delete'; } }, 2500);
+        }
       });
       list.appendChild(row);
     });
@@ -1118,10 +1123,15 @@ function renderCaptureList(session: Session) {
     });
     card.querySelector<HTMLButtonElement>('[data-delete-capture]')?.addEventListener('click', (event) => {
       event.stopPropagation();
-      const ok = window.confirm('Delete this capture and its annotations from the session?');
-      if (!ok) return;
-      deleteCaptureFromSession(session, capture.id);
-      renderSession();
+      const btn = event.currentTarget as HTMLButtonElement;
+      if (btn.dataset.confirming) {
+        deleteCaptureFromSession(session, capture.id);
+        renderSession();
+      } else {
+        btn.dataset.confirming = '1';
+        btn.textContent = 'Sure?';
+        setTimeout(() => { if (btn.dataset.confirming) { delete btn.dataset.confirming; btn.textContent = 'Delete'; } }, 2500);
+      }
     });
     card.querySelector<HTMLButtonElement>('[data-open-capture-preview]')?.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -1237,10 +1247,14 @@ function renderCapturePayload(session: Session) {
       event.stopPropagation();
       const annotationId = button.getAttribute('data-delete-annotation');
       if (!annotationId) return;
-      const ok = window.confirm('Delete this annotation from the session?');
-      if (!ok) return;
-      deleteAnnotationFromCapture(session, capture.id, annotationId);
-      renderSession();
+      if (button.dataset.confirming) {
+        deleteAnnotationFromCapture(session, capture.id, annotationId);
+        renderSession();
+      } else {
+        button.dataset.confirming = '1';
+        button.textContent = 'Sure?';
+        setTimeout(() => { if (button.dataset.confirming) { delete button.dataset.confirming; button.textContent = 'Delete'; } }, 2500);
+      }
     });
   });
 
@@ -1772,12 +1786,17 @@ function bindSessionActions() {
     persistAppState();
     renderSession();
   });
-  document.getElementById('delete-session-btn')?.addEventListener('click', () => {
+  document.getElementById('delete-session-btn')?.addEventListener('click', (event) => {
     logUi('workspace_delete_session_click', { sessionId: session.id });
-    const ok = window.confirm(`Delete session "${session.title}" and all of its captures?`);
-    if (!ok) return;
-    deleteSession(session.id);
-    renderSession();
+    const btn = event.currentTarget as HTMLButtonElement;
+    if (btn.dataset.confirming) {
+      deleteSession(session.id);
+      renderSession();
+    } else {
+      btn.dataset.confirming = '1';
+      btn.textContent = 'Sure?';
+      setTimeout(() => { if (btn.dataset.confirming) { delete btn.dataset.confirming; btn.textContent = 'Delete session'; } }, 2500);
+    }
   });
   const titleInput = document.getElementById('session-title-input') as HTMLInputElement | null;
   const aboutInput = document.getElementById('session-about-input') as HTMLTextAreaElement | null;
