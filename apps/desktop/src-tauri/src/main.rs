@@ -850,55 +850,57 @@ fn show_overlay_window(app: &AppHandle) {
     if let Some(overlay) = app.get_webview_window("overlay") {
         log_backend("overlay.window.found", "label=overlay");
 
-        let monitor = overlay
+        // Compute bounds on this thread (read-only monitor queries are safe anywhere).
+        let bounds = overlay
             .current_monitor()
             .ok()
             .flatten()
-            .or_else(|| overlay.primary_monitor().ok().flatten());
-
-        if let Some(mon) = monitor {
-            let phys = mon.size();
-            let pos = mon.position();
-            let scale = mon.scale_factor();
-            let lw = (phys.width as f64 / scale).round() as u32;
-            let lh = (phys.height as f64 / scale).round() as u32;
-            let lx = (pos.x as f64 / scale).round();
-            let ly = (pos.y as f64 / scale).round();
-            log_backend(
-                "overlay.window.bounds",
-                format!("logical_w={lw} logical_h={lh} x={lx} y={ly} scale={scale}"),
-            );
-            let _ = overlay.set_size(tauri::LogicalSize::new(lw, lh));
-            let _ = overlay.set_position(tauri::LogicalPosition::new(lx, ly));
-        }
+            .or_else(|| overlay.primary_monitor().ok().flatten())
+            .map(|mon| {
+                let phys  = mon.size();
+                let pos   = mon.position();
+                let scale = mon.scale_factor();
+                let lw = (phys.width  as f64 / scale).round() as u32;
+                let lh = (phys.height as f64 / scale).round() as u32;
+                let lx = (pos.x as f64 / scale).round();
+                let ly = (pos.y as f64 / scale).round();
+                log_backend("overlay.window.bounds",
+                    format!("logical_w={lw} logical_h={lh} x={lx} y={ly} scale={scale}"));
+                (lw, lh, lx, ly)
+            });
 
         let _ = overlay.emit("overlay-will-show", ());
 
-        // Use orderFrontRegardless instead of show() / makeKeyAndOrderFront.
-        // makeKeyAndOrderFront (what Tauri's show() calls) steals app activation
-        // even without an explicit macos_activate() call, which causes macOS to
-        // route mouse events to feedbackagent first and breaks dock/Cmd+Tab.
-        // orderFrontRegardless makes the window visible and on top within its
-        // level WITHOUT changing the active application, so the dock (level 20)
-        // stays above the overlay (NSFloatingWindowLevel = 3) and remains usable.
-        #[cfg(target_os = "macos")]
-        {
-            use objc::runtime::Object;
-            use objc::{msg_send, sel, sel_impl};
-            if let Ok(ptr) = overlay.ns_window() {
-                unsafe {
-                    let ns_window = ptr as *mut Object;
-                    let _: () = msg_send![ns_window, orderFrontRegardless];
-                }
-            } else {
-                // Fallback in case ns_window() fails
-                let _ = overlay.show();
+        // ALL AppKit window operations must run on the main thread.
+        // We previously called orderFrontRegardless directly from the background
+        // screenshot thread, which triggered NSWMWindowCoordinator's
+        // "Must only be used from the main thread" assertion and crashed.
+        // run_on_main_thread dispatches the block to the Cocoa main queue.
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let Some(ov) = app2.get_webview_window("overlay") else { return };
+            if let Some((lw, lh, lx, ly)) = bounds {
+                let _ = ov.set_size(tauri::LogicalSize::new(lw, lh));
+                let _ = ov.set_position(tauri::LogicalPosition::new(lx, ly));
             }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = overlay.show();
-        }
+            // orderFrontRegardless shows the window without activating the app,
+            // so the dock (level 20) stays above the overlay (level 3) and usable.
+            #[cfg(target_os = "macos")]
+            {
+                use objc::runtime::Object;
+                use objc::{msg_send, sel, sel_impl};
+                if let Ok(ptr) = ov.ns_window() {
+                    unsafe {
+                        let ns_window = ptr as *mut Object;
+                        let _: () = msg_send![ns_window, orderFrontRegardless];
+                    }
+                } else {
+                    let _ = ov.show();
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            { let _ = ov.show(); }
+        });
     }
 }
 
