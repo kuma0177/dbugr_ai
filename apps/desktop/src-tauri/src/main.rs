@@ -170,6 +170,38 @@ fn capture_interactive_screenshot(app: AppHandle) -> Result<String, String> {
 
 // ── Window management commands ────────────────────────────────────────────────
 
+/// Relay annotation data from the overlay window to the main window via the
+/// Rust backend (avoids frontend emit_to permission restrictions in Tauri v2).
+#[tauri::command]
+fn finish_annotations(
+    app: AppHandle,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    // Emit event to main window
+    if let Some(main) = app.get_webview_window("main") {
+        main.emit("annotations-saved", &payload)
+            .map_err(|e| format!("Failed to emit annotations-saved: {e}"))?;
+    } else {
+        return Err("Main window not found".into());
+    }
+
+    // Small delay to let the main window process the event
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    // Hide overlay first
+    if let Some(overlay) = app.get_webview_window("overlay") {
+        let _ = overlay.hide();
+    }
+
+    // Show and focus main window
+    if let Some(main) = app.get_webview_window("main") {
+        main.show().map_err(|e| format!("Failed to show main window: {e}"))?;
+        main.set_focus().map_err(|e| format!("Failed to focus main window: {e}"))?;
+    }
+
+    Ok(())
+}
+
 /// Called from frontend (tray Sessions menu or "New Annotation" button).
 #[tauri::command]
 fn show_overlay(app: AppHandle) -> Result<(), String> {
@@ -400,6 +432,7 @@ fn main() {
             open_screen_capture_settings,
             capture_interactive_screenshot,
             open_command_in_terminal,
+            finish_annotations,
             show_overlay,
             hide_overlay,
             show_session_window,
