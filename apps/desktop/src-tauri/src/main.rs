@@ -66,6 +66,47 @@ fn escape_applescript_text(value: &str) -> String {
     value.replace('\\', r"\\").replace('"', r#"\""#)
 }
 
+/// Open any URL in the user's default browser.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    Command::new("open")
+        .arg(&url)
+        .status()
+        .map_err(|e| format!("Failed to open URL: {e}"))?;
+    Ok(())
+}
+
+/// Persist provider connection config (codex API key, claude connected flag)
+/// to ~/Library/Application Support/debugr/provider-config.json.
+#[tauri::command]
+fn save_provider_config(payload: serde_json::Value) -> Result<(), String> {
+    let dir = dirs_next::data_dir()
+        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()))
+        .join("debugr");
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create config dir: {e}"))?;
+    let path = dir.join("provider-config.json");
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("Serialization failed: {e}"))?;
+    let mut file = fs::File::create(&path)
+        .map_err(|e| format!("Failed to create provider config: {e}"))?;
+    file.write_all(json.as_bytes())
+        .map_err(|e| format!("Failed to write provider config: {e}"))?;
+    Ok(())
+}
+
+/// Read provider connection config from disk.
+#[tauri::command]
+fn get_provider_config() -> serde_json::Value {
+    let path = dirs_next::data_dir()
+        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()))
+        .join("debugr")
+        .join("provider-config.json");
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
 #[tauri::command]
 fn open_command_in_terminal(cwd: String, command: String, title: Option<String>) -> Result<(), String> {
     let shell_command = format!("cd '{}' && {}", cwd.replace('\'', r"'\''"), command);
@@ -533,6 +574,9 @@ fn main() {
             copy_to_clipboard,
             save_sessions_to_disk,
             save_screenshot,
+            open_url,
+            save_provider_config,
+            get_provider_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running debugr.ai");

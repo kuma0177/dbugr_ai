@@ -87,6 +87,12 @@ let contextToggles = { consoleLogs: true, networkLogs: true, environmentInfo: tr
 let lastSavedCapture: { sessionTitle: string; annotationCount: number } | null = null;
 /** Inline validation when Send is blocked (e.g. missing session note). */
 let submitGateError = '';
+/** Stored Codex API key (loaded from disk on startup). */
+let codexApiKey = '';
+/** Whether the user has completed Claude login (stored on disk). */
+let claudeConnected = false;
+/** true while connect-claude terminal is open and we're waiting for confirmation */
+let claudeConnecting = false;
 let authState: AuthState = {
   authenticated: false,
   profileInitialized: false,
@@ -1001,6 +1007,55 @@ function renderWorkspacePanel() {
 
   if (workspaceSection === 'submit') {
     const annCount = totalAnnotations(session);
+    const isClaudeReady = claudeConnected;
+    const isCodexReady = codexApiKey.length > 0;
+    const isReady = target === 'claude' ? isClaudeReady : target === 'codex' ? isCodexReady : true;
+
+    // ── Connect card for Claude ─────────────────────────────────────────────
+    const claudeConnectCard = isClaudeReady ? '' : `
+      <div class="connect-card">
+        <div class="connect-card-icon">🔵</div>
+        <div class="connect-card-title">Connect Claude</div>
+        <div class="connect-card-body">
+          Log in to your Claude account to send sessions directly from Debugr.
+          Takes about 30 seconds — no technical setup required.
+        </div>
+        ${claudeConnecting ? `
+          <div class="connect-waiting">
+            <div class="connect-spinner"></div>
+            Waiting for login…
+          </div>
+          <button class="connect-done-btn" id="claude-done-btn">✓ I've logged in</button>
+        ` : `
+          <button class="connect-primary-btn" id="connect-claude-btn">Connect Claude Account →</button>
+        `}
+      </div>
+    `;
+
+    // ── Connect card for Codex ──────────────────────────────────────────────
+    const codexConnectCard = isCodexReady ? '' : `
+      <div class="connect-card">
+        <div class="connect-card-icon">🟢</div>
+        <div class="connect-card-title">Connect Codex</div>
+        <div class="connect-card-body">
+          Paste your OpenAI API key below. You can get one for free at
+          <button class="connect-link-btn" id="open-openai-btn">platform.openai.com</button>
+        </div>
+        <div class="connect-key-row">
+          <input
+            class="connect-key-input"
+            id="codex-key-input"
+            type="password"
+            placeholder="sk-…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button class="connect-save-btn" id="save-codex-key-btn">Save &amp; Connect</button>
+        </div>
+        <div class="connect-key-hint">Your key is stored locally on this Mac only.</div>
+      </div>
+    `;
+
     panel.innerHTML = `
       <div class="right-panel-head">
         <div class="right-panel-title">Send session</div>
@@ -1009,51 +1064,113 @@ function renderWorkspacePanel() {
       <div class="right-panel-body stacked-panel">
         ${submitGateError ? `<div class="submit-gate-error" role="alert">${escapeHtml(submitGateError)}</div>` : ''}
 
-        <div class="save-banner">✓ Session saved locally and ready to share</div>
-
         <div class="field-label">SEND TO</div>
         <div class="target-grid">
-          ${(['claude', 'codex'] as Target[]).map((provider) => `
-            <button class="target-card ${target === provider ? 'active' : ''}" data-target="${provider}">
-              <strong>${providerLabel(provider)}</strong>
-              <span>${target === provider ? 'Selected — click again to send' : providerSubtitle(provider)}</span>
-            </button>
-          `).join('')}
+          ${(['claude', 'codex'] as Target[]).map((provider) => {
+            const connected = provider === 'claude' ? isClaudeReady : isCodexReady;
+            return `
+              <button class="target-card ${target === provider ? 'active' : ''}" data-target="${provider}">
+                <strong>${providerLabel(provider)}</strong>
+                <span class="target-status ${connected ? 'connected' : 'not-connected'}">
+                  ${connected ? '● Connected' : '○ Not connected'}
+                </span>
+              </button>
+            `;
+          }).join('')}
         </div>
 
-        <button class="send-btn" id="send-btn" ${isSending ? 'disabled' : ''}>
-          ${isSending ? 'Opening…' : `Send to ${providerLabel(target)} ⌘↵`}
-        </button>
-
-        <div class="send-tip">Tip: set a working directory so the agent can navigate your code.</div>
-        ${session.projectFolder
-          ? `<div class="context-folder">📁 ${session.projectFolder}</div>`
-          : `<button class="link-btn" id="add-folder-btn">+ Add project folder</button>`}
+        ${isReady ? `
+          <div class="save-banner">✓ Connected and ready to send</div>
+          <button class="send-btn" id="send-btn" ${isSending ? 'disabled' : ''}>
+            ${isSending ? 'Opening…' : `Send to ${providerLabel(target)} ⌘↵`}
+          </button>
+          <div class="send-tip">Tip: set a project folder so the agent can navigate your code.</div>
+          ${session.projectFolder
+            ? `<div class="context-folder">📁 ${escapeHtml(session.projectFolder)}</div>`
+            : `<button class="link-btn" id="add-folder-btn">+ Add project folder</button>`}
+          ${target === 'claude' ? `<button class="disconnect-btn" id="disconnect-claude-btn">Disconnect Claude</button>` : ''}
+          ${target === 'codex' ? `<button class="disconnect-btn" id="disconnect-codex-btn">Disconnect Codex</button>` : ''}
+        ` : (target === 'claude' ? claudeConnectCard : codexConnectCard)}
       </div>
     `;
+
+    // Provider selection
     document.querySelectorAll<HTMLButtonElement>('[data-target]').forEach((button) => {
       button.addEventListener('click', () => {
         const newTarget = button.dataset.target as Target | undefined;
         if (!newTarget) return;
-        if (newTarget === target) {
-          // Second click = send
-          void sendSession();
-          return;
-        }
         target = newTarget;
+        claudeConnecting = false;
         persistAppState();
         renderSession();
       });
     });
+
+    // Send
     document.getElementById('send-btn')?.addEventListener('click', () => void sendSession());
+
+    // Add folder
     document.getElementById('add-folder-btn')?.addEventListener('click', async () => {
       const folder = await invoke<string | null>('pick_folder');
-      if (folder) {
-        session.projectFolder = folder;
-        persistAppState();
-        renderSession();
-      }
+      if (folder) { session.projectFolder = folder; persistAppState(); renderSession(); }
     });
+
+    // ── Claude connect ──────────────────────────────────────────────────────
+    document.getElementById('connect-claude-btn')?.addEventListener('click', async () => {
+      claudeConnecting = true;
+      renderSession();
+      // Open a friendly terminal that handles the login — no commands visible
+      const script = [
+        `echo "=== Connecting Debugr to Claude ==="`,
+        `echo ""`,
+        `echo "A browser window will open for you to log in."`,
+        `echo "Once you see 'Logged in' in the browser, come back here."`,
+        `echo ""`,
+        `claude /login`,
+      ].join(' && ');
+      await invoke('open_command_in_terminal', {
+        cwd: process.env['HOME'] || '~',
+        command: script,
+        title: 'Connect Debugr to Claude',
+      }).catch(() => {});
+    });
+
+    document.getElementById('claude-done-btn')?.addEventListener('click', async () => {
+      claudeConnected = true;
+      claudeConnecting = false;
+      await saveProviderConfig();
+      renderSession();
+    });
+
+    // ── Codex connect ───────────────────────────────────────────────────────
+    document.getElementById('open-openai-btn')?.addEventListener('click', () => {
+      void invoke('open_url', { url: 'https://platform.openai.com/api-keys' });
+    });
+
+    document.getElementById('save-codex-key-btn')?.addEventListener('click', async () => {
+      const input = document.getElementById('codex-key-input') as HTMLInputElement | null;
+      const key = input?.value.trim() ?? '';
+      if (!key.startsWith('sk-') || key.length < 20) {
+        if (input) { input.classList.add('input-error'); input.placeholder = 'Must start with sk-…'; }
+        return;
+      }
+      codexApiKey = key;
+      await saveProviderConfig();
+      renderSession();
+    });
+
+    // ── Disconnect ──────────────────────────────────────────────────────────
+    document.getElementById('disconnect-claude-btn')?.addEventListener('click', async () => {
+      claudeConnected = false;
+      await saveProviderConfig();
+      renderSession();
+    });
+    document.getElementById('disconnect-codex-btn')?.addEventListener('click', async () => {
+      codexApiKey = '';
+      await saveProviderConfig();
+      renderSession();
+    });
+
     return;
   }
 
@@ -1369,8 +1486,8 @@ async function pushPendingSessions() {
   } catch (err) {
     console.error('[Debugr] pushPendingSessions failed:', err);
     const hint = target === 'codex'
-      ? 'Set OPENAI_API_KEY or install: npm i -g @openai/codex'
-      : 'Run: claude /login  or install: npm i -g @anthropic-ai/claude-code';
+      ? 'Go to Submit tab → Connect Codex to enter your API key'
+      : 'Go to Submit tab → Connect Claude to log in';
     if (btn) {
       btn.title = hint;
       btn.textContent = `CLI error — see terminal`;
@@ -1417,11 +1534,12 @@ async function saveScreenshots(capturesToSave: Array<{ id: string; screenshotUrl
 /** Build the shell command string for launching the AI CLI with auth guidance. */
 function buildCliCommand(cliName: 'claude' | 'codex', prompt: string): string {
   const escaped = prompt.replace(/'/g, "'\\''");
-  // Claude: needs /login  |  Codex: needs OPENAI_API_KEY env var
-  const authHint = cliName === 'claude'
-    ? `echo "💡 Auth error? Run: claude /login" && echo "" && `
-    : `echo "💡 Auth error? Set your key: export OPENAI_API_KEY=sk-..." && echo "" && `;
-  return `${authHint}${cliName} '${escaped}'`;
+  if (cliName === 'codex' && codexApiKey) {
+    // Prepend the stored API key so the user never has to touch env vars
+    const escapedKey = codexApiKey.replace(/'/g, "'\\''");
+    return `OPENAI_API_KEY='${escapedKey}' codex '${escaped}'`;
+  }
+  return `${cliName} '${escaped}'`;
 }
 
 async function sendSession() {
@@ -1470,12 +1588,12 @@ async function sendSession() {
       summary: `Failed to open ${providerLabel(target)}: ${err instanceof Error ? err.message : String(err)}. Make sure the CLI is installed and on your PATH.`,
       nextSteps: [
         target === 'codex'
-          ? 'Install: npm install -g @openai/codex'
-          : 'Install: npm install -g @anthropic-ai/claude-code',
+          ? 'Make sure Codex CLI is installed on this Mac'
+          : 'Make sure Claude CLI is installed on this Mac',
         target === 'codex'
-          ? 'Set API key: export OPENAI_API_KEY=sk-...  (get one at platform.openai.com/api-keys)'
-          : 'Log in: claude /login',
-        'Re-open Debugr and send again',
+          ? 'Go to the Submit tab → Connect Codex to enter your API key'
+          : 'Go to the Submit tab → Connect Claude to log in',
+        'Try sending again after reconnecting',
       ],
     };
   }
@@ -1575,8 +1693,32 @@ async function listenForAnnotations() {
   });
 }
 
+async function loadProviderConfig() {
+  try {
+    const cfg = await invoke<Record<string, unknown>>('get_provider_config');
+    if (typeof cfg.codex_api_key === 'string' && cfg.codex_api_key) {
+      codexApiKey = cfg.codex_api_key;
+    }
+    if (cfg.claude_connected === true) {
+      claudeConnected = true;
+    }
+  } catch {
+    // config doesn't exist yet — first run
+  }
+}
+
+async function saveProviderConfig() {
+  await invoke('save_provider_config', {
+    payload: {
+      codex_api_key: codexApiKey,
+      claude_connected: claudeConnected,
+    },
+  }).catch(() => {});
+}
+
 async function init() {
   hydrateAppState();
+  await loadProviderConfig();
   render();
   await listenForAnnotations();
   void loadSessionsFromApi();
