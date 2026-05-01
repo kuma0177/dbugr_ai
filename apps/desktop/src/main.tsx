@@ -877,12 +877,7 @@ function renderSession() {
     <div class="app-shell visible">
       <div class="topbar">
         <div class="topbar-left">
-          <div class="traffic-lights">
-            <div class="traffic-light red"></div>
-            <div class="traffic-light yellow"></div>
-            <div class="traffic-light green"></div>
-          </div>
-          <button class="topbar-back-link" id="back-home-btn">← Back to home</button>
+<button class="topbar-back-link" id="back-home-btn">← Back to home</button>
         </div>
         <div class="topbar-title">
           <img class="topbar-brand-icon" src="${brandIconUrl}" alt="" />
