@@ -1609,49 +1609,59 @@ function bindSessionActions() {
     persistAppState();
   });
 
-  const workspaceScroll = document.querySelector('.workspace-scroll');
-  workspaceScroll?.addEventListener('click', async (event) => {
-    const targetEl = event.target as HTMLElement | null;
-    if (!targetEl) return;
-
-    const folderChip = targetEl.closest('#session-folder-chip');
-    if (folderChip) {
+  const folderChip = document.getElementById('session-folder-chip');
+  if (!folderChip) {
+    logUi('workspace_folder_chip_missing', { sessionId: session.id });
+  } else {
+    folderChip.addEventListener('click', async (event) => {
       event.preventDefault();
       logUi('workspace_folder_chip_click', { sessionId: session.id, hasFolder: Boolean(session.projectFolder?.trim()) });
-      if (session.projectFolder?.trim()) {
-        const clear = window.confirm('Clear linked local folder?');
-        if (!clear) return;
-        session.projectFolder = null;
-        logUi('workspace_folder_chip_cleared', { sessionId: session.id });
-        if (folderInput) folderInput.value = '';
-        syncRepoContextChips(session);
-        persistAppState();
-        return;
+      let picked: string | null = null;
+      try {
+        picked = await invoke<string | null>('pick_folder', {
+          defaultPath: session.projectFolder?.trim() || null,
+        });
+      } catch (error) {
+        logUi('workspace_folder_picker_failed', {
+          sessionId: session.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
-      const picked = await invoke<string | null>('pick_folder').catch(() => null);
       logUi('workspace_folder_picker_result', { sessionId: session.id, picked: picked ?? null });
       if (!picked) return;
       session.projectFolder = picked;
       if (folderInput) folderInput.value = picked;
       syncRepoContextChips(session);
       persistAppState();
-      return;
-    }
+    });
+  }
 
-    const repoChip = targetEl.closest('#session-repo-chip');
-    if (repoChip) {
-      event.preventDefault();
-      logUi('workspace_repo_chip_click', { sessionId: session.id, existingRepo: repoInput?.value ?? '' });
-      if (!repoInput) return;
-      if (!repoInput.value.trim()) {
-        repoInput.value = 'owner/repo';
-        session.githubRepo = 'owner/repo';
-        syncRepoContextChips(session);
-        persistAppState();
-      }
+  const repoChip = document.getElementById('session-repo-chip');
+  if (!repoChip) {
+    logUi('workspace_repo_chip_missing', { sessionId: session.id });
+    return;
+  }
+  repoChip.addEventListener('click', (event) => {
+    event.preventDefault();
+    logUi('workspace_repo_chip_click', { sessionId: session.id, existingRepo: repoInput?.value ?? '' });
+    if (!repoInput) return;
+    if (!repoInput.value.trim()) {
+      repoInput.value = 'owner/repo';
+      session.githubRepo = 'owner/repo';
+      syncRepoContextChips(session);
+      persistAppState();
       repoInput.focus();
       repoInput.select();
+      return;
     }
+    const normalized = normalizeGithubRepoInput(repoInput.value);
+    const targetUrl = /^https?:\/\//i.test(normalized) ? normalized : `https://github.com/${normalized}`;
+    void invoke('open_url', { url: targetUrl }).catch((error) => {
+      logUi('workspace_repo_chip_open_failed', {
+        sessionId: session.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   });
 }
 

@@ -350,24 +350,47 @@ end tell"#,
 /// Shows a native macOS folder-picker via AppleScript.
 /// Returns the POSIX path of the chosen folder, or null if cancelled.
 #[tauri::command]
-fn pick_folder() -> Option<String> {
-    let out = Command::new("osascript")
-        .arg("-e")
-        .arg(r#"POSIX path of (choose folder with prompt "Select your project folder:")"#)
-        .output()
-        .ok()?;
-    if out.status.success() {
-        let path = String::from_utf8(out.stdout).ok()?.trim().to_string();
-        let picked = if path.is_empty() { None } else { Some(path) };
-        log_backend(
-            "workspace.folder_picker.result",
-            format!("picked={}", picked.as_deref().unwrap_or("null")),
-        );
-        picked
+fn pick_folder(default_path: Option<String>) -> Option<String> {
+    let escaped_default = default_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(escape_applescript_text);
+    let script_with_default = escaped_default.as_deref().map(|path| {
+        format!(
+            r#"POSIX path of (choose folder with prompt "Select your project folder:" default location (POSIX file "{}"))"#,
+            path
+        )
+    });
+
+    let out = if let Some(script) = script_with_default {
+        Command::new("osascript").arg("-e").arg(script).output()
     } else {
-        log_backend("workspace.folder_picker.cancelled", "status=non_zero");
-        None
+        Command::new("osascript")
+            .arg("-e")
+            .arg(r#"POSIX path of (choose folder with prompt "Select your project folder:")"#)
+            .output()
     }
+    .ok()?;
+
+    if !out.status.success() {
+        log_backend(
+            "workspace.folder_picker.cancelled_or_failed",
+            format!("status={}", out.status),
+        );
+        return None;
+    }
+    let path = String::from_utf8(out.stdout).ok()?.trim().to_string();
+    let picked = if path.is_empty() { None } else { Some(path) };
+    log_backend(
+        "workspace.folder_picker.result",
+        format!(
+            "default_path={} picked={}",
+            default_path.as_deref().unwrap_or(""),
+            picked.as_deref().unwrap_or("null")
+        ),
+    );
+    picked
 }
 
 // ── Screenshot helpers ────────────────────────────────────────────────────────
