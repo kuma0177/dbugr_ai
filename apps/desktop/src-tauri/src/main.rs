@@ -644,7 +644,12 @@ fn show_overlay(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn hide_overlay(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("overlay") {
-        win.hide().map_err(|e| e.to_string())?;
+        let _ = win.hide();
+    }
+    // Restore main window when overlay is cancelled.
+    if let Some(main) = app.get_webview_window("main") {
+        main.show().map_err(|e| e.to_string())?;
+        let _ = main.set_focus();
     }
     Ok(())
 }
@@ -904,13 +909,19 @@ fn trigger_overlay(app: &AppHandle) {
         }
     }
 
+    // Hide main window before capturing so it never appears in the screenshot
+    // and doesn't block the user from selecting regions on the target app.
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.hide();
+    }
+
     // Capture the screen before showing the overlay so session-picker chrome
     // never ends up inside the saved image.
     let app = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(60));
+        std::thread::sleep(std::time::Duration::from_millis(200));
 
-        log_backend("overlay.capture.thread_start", "delay_ms=60");
+        log_backend("overlay.capture.thread_start", "delay_ms=200");
         let screenshot = take_silent_screenshot().or_else(|e| {
             log_backend("overlay.capture.silent_failed", e);
             take_interactive_fallback_screenshot()
