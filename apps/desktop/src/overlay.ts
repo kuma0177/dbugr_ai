@@ -70,6 +70,7 @@ root.innerHTML = `
   <div class="step-card" id="step-picker">
     <div class="step-card-title">Where should this go?</div>
     <div class="step-card-sub">Choose an existing session or start a new one.</div>
+    <div class="picker-hint">Click a session row to continue. Scroll for more.</div>
     <div class="picker-list" id="picker-list">
       <div class="picker-loading">Loading sessions…</div>
     </div>
@@ -204,6 +205,7 @@ function showStep(s: OverlayStep) {
   stepPickerEl.style.display   = s === 'picking'    ? 'flex' : 'none';
   stepSetupEl.style.display    = s === 'setup'      ? 'flex' : 'none';
   annotationUiEl.style.display = s === 'annotating' ? 'block' : 'none';
+  root.classList.toggle('cursor-annotating', s === 'annotating');
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -336,8 +338,14 @@ function renderPickerSessions(list: Array<{ id: string; title: string; createdAt
   }
   pickerListEl.innerHTML = list.map(s => `
     <button class="picker-session-item" data-id="${s.id}">
-      <span class="picker-session-title">${s.title}</span>
-      <span class="picker-session-time">${relativeTime(s.createdAt)}</span>
+      <span class="picker-session-main">
+        <span class="picker-session-title">${s.title}</span>
+        <span class="picker-session-sub">Click to append annotations</span>
+      </span>
+      <span class="picker-session-meta">
+        <span class="picker-session-time">${relativeTime(s.createdAt)}</span>
+        <span class="picker-session-chevron">→</span>
+      </span>
     </button>
   `).join('');
   pickerListEl.querySelectorAll<HTMLButtonElement>('.picker-session-item').forEach(btn => {
