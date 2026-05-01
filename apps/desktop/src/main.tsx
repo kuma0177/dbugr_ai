@@ -918,8 +918,9 @@ function renderSession() {
           ${session ? `
             <div class="session-header session-header-rich">
               <div class="session-title-row">
-                <div>
-                  <div class="session-title">${escapeHtml(session.title)}</div>
+                <div class="session-title-block">
+                  <input class="session-title-inline" id="header-title-input" value="${escapeHtml(session.title)}" placeholder="Untitled session" spellcheck="false" />
+                  <div class="session-header-note" id="header-note-display">${session.sessionNote?.trim() ? escapeHtml(session.sessionNote) : '<span class="session-header-note-placeholder">Add a session note…</span>'}</div>
                   <div class="session-meta">${fmtDate(session.createdAt)} · ${fmtTime(session.createdAt)} · ${flowLabel(session.submissionFlow)} · ${buildStatusCopy(session)}</div>
                 </div>
                 <div class="session-header-actions">
@@ -1817,6 +1818,15 @@ function bindSessionActions() {
       setTimeout(() => { if (btn.dataset.confirming) { delete btn.dataset.confirming; btn.textContent = 'Delete session'; } }, 2500);
     }
   });
+  const headerTitleInput = document.getElementById('header-title-input') as HTMLInputElement | null;
+  headerTitleInput?.addEventListener('input', () => {
+    session.title = headerTitleInput.value || 'Untitled session';
+    const panelTitle = document.getElementById('session-title-input') as HTMLInputElement | null;
+    if (panelTitle) panelTitle.value = session.title;
+    logUi('workspace_title_input', { sessionId: session.id, length: session.title.length });
+    persistAppState();
+  });
+
   const titleInput = document.getElementById('session-title-input') as HTMLInputElement | null;
   const aboutInput = document.getElementById('session-about-input') as HTMLTextAreaElement | null;
   const noteInput = document.getElementById('session-note-input') as HTMLTextAreaElement | null;
@@ -1827,7 +1837,8 @@ function bindSessionActions() {
     session.title = titleInput.value || 'Untitled session';
     logUi('workspace_title_input', { sessionId: session.id, length: session.title.length });
     persistAppState();
-    renderSession();
+    const h = document.getElementById('header-title-input') as HTMLInputElement | null;
+    if (h) h.value = session.title;
   });
   aboutInput?.addEventListener('input', () => {
     session.about = aboutInput.value.slice(0, 200);
@@ -1841,6 +1852,12 @@ function bindSessionActions() {
     logUi('workspace_session_note_input', { sessionId: session.id, length: session.sessionNote.length });
     submitGateError = '';
     persistAppState();
+    const noteDisplay = document.getElementById('header-note-display');
+    if (noteDisplay) {
+      noteDisplay.innerHTML = session.sessionNote.trim()
+        ? escapeHtml(session.sessionNote)
+        : '<span class="session-header-note-placeholder">Add a session note…</span>';
+    }
   });
   folderInput?.addEventListener('input', () => {
     session.projectFolder = folderInput.value.trim() || null;

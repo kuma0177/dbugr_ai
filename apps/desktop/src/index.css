@@ -945,6 +945,50 @@ kbd {
   letter-spacing: -0.02em;
 }
 
+.session-title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.session-title-inline {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+  font-family: inherit;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.session-title-inline:hover {
+  background: var(--surface-hover, rgba(255,255,255,0.05));
+}
+.session-title-inline:focus {
+  background: var(--surface-2, rgba(255,255,255,0.08));
+  box-shadow: 0 0 0 2px rgba(99,102,241,0.35);
+}
+
+.session-header-note {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.session-header-note-placeholder {
+  font-style: italic;
+  opacity: 0.45;
+}
+
 .session-meta {
   margin-top: 4px;
   color: var(--text-secondary);
