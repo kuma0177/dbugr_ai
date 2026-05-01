@@ -1080,69 +1080,60 @@ function renderWorkspacePanel() {
   }
 
   if (workspaceSection === 'submit') {
-    const connected = providerConnections[target].connected;
+    const annCount = totalAnnotations(session);
     panel.innerHTML = `
       <div class="right-panel-head">
-        <div class="right-panel-title">Submit to AI</div>
-        <div class="right-panel-sub">Choose the destination and the final context packet.</div>
+        <div class="right-panel-title">Send session</div>
+        <div class="right-panel-sub">${annCount} capture${session.captures.length !== 1 ? 's' : ''} · ${annCount} annotation${annCount !== 1 ? 's' : ''}</div>
       </div>
       <div class="right-panel-body stacked-panel">
         ${submitGateError ? `<div class="submit-gate-error" role="alert">${escapeHtml(submitGateError)}</div>` : ''}
-        <div class="field-label">Destination</div>
-        <div class="target-grid target-grid-wide">
-          ${(['claude', 'codex', 'cursor'] as Target[]).map((provider) => `
+
+        <div class="save-banner">✓ Session saved locally and ready to share</div>
+
+        <div class="field-label">SEND TO</div>
+        <div class="target-grid">
+          ${(['claude', 'codex'] as Target[]).map((provider) => `
             <button class="target-card ${target === provider ? 'active' : ''}" data-target="${provider}">
               <strong>${providerLabel(provider)}</strong>
-              <span>${providerSubtitle(provider)}</span>
+              <span>${target === provider ? 'Selected — click again to send' : providerSubtitle(provider)}</span>
             </button>
           `).join('')}
         </div>
 
-        <div class="journey-card">
-          <strong>Submission flow</strong>
-          <p>${flowLabel(session.submissionFlow)} · ${session.submissionFlow === 'direct' ? 'The AI will read your session as-is.' : `${acceptedContributions(session).length} curated contribution${acceptedContributions(session).length === 1 ? '' : 's'} will be attached.`}</p>
-        </div>
+        <button class="send-btn" id="send-btn" ${isSending ? 'disabled' : ''}>
+          ${isSending ? 'Opening…' : `Send to ${providerLabel(target)} ⌘↵`}
+        </button>
 
-        <div class="field-label">Include context</div>
-        <div class="context-list">
-          <label><input type="checkbox" id="ctx-console" ${contextToggles.consoleLogs ? 'checked' : ''} /> Console logs</label>
-          <label><input type="checkbox" id="ctx-network" ${contextToggles.networkLogs ? 'checked' : ''} /> Network logs</label>
-          <label><input type="checkbox" id="ctx-env" ${contextToggles.environmentInfo ? 'checked' : ''} /> Environment info</label>
-          <label><input type="checkbox" checked disabled /> Session about + notes</label>
-          <label><input type="checkbox" checked disabled /> Captures + accepted review items</label>
-        </div>
-
-        ${connected
-          ? `<button class="send-btn" id="send-btn" ${isSending ? 'disabled' : ''}>${isSending ? 'Sending…' : `Send to ${providerLabel(target)} →`}</button>`
-          : `<button class="send-btn" id="connect-provider-btn">Connect ${providerLabel(target)} first</button>`}
+        <div class="send-tip">Tip: set a working directory so the agent can navigate your code.</div>
+        ${session.projectFolder
+          ? `<div class="context-folder">📁 ${session.projectFolder}</div>`
+          : `<button class="link-btn" id="add-folder-btn">+ Add project folder</button>`}
       </div>
     `;
     document.querySelectorAll<HTMLButtonElement>('[data-target]').forEach((button) => {
       button.addEventListener('click', () => {
-        const nextTarget = button.dataset.target as Target | undefined;
-        if (!nextTarget) return;
-        target = nextTarget;
+        const newTarget = button.dataset.target as Target | undefined;
+        if (!newTarget) return;
+        if (newTarget === target) {
+          // Second click = send
+          void sendSession();
+          return;
+        }
+        target = newTarget;
         persistAppState();
         renderSession();
       });
     });
-    document.getElementById('ctx-console')?.addEventListener('change', (event) => {
-      contextToggles.consoleLogs = (event.target as HTMLInputElement).checked;
-    });
-    document.getElementById('ctx-network')?.addEventListener('change', (event) => {
-      contextToggles.networkLogs = (event.target as HTMLInputElement).checked;
-    });
-    document.getElementById('ctx-env')?.addEventListener('change', (event) => {
-      contextToggles.environmentInfo = (event.target as HTMLInputElement).checked;
-    });
-    document.getElementById('connect-provider-btn')?.addEventListener('click', () => {
-      connectingTarget = target;
-      bridgeLaunchMessage = '';
-      bridgeSetup = null;
-      bridgeSetupRequested = false;
-      render();
-    });
     document.getElementById('send-btn')?.addEventListener('click', () => void sendSession());
+    document.getElementById('add-folder-btn')?.addEventListener('click', async () => {
+      const folder = await invoke<string | null>('pick_folder');
+      if (folder) {
+        session.projectFolder = folder;
+        persistAppState();
+        renderSession();
+      }
+    });
     return;
   }
 
