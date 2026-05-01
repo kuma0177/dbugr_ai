@@ -41,11 +41,26 @@ fn temp_capture_path() -> PathBuf {
     std::env::temp_dir().join(format!("debugr-capture-{stamp}.png"))
 }
 
+fn log_backend(event: &str, details: impl AsRef<str>) {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    eprintln!("[debugr-core][{ts}] {event} {}", details.as_ref());
+}
+
 // ── Permission commands ───────────────────────────────────────────────────────
 
 #[tauri::command]
 fn get_screen_capture_permission() -> bool {
-    (unsafe { CGPreflightScreenCaptureAccess() }) || can_capture_screen_now()
+    let preflight = unsafe { CGPreflightScreenCaptureAccess() };
+    let probe = can_capture_screen_now();
+    let granted = preflight || probe;
+    log_backend(
+        "permission.preflight",
+        format!("preflight={preflight} probe={probe} granted={granted}"),
+    );
+    granted
 }
 
 #[derive(serde::Serialize)]
@@ -66,6 +81,15 @@ fn get_screen_capture_diagnostics(app: AppHandle) -> ScreenCaptureDiagnostics {
         .ok()
         .and_then(|p| p.into_os_string().into_string().ok())
         .unwrap_or_else(|| "unknown".to_string());
+    log_backend(
+        "permission.diagnostics",
+        format!(
+            "preflight={preflight} probe={probe} granted={} bundle_id={} executable={}",
+            preflight || probe,
+            bundle_identifier,
+            executable_path
+        ),
+    );
     ScreenCaptureDiagnostics {
         preflight,
         probe,
@@ -77,12 +101,22 @@ fn get_screen_capture_diagnostics(app: AppHandle) -> ScreenCaptureDiagnostics {
 
 #[tauri::command]
 fn request_screen_capture_permission() -> bool {
-    let _ = unsafe { CGRequestScreenCaptureAccess() };
-    get_screen_capture_permission()
+    log_backend("permission.request.start", "triggering_cg_request=true");
+    let requested = unsafe { CGRequestScreenCaptureAccess() };
+    let granted = get_screen_capture_permission();
+    log_backend(
+        "permission.request.result",
+        format!("cg_request_returned={requested} effective_granted={granted}"),
+    );
+    granted
 }
 
 #[tauri::command]
 fn open_screen_capture_settings() -> Result<(), String> {
+    log_backend(
+        "permission.settings.open",
+        "url=x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+    );
     Command::new("open")
         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
         .status()
@@ -144,6 +178,10 @@ fn save_provider_config(payload: serde_json::Value) -> Result<(), String> {
         .map_err(|e| format!("Failed to create provider config: {e}"))?;
     file.write_all(json.as_bytes())
         .map_err(|e| format!("Failed to write provider config: {e}"))?;
+    log_backend(
+        "workspace.provider_config.saved",
+        format!("path={} bytes={}", path.display(), json.len()),
+    );
     Ok(())
 }
 
@@ -263,10 +301,15 @@ fn get_provider_config() -> serde_json::Value {
         .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()))
         .join("debugr")
         .join("provider-config.json");
-    fs::read_to_string(&path)
+    let parsed = fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}))
+        .unwrap_or_else(|| serde_json::json!({}));
+    log_backend(
+        "workspace.provider_config.loaded",
+        format!("path={} has_data={}", path.display(), parsed != serde_json::json!({})),
+    );
+    parsed
 }
 
 #[tauri::command]
@@ -315,8 +358,14 @@ fn pick_folder() -> Option<String> {
         .ok()?;
     if out.status.success() {
         let path = String::from_utf8(out.stdout).ok()?.trim().to_string();
-        if path.is_empty() { None } else { Some(path) }
+        let picked = if path.is_empty() { None } else { Some(path) };
+        log_backend(
+            "workspace.folder_picker.result",
+            format!("picked={}", picked.as_deref().unwrap_or("null")),
+        );
+        picked
     } else {
+        log_backend("workspace.folder_picker.cancelled", "status=non_zero");
         None
     }
 }
@@ -339,13 +388,18 @@ fn encode_image_at(path: &PathBuf) -> Result<String, String> {
 /// This avoids false negatives from CGPreflight when macOS TCC state is stale.
 fn can_capture_screen_now() -> bool {
     let path = temp_capture_path();
-    let ok = Command::new("screencapture")
+    let cmd_ok = Command::new("screencapture")
         .args(["-x", "-t", "png"])
         .arg(&path)
         .status()
         .map(|status| status.success())
-        .unwrap_or(false)
-        && path.exists();
+        .unwrap_or(false);
+    let exists = path.exists();
+    let ok = cmd_ok && exists;
+    log_backend(
+        "screenshot.probe",
+        format!("path={} command_ok={cmd_ok} exists={exists} granted={ok}", path.display()),
+    );
     let _ = fs::remove_file(&path);
     ok
 }
@@ -353,6 +407,7 @@ fn can_capture_screen_now() -> bool {
 /// Silent full-screen screenshot — used internally before showing overlay.
 fn take_silent_screenshot() -> Result<String, String> {
     let path = temp_capture_path();
+    log_backend("screenshot.silent.start", format!("path={}", path.display()));
     let ok = Command::new("screencapture")
         .args(["-x", "-t", "png"])
         .arg(&path)
@@ -360,14 +415,23 @@ fn take_silent_screenshot() -> Result<String, String> {
         .map_err(|e| format!("screencapture failed: {e}"))?
         .success();
     if !ok || !path.exists() {
+        log_backend(
+            "screenshot.silent.failed",
+            format!("path={} command_ok={ok} exists={}", path.display(), path.exists()),
+        );
         return Err("Screenshot failed".into());
     }
+    log_backend("screenshot.silent.success", format!("path={}", path.display()));
     encode_image_at(&path)
 }
 
 /// Interactive fallback capture when silent capture fails.
 fn take_interactive_fallback_screenshot() -> Result<String, String> {
     let path = temp_capture_path();
+    log_backend(
+        "screenshot.interactive_fallback.start",
+        format!("path={}", path.display()),
+    );
     let ok = Command::new("screencapture")
         .args(["-i", "-x", "-t", "png"])
         .arg(&path)
@@ -375,8 +439,16 @@ fn take_interactive_fallback_screenshot() -> Result<String, String> {
         .map_err(|e| format!("interactive screencapture failed: {e}"))?
         .success();
     if !ok || !path.exists() {
+        log_backend(
+            "screenshot.interactive_fallback.failed",
+            format!("path={} command_ok={ok} exists={}", path.display(), path.exists()),
+        );
         return Err("Interactive screenshot cancelled or failed".into());
     }
+    log_backend(
+        "screenshot.interactive_fallback.success",
+        format!("path={}", path.display()),
+    );
     encode_image_at(&path)
 }
 
@@ -384,6 +456,7 @@ fn take_interactive_fallback_screenshot() -> Result<String, String> {
 #[tauri::command]
 fn capture_interactive_screenshot(app: AppHandle) -> Result<String, String> {
     let path = temp_capture_path();
+    log_backend("screenshot.interactive.start", format!("path={}", path.display()));
     let ok = Command::new("screencapture")
         .args(["-i", "-x"])
         .arg(&path)
@@ -391,9 +464,17 @@ fn capture_interactive_screenshot(app: AppHandle) -> Result<String, String> {
         .map_err(|e| format!("screencapture failed: {e}"))?
         .success();
     if !ok || !path.exists() {
+        log_backend(
+            "screenshot.interactive.cancelled_or_failed",
+            format!("path={} command_ok={ok} exists={}", path.display(), path.exists()),
+        );
         return Err("Screenshot cancelled".into());
     }
     let url = encode_image_at(&path)?;
+    log_backend(
+        "screenshot.interactive.success",
+        format!("path={} data_url_len={}", path.display(), url.len()),
+    );
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
         let _ = win.set_focus();
@@ -410,6 +491,10 @@ fn finish_annotations(
     app: AppHandle,
     payload: serde_json::Value,
 ) -> Result<(), String> {
+    log_backend(
+        "workspace.annotations.finish",
+        format!("payload_keys={}", payload.as_object().map(|o| o.len()).unwrap_or(0)),
+    );
     // Emit event to main window
     if let Some(main) = app.get_webview_window("main") {
         main.emit("annotations-saved", &payload)
@@ -435,6 +520,7 @@ fn finish_annotations(
 /// Called from frontend (tray Sessions menu or "New Annotation" button).
 #[tauri::command]
 fn show_overlay(app: AppHandle) -> Result<(), String> {
+    log_backend("overlay.show.requested", "source=frontend");
     macos_activate();
     trigger_overlay(&app);
     Ok(())
@@ -483,6 +569,10 @@ fn save_screenshot(capture_id: String, data_url: String) -> Result<String, Strin
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(base64_data)
         .map_err(|e| format!("Failed to decode screenshot: {e}"))?;
+    log_backend(
+        "workspace.screenshot.decode",
+        format!("capture_id={} decoded_bytes={}", capture_id, bytes.len()),
+    );
 
     let dir = dirs_next::data_dir()
         .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()))
@@ -493,6 +583,10 @@ fn save_screenshot(capture_id: String, data_url: String) -> Result<String, Strin
 
     let path = dir.join(format!("{capture_id}.png"));
     fs::write(&path, bytes).map_err(|e| format!("Failed to write screenshot: {e}"))?;
+    log_backend(
+        "workspace.screenshot.saved",
+        format!("capture_id={} path={}", capture_id, path.display()),
+    );
 
     Ok(path.to_string_lossy().to_string())
 }
@@ -540,6 +634,19 @@ fn save_sessions_to_disk(payload: serde_json::Value) -> Result<(), String> {
         .map_err(|e| format!("Failed to create sessions file: {e}"))?;
     file.write_all(json.as_bytes())
         .map_err(|e| format!("Failed to write sessions: {e}"))?;
+    log_backend(
+        "workspace.sessions.saved",
+        format!(
+            "path={} bytes={} sessions={}",
+            file_path.display(),
+            json.len(),
+            payload
+                .get("sessions")
+                .and_then(|s| s.as_array())
+                .map(|arr| arr.len())
+                .unwrap_or(0)
+        ),
+    );
 
     Ok(())
 }
@@ -621,19 +728,23 @@ fn tray_template_icon() -> Image<'static> {
 // ── Core: trigger annotation overlay ─────────────────────────────────────────
 
 fn trigger_overlay(app: &AppHandle) {
+    log_backend("overlay.trigger.start", "source=shortcut_or_ui");
     // If already visible, hide it (toggle)
     if let Some(overlay) = app.get_webview_window("overlay") {
         if overlay.is_visible().unwrap_or(false) {
+            log_backend("overlay.trigger.toggle_hide", "overlay_visible=true");
             let _ = overlay.hide();
             return;
         }
     } else {
-        eprintln!("Debugr overlay window not found");
+        log_backend("overlay.window.missing", "label=overlay");
     }
 
     if !get_screen_capture_permission() {
+        log_backend("overlay.permission.missing", "requesting=true");
         let _ = request_screen_capture_permission();
         if !get_screen_capture_permission() {
+            log_backend("overlay.permission.still_missing", "emit_main_warning=true");
             if let Some(main) = app.get_webview_window("main") {
                 macos_activate();
                 let _ = main.emit("screen-capture-permission-needed", ());
@@ -650,7 +761,7 @@ fn trigger_overlay(app: &AppHandle) {
     macos_activate();
 
     if let Some(overlay) = app.get_webview_window("overlay") {
-        eprintln!("Debugr overlay window found");
+        log_backend("overlay.window.found", "label=overlay");
 
         // Resize the overlay to cover the monitor the user is currently working on.
         // Prefer current_monitor (the screen where the cursor/window is) so that
@@ -670,7 +781,10 @@ fn trigger_overlay(app: &AppHandle) {
             let lh = (phys.height as f64 / scale).round() as u32;
             let lx = (pos.x as f64 / scale).round();
             let ly = (pos.y as f64 / scale).round();
-            eprintln!("Overlay → logical {lw}×{lh} at ({lx},{ly}) scale={scale}");
+            log_backend(
+                "overlay.window.bounds",
+                format!("logical_w={lw} logical_h={lh} x={lx} y={ly} scale={scale}"),
+            );
             let _ = overlay.set_size(tauri::LogicalSize::new(lw, lh));
             let _ = overlay.set_position(tauri::LogicalPosition::new(lx, ly));
         }
@@ -678,10 +792,10 @@ fn trigger_overlay(app: &AppHandle) {
         // Tell the frontend to reset state BEFORE we make the window visible
         let _ = overlay.emit("overlay-will-show", ());
         if let Err(e) = overlay.show() {
-            eprintln!("Failed to show overlay: {e}");
+            log_backend("overlay.window.show_failed", e.to_string());
         }
         if let Err(e) = overlay.set_focus() {
-            eprintln!("Failed to focus overlay: {e}");
+            log_backend("overlay.window.focus_failed", e.to_string());
         }
     }
 
@@ -691,14 +805,24 @@ fn trigger_overlay(app: &AppHandle) {
         // Small delay so the Debugr window has time to hide if needed
         std::thread::sleep(std::time::Duration::from_millis(80));
 
-        let screenshot = take_silent_screenshot().or_else(|_| take_interactive_fallback_screenshot());
+        log_backend("overlay.capture.thread_start", "delay_ms=80");
+        let screenshot = take_silent_screenshot().or_else(|e| {
+            log_backend("overlay.capture.silent_failed", e);
+            take_interactive_fallback_screenshot()
+        });
 
         if let Some(overlay) = app.get_webview_window("overlay") {
             // Send screenshot (or empty string on failure) to overlay frontend
             match screenshot {
-                Ok(data_url) => { let _ = overlay.emit("set-screenshot", data_url); }
+                Ok(data_url) => {
+                    log_backend(
+                        "overlay.capture.success",
+                        format!("data_url_len={}", data_url.len()),
+                    );
+                    let _ = overlay.emit("set-screenshot", data_url);
+                }
                 Err(e) => {
-                    eprintln!("Screenshot failed: {e}");
+                    log_backend("overlay.capture.failed", e.clone());
                     let _ = overlay.emit("set-screenshot", String::new());
                     if let Some(main) = app.get_webview_window("main") {
                         let _ = main.emit("screen-capture-failed", e.clone());

@@ -54,11 +54,13 @@ interface PersistedState {
 const API = 'http://127.0.0.1:3001/api';
 const APP_STATE_KEY = 'debugr-desktop-v2-state';
 const MAX_ANNOTATIONS = 5;
+const UI_LOG_PREFIX = '[debugr-ui]';
 
 let appMode: AppMode = 'welcome';
 let sessions: Session[] = [];
 let activeSessionId: string | null = null;
 let activeCaptureId: string | null = null;
+let activeAnnotationId: string | null = null;
 let workspaceSection: WorkspaceSection = 'notes';
 let target: Target = 'claude';
 let feedback: AgentFeedback | null = null;
@@ -102,12 +104,31 @@ let providerConnections: Record<Target, ProviderConnectionState> = {
 const win = getCurrentWindow();
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
+function logUi(event: string, details: Record<string, unknown> = {}) {
+  const stamp = new Date().toISOString();
+  try {
+    console.info(`${UI_LOG_PREFIX} ${stamp} ${event}`, details);
+  } catch {
+    console.info(`${UI_LOG_PREFIX} ${stamp} ${event}`);
+  }
+}
+
 function activeSession() {
   return sessions.find((session) => session.id === activeSessionId);
 }
 
 function activeCapture() {
   return activeSession()?.captures.find((capture) => capture.id === activeCaptureId);
+}
+
+function activeAnnotation() {
+  const capture = activeCapture();
+  if (!capture) return undefined;
+  if (activeAnnotationId) {
+    const selected = capture.annotations.find((annotation) => annotation.id === activeAnnotationId);
+    if (selected) return selected;
+  }
+  return capture.annotations[0];
 }
 
 function fmtTime(iso: string) {
@@ -696,7 +717,9 @@ function renderWelcome() {
       const sessionId = button.dataset.sessionId;
       if (!sessionId) return;
       activeSessionId = sessionId;
-      activeCaptureId = sessions.find((session) => session.id === sessionId)?.captures[0]?.id ?? null;
+      const firstCapture = sessions.find((session) => session.id === sessionId)?.captures[0];
+      activeCaptureId = firstCapture?.id ?? null;
+      activeAnnotationId = firstCapture?.annotations[0]?.id ?? null;
       feedback = null;
       void enterSessionMode('notes');
     });
@@ -750,6 +773,15 @@ function renderSession() {
   const session = activeSession();
   const capture = activeCapture();
   const selectedSessionCount = sessions.length;
+  logUi('render_session', {
+    sessionId: session?.id ?? null,
+    captureId: capture?.id ?? null,
+    annotationId: activeAnnotationId,
+    workspaceSection,
+    target,
+    appMode,
+    sessionCount: sessions.length,
+  });
   app.innerHTML = `
     <div class="app-shell visible">
       <div class="topbar">
@@ -860,8 +892,8 @@ function renderSession() {
                     <span class="field-helper">Add the repo name if the team will review this session remotely or if the AI should reference the source of truth in GitHub.</span>
                   </label>
                   <div class="context-pill-row">
-                    <div class="summary-chip subtle" id="session-folder-chip">${session.projectFolder ? 'Local folder linked' : 'No folder linked yet'}</div>
-                    <div class="summary-chip subtle" id="session-repo-chip">${session.githubRepo ? 'GitHub repo linked' : 'GitHub optional'}</div>
+                    <button type="button" class="summary-chip subtle summary-chip-action" id="session-folder-chip">${session.projectFolder ? 'Local folder linked' : 'No folder linked yet'}</button>
+                    <button type="button" class="summary-chip subtle summary-chip-action" id="session-repo-chip">${session.githubRepo ? 'GitHub repo linked' : 'GitHub optional'}</button>
                   </div>
                 </section>
               </div>
@@ -885,6 +917,7 @@ function renderSession() {
                     <div class="capture-preview-copy">${escapeHtml(capture?.preview ?? session.captures[0].preview)}</div>
                   </div>
                   <div class="capture-list" id="capture-list"></div>
+                  <div class="capture-payload" id="capture-payload"></div>
                 `}
               </section>
             </div>
@@ -903,7 +936,15 @@ function renderSession() {
   `;
 
   renderSessionList();
-  if (session?.captures.length) renderCaptureList(session);
+  if (session?.captures.length) {
+    if (!activeCaptureId) activeCaptureId = session.captures[0]?.id ?? null;
+    const currentCapture = session.captures.find((item) => item.id === activeCaptureId) ?? session.captures[0];
+    if (!activeAnnotationId || !currentCapture?.annotations.some((item) => item.id === activeAnnotationId)) {
+      activeAnnotationId = currentCapture?.annotations[0]?.id ?? null;
+    }
+    renderCaptureList(session);
+    renderCapturePayload(session);
+  }
   renderWorkspacePanel();
   bindSessionActions();
   checkPermission();
@@ -933,6 +974,7 @@ function renderSessionList() {
       button.addEventListener('click', () => {
         activeSessionId = session.id;
         activeCaptureId = session.captures[0]?.id ?? null;
+        activeAnnotationId = session.captures[0]?.annotations[0]?.id ?? null;
         feedback = session.status === 'responded' ? feedback : null;
         persistAppState();
         renderSession();
@@ -959,9 +1001,78 @@ function renderCaptureList(session: Session) {
     `;
     button.addEventListener('click', () => {
       activeCaptureId = capture.id;
+      activeAnnotationId = capture.annotations[0]?.id ?? null;
+      logUi('workspace_capture_selected', {
+        sessionId: session.id,
+        captureId: capture.id,
+        annotationCount: capture.annotations.length,
+      });
       renderSession();
     });
     list.appendChild(button);
+  });
+}
+
+function renderCapturePayload(session: Session) {
+  const root = document.getElementById('capture-payload');
+  if (!root) return;
+  const capture = activeCapture() ?? session.captures[0];
+  if (!capture) {
+    root.innerHTML = '';
+    return;
+  }
+
+  const selected = activeAnnotation() ?? capture.annotations[0];
+  const annotationRows = capture.annotations.map((annotation) => `
+    <button class="annotation-row ${selected?.id === annotation.id ? 'active' : ''}" data-annotation-id="${annotation.id}">
+      <span class="annotation-row-index">#${annotation.number}</span>
+      <span class="annotation-row-text">${escapeHtml(annotation.text || 'No note text')}</span>
+      <span class="annotation-row-time">${fmtTime(annotation.timestamp)}</span>
+    </button>
+  `).join('');
+
+  root.innerHTML = `
+    <div class="capture-payload-head">
+      <strong>Payload preview</strong>
+      <span>What ${providerLabel(target)} receives when you click Send</span>
+    </div>
+    <div class="capture-payload-grid">
+      <div class="capture-payload-image-wrap">
+        ${capture.screenshotUrl
+          ? `<img class="capture-payload-image" src="${capture.screenshotUrl}" alt="Selected screenshot payload" />`
+          : '<div class="capture-payload-empty">No screenshot available for this capture.</div>'}
+      </div>
+      <div class="capture-payload-meta">
+        <div class="capture-payload-list">
+          ${annotationRows || '<div class="capture-payload-empty">No annotations on this capture yet.</div>'}
+        </div>
+        ${selected ? `
+          <div class="capture-payload-note">
+            <div class="capture-payload-note-title">Selected annotation note</div>
+            <div class="capture-payload-note-body">${escapeHtml(selected.text || 'No note text')}</div>
+            <div class="capture-payload-tags">${selected.tags.length ? selected.tags.map((tag) => `<span>#${escapeHtml(tag)}</span>`).join('') : '<span>No tags</span>'}</div>
+          </div>
+        ` : ''}
+        <div class="capture-payload-context">
+          <div><strong>Session about:</strong> ${escapeHtml(session.about?.trim() || 'Not set')}</div>
+          <div><strong>Session note:</strong> ${escapeHtml(session.sessionNote?.trim() || 'Not set')}</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  root.querySelectorAll<HTMLButtonElement>('[data-annotation-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const annotationId = button.dataset.annotationId;
+      if (!annotationId) return;
+      activeAnnotationId = annotationId;
+      logUi('workspace_annotation_selected', {
+        sessionId: session.id,
+        captureId: capture.id,
+        annotationId,
+      });
+      renderCapturePayload(session);
+    });
   });
 }
 
@@ -969,6 +1080,12 @@ function renderWorkspacePanel() {
   const panel = document.getElementById('right-panel');
   const session = activeSession();
   if (!panel || !session) return;
+  logUi('render_workspace_panel', {
+    section: workspaceSection,
+    sessionId: session.id,
+    target,
+    status: session.status,
+  });
 
   if (workspaceSection === 'notes') {
     panel.innerHTML = `
@@ -1418,24 +1535,29 @@ function renderWorkspacePanel() {
 function bindSessionActions() {
   const session = activeSession();
   document.getElementById('back-home-btn')?.addEventListener('click', async () => {
+    logUi('workspace_back_home_click');
     appMode = 'welcome';
     claudeConnecting = false;
     await win.setResizable(true);
     render();
   });
   document.getElementById('new-ann-btn')?.addEventListener('click', async () => {
+    logUi('workspace_new_capture_click', { sessionId: session?.id ?? null });
     await invoke('show_overlay');
   });
   document.getElementById('view-all-sessions-btn')?.addEventListener('click', () => {
+    logUi('workspace_refresh_sessions_click');
     void loadSessionsFromApi();
   });
   document.getElementById('push-pending-btn')?.addEventListener('click', () => {
+    logUi('workspace_push_pending_click');
     void pushPendingSessions();
   });
   document.querySelectorAll<HTMLButtonElement>('[data-section]').forEach((button) => {
     button.addEventListener('click', () => {
       const section = button.dataset.section as WorkspaceSection | undefined;
       if (!section) return;
+      logUi('workspace_section_change', { from: workspaceSection, to: section, sessionId: session?.id ?? null });
       workspaceSection = section;
       if (section === 'submit') submitGateError = '';
       renderSession();
@@ -1444,6 +1566,7 @@ function bindSessionActions() {
   if (!session) return;
 
   document.getElementById('save-session-btn')?.addEventListener('click', () => {
+    logUi('workspace_save_session_click', { sessionId: session.id });
     session.lastExplicitSaveAt = new Date().toISOString();
     persistAppState();
     renderSession();
@@ -1456,29 +1579,79 @@ function bindSessionActions() {
 
   titleInput?.addEventListener('input', () => {
     session.title = titleInput.value || 'Untitled session';
+    logUi('workspace_title_input', { sessionId: session.id, length: session.title.length });
     persistAppState();
     renderSession();
   });
   aboutInput?.addEventListener('input', () => {
     session.about = aboutInput.value.slice(0, 200);
+    logUi('workspace_about_input', { sessionId: session.id, length: session.about.length });
     const count = document.getElementById('about-count');
     if (count) count.textContent = String(session.about.length);
     persistAppState();
   });
   noteInput?.addEventListener('input', () => {
     session.sessionNote = noteInput.value;
+    logUi('workspace_session_note_input', { sessionId: session.id, length: session.sessionNote.length });
     submitGateError = '';
     persistAppState();
   });
   folderInput?.addEventListener('input', () => {
     session.projectFolder = folderInput.value.trim() || null;
+    logUi('workspace_project_folder_input', { sessionId: session.id, projectFolder: session.projectFolder });
     syncRepoContextChips(session);
     persistAppState();
   });
   repoInput?.addEventListener('input', () => {
     session.githubRepo = normalizeGithubRepoInput(repoInput.value);
+    logUi('workspace_github_repo_input', { sessionId: session.id, githubRepo: session.githubRepo });
     syncRepoContextChips(session);
     persistAppState();
+  });
+
+  const workspaceScroll = document.querySelector('.workspace-scroll');
+  workspaceScroll?.addEventListener('click', async (event) => {
+    const targetEl = event.target as HTMLElement | null;
+    if (!targetEl) return;
+
+    const folderChip = targetEl.closest('#session-folder-chip');
+    if (folderChip) {
+      event.preventDefault();
+      logUi('workspace_folder_chip_click', { sessionId: session.id, hasFolder: Boolean(session.projectFolder?.trim()) });
+      if (session.projectFolder?.trim()) {
+        const clear = window.confirm('Clear linked local folder?');
+        if (!clear) return;
+        session.projectFolder = null;
+        logUi('workspace_folder_chip_cleared', { sessionId: session.id });
+        if (folderInput) folderInput.value = '';
+        syncRepoContextChips(session);
+        persistAppState();
+        return;
+      }
+      const picked = await invoke<string | null>('pick_folder').catch(() => null);
+      logUi('workspace_folder_picker_result', { sessionId: session.id, picked: picked ?? null });
+      if (!picked) return;
+      session.projectFolder = picked;
+      if (folderInput) folderInput.value = picked;
+      syncRepoContextChips(session);
+      persistAppState();
+      return;
+    }
+
+    const repoChip = targetEl.closest('#session-repo-chip');
+    if (repoChip) {
+      event.preventDefault();
+      logUi('workspace_repo_chip_click', { sessionId: session.id, existingRepo: repoInput?.value ?? '' });
+      if (!repoInput) return;
+      if (!repoInput.value.trim()) {
+        repoInput.value = 'owner/repo';
+        session.githubRepo = 'owner/repo';
+        syncRepoContextChips(session);
+        persistAppState();
+      }
+      repoInput.focus();
+      repoInput.select();
+    }
   });
 }
 
@@ -1508,6 +1681,7 @@ async function checkPermission() {
       bundle_identifier: string;
       executable_path: string;
     }>('get_screen_capture_diagnostics');
+    logUi('workspace_permission_diagnostics', diagnostics);
     const granted = diagnostics.granted;
     if (granted) {
       note.innerHTML = `
@@ -1529,6 +1703,7 @@ async function checkPermission() {
     });
     return;
   } catch {
+    logUi('workspace_permission_check_failed');
     note.innerHTML = `
       <strong>Screen capture status unavailable</strong>
       <span>Debugr could not check macOS screen-recording permissions right now. Try reopening the app, then open System Settings if capture still fails.</span>
@@ -1539,6 +1714,7 @@ async function checkPermission() {
 
 async function loadSessionsFromApi() {
   try {
+    logUi('workspace_load_sessions_start', { existingLocalSessions: sessions.length });
     const response = await fetch(`${API}/feedback-sessions`);
     if (!response.ok) throw new Error('Could not load sessions');
     const json = await response.json() as {
@@ -1584,11 +1760,19 @@ async function loadSessionsFromApi() {
       });
     }
     sessions = sortedSessions();
+    logUi('workspace_load_sessions_success', {
+      remoteSessions: (json.data ?? []).length,
+      mergedSessions: sessions.length,
+      activeSessionId,
+    });
     activeSessionId ??= sessions[0]?.id ?? null;
-    activeCaptureId = activeSession()?.captures[0]?.id ?? activeCaptureId;
+    const firstCapture = activeSession()?.captures[0];
+    activeCaptureId = firstCapture?.id ?? activeCaptureId;
+    activeAnnotationId = firstCapture?.annotations[0]?.id ?? activeAnnotationId;
     persistAppState();
     render();
   } catch {
+    logUi('workspace_load_sessions_failed');
     render();
   }
 }
@@ -1705,10 +1889,17 @@ function buildCliCommand(cliName: 'claude' | 'codex', prompt: string): string {
 async function sendSession() {
   const session = activeSession();
   if (!session) return;
+  logUi('workspace_send_start', {
+    sessionId: session.id,
+    target,
+    captureCount: session.captures.length,
+    annotationCount: totalAnnotations(session),
+  });
 
   submitGateError = '';
   if (target === 'claude' || target === 'codex') {
     const verification = await verifyProviderConnection(target);
+    logUi('workspace_send_provider_verification', { target, ok: verification.ok, transient: verification.transient ?? false, error: verification.error ?? null });
     if (!verification.ok) {
       submitGateError = verification.error
         ? `${providerLabel(target)} connection check failed: ${verification.error}`
@@ -1736,12 +1927,14 @@ async function sendSession() {
 
   // Save screenshots to disk so the CLI can view them
   const screenshotPaths = await saveScreenshots(session.captures);
+  logUi('workspace_send_screenshots_saved', { sessionId: session.id, screenshotCount: screenshotPaths.size });
   const prompt = buildSessionPrompt(session, screenshotPaths);
   const cwd = session.projectFolder?.trim() || (await invoke<string>('pick_folder').catch(() => '')) || '';
   const title = `Debugr → ${providerLabel(target)}: ${session.title}`;
 
   try {
     if (target === 'cursor') {
+      logUi('workspace_send_cursor_launch', { sessionId: session.id, cwd });
       await invoke('open_in_cursor', { projectFolder: cwd || null });
       feedback = {
         title: 'Cursor opened',
@@ -1752,6 +1945,7 @@ async function sendSession() {
     } else {
       const cliName = target === 'codex' ? 'codex' : 'claude';
       const command = buildCliCommand(cliName, prompt);
+      logUi('workspace_send_cli_launch', { sessionId: session.id, cliName, cwd, promptLength: prompt.length });
       await invoke('open_command_in_terminal', { cwd: cwd || process.env['HOME'] || '~', command, title });
       feedback = {
         title: `${providerLabel(target)} is running in Terminal`,
@@ -1764,6 +1958,7 @@ async function sendSession() {
       };
     }
   } catch (err) {
+    logUi('workspace_send_failed', { sessionId: session.id, target, error: err instanceof Error ? err.message : String(err) });
     feedback = {
       title: 'Could not launch CLI',
       summary: `Failed to open ${providerLabel(target)}: ${err instanceof Error ? err.message : String(err)}. Make sure the CLI is installed and on your PATH.`,
@@ -1780,6 +1975,7 @@ async function sendSession() {
   }
 
   session.status = 'responded';
+  logUi('workspace_send_complete', { sessionId: session.id, target, status: session.status });
   isSending = false;
   persistAppState();
   renderSession();
@@ -1810,6 +2006,12 @@ async function listenForAnnotations() {
   }>('annotations-saved', async (event) => {
     const annotations = (event.payload.annotations ?? []).slice(0, MAX_ANNOTATIONS);
     if (annotations.length === 0) return;
+    logUi('workspace_annotations_saved_event', {
+      targetSessionId: event.payload.targetSessionId ?? null,
+      annotationCount: annotations.length,
+      hasLocalFolder: Boolean(event.payload.localFolder),
+      hasGithubRepo: Boolean(event.payload.githubRepo),
+    });
 
     const capture: CaptureCard = {
       id: uid('capture'),
@@ -1828,6 +2030,7 @@ async function listenForAnnotations() {
       session.githubRepo = event.payload.githubRepo ?? session.githubRepo ?? '';
       activeSessionId = session.id;
       activeCaptureId = capture.id;
+      activeAnnotationId = capture.annotations[0]?.id ?? null;
       lastSavedCapture = {
         sessionTitle: session.title,
         annotationCount: annotations.length,
@@ -1852,6 +2055,7 @@ async function listenForAnnotations() {
       sessions.unshift(session);
       activeSessionId = session.id;
       activeCaptureId = capture.id;
+      activeAnnotationId = capture.annotations[0]?.id ?? null;
       lastSavedCapture = {
         sessionTitle: session.title,
         annotationCount: annotations.length,
