@@ -472,7 +472,7 @@ function enterAnnotating() {
   }
 
   showStep('annotating');
-  setTool('pin', false);
+  setTool('region', false);
   updateSessionModeChrome();
   updateCounter();
 }
