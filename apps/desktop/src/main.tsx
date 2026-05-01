@@ -31,6 +31,9 @@ import {
 } from './core';
 
 const brandIconUrl = new URL('./assets/brand-icon.png', import.meta.url).href;
+const logoClaudeUrl = new URL('./assets/logo-claude.png', import.meta.url).href;
+const logoCodexUrl = new URL('./assets/logo-codex.png', import.meta.url).href;
+const logoCursorUrl = new URL('./assets/logo-cursor.png', import.meta.url).href;
 
 type AppMode = 'welcome' | 'session' | 'confirmation';
 
@@ -431,7 +434,7 @@ function renderWelcome() {
             <div class="wc-provider-block">
               <div class="wc-provider-header">
                 <div class="wc-provider-name">
-                  <strong>Claude</strong>
+                  <img class="provider-logo" src="${logoClaudeUrl}" alt="Claude" /><strong>Claude</strong>
                   <span class="provider-pill ${claudeReady ? 'connected' : ''}">${claudeReady ? '● Connected' : '○ Not connected'}</span>
                 </div>
                 ${claudeReady ? `<button class="wc-disconnect-btn" id="wc-disconnect-claude">Disconnect</button>` : ''}
@@ -469,7 +472,7 @@ function renderWelcome() {
             <div class="wc-provider-block">
               <div class="wc-provider-header">
                 <div class="wc-provider-name">
-                  <strong>Codex</strong>
+                  <img class="provider-logo" src="${logoCodexUrl}" alt="Codex" /><strong>Codex</strong>
                   <span class="provider-pill ${codexReady ? 'connected' : ''}">${codexReady ? '● Connected' : '○ Not connected'}</span>
                 </div>
                 ${codexReady ? `<button class="wc-disconnect-btn" id="wc-disconnect-codex">Disconnect</button>` : ''}
@@ -496,7 +499,7 @@ function renderWelcome() {
             <div class="wc-provider-block">
               <div class="wc-provider-header">
                 <div class="wc-provider-name">
-                  <strong>Cursor</strong>
+                  <img class="provider-logo" src="${logoCursorUrl}" alt="Cursor" /><strong>Cursor</strong>
                   <span class="provider-pill ${cursorInstalled ? 'connected' : 'not-installed'}">${cursorInstalled ? '● Ready' : '○ Not installed'}</span>
                 </div>
                 ${!cursorInstalled ? `<a class="wc-disconnect-btn" id="wc-get-cursor" href="#">Get Cursor →</a>` : ''}
@@ -1701,26 +1704,26 @@ async function checkPermission() {
       note.className = 'perm-note ok';
       return;
     }
-    const executable = diagnostics.executable_path ?? '';
-    const isDevRuntime = executable.includes('/target/debug/') || executable.endsWith('/feedbackagent-desktop');
-    if (isDevRuntime) {
-      logUi('workspace_permission_runtime_mismatch', diagnostics);
-    }
     note.innerHTML = `
       <strong>Screen capture blocked</strong>
-      <span>Debugr still cannot capture in this runtime. In Screen &amp; System Audio Recording, enable the exact app identity below, then relaunch Debugr.</span>
-      ${isDevRuntime ? '<span><strong>Important:</strong> You are running a dev runtime binary, so permission granted to <code>debugr.ai.app</code> may not apply to this process.</span>' : ''}
-      <span><strong>ID:</strong> ${escapeHtml(diagnostics.bundle_identifier)}<br /><strong>Binary:</strong> ${escapeHtml(diagnostics.executable_path)}</span>
+      <span>Enable Debugr in Screen &amp; System Audio Recording, then return here — no relaunch needed.</span>
+      <span><strong>ID:</strong> ${escapeHtml(diagnostics.bundle_identifier)}</span>
       <button type="button" class="perm-note-action" id="open-screen-settings-btn">Open Screen Recording settings</button>
-      <button type="button" class="perm-note-action" id="reveal-runtime-btn">Reveal current runtime in Finder</button>
     `;
     note.className = 'perm-note warn';
     document.getElementById('open-screen-settings-btn')?.addEventListener('click', async () => {
       await invoke('request_screen_capture_permission').catch(() => false);
       await invoke('open_screen_capture_settings').catch(() => {});
-    });
-    document.getElementById('reveal-runtime-btn')?.addEventListener('click', () => {
-      void invoke('reveal_in_finder', { path: diagnostics.executable_path }).catch(() => {});
+      // Poll until the user grants permission in System Settings
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        const result = await invoke<{ granted: boolean }>('get_screen_capture_diagnostics').catch(() => null);
+        if (result?.granted || attempts >= 15) {
+          clearInterval(poll);
+          if (result?.granted) void checkPermission();
+        }
+      }, 2000);
     });
     return;
   } catch {
@@ -2123,6 +2126,7 @@ async function listenForAnnotations() {
       'Debugr needs macOS Screen & System Audio Recording permission before it can start annotating.\n\nOpen System Settings to the Screen Recording panel now?',
     );
     if (shouldOpenSettings) {
+      await invoke('request_screen_capture_permission').catch(() => {});
       await invoke('open_screen_capture_settings').catch(() => {});
     }
   });
@@ -2130,7 +2134,7 @@ async function listenForAnnotations() {
   await listen<string>('screen-capture-failed', async () => {
     await checkPermission();
     window.alert(
-      'Debugr could not capture your screen in this run. We attempted both silent and interactive capture and both failed. Click "Open Screen Recording settings", enable the exact Debugr runtime shown in the card, and relaunch once.',
+      'Debugr could not capture your screen. Click "Open Screen Recording settings" in the panel on the left, enable Debugr, then try again — no relaunch needed.',
     );
   });
 }
