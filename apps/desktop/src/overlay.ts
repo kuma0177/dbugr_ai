@@ -110,24 +110,24 @@ root.innerHTML = `
 
   <!-- Step 3: annotation mode -->
   <div id="annotation-ui" style="display:none;">
-    <!-- Top-center toast -->
-    <div class="toast" id="toast">
-      <div class="toast-main">
-        <div class="toast-shortcuts">
-          <kbd>⌃</kbd><kbd>⌘</kbd><kbd>Z</kbd>
+    <!-- Status stack: toast + session row (layout avoids overlap) -->
+    <div class="annotate-header-stack" id="annotate-header">
+      <div class="annotate-header-row">
+        <div class="toast-center-slot">
+          <div class="toast" id="toast">
+            <div class="toast-inline">
+              <div class="toast-shortcuts">
+                <kbd>⌃</kbd><kbd>⌘</kbd><kbd>Z</kbd>
+              </div>
+              <span id="toast-text" class="toast-text">Click anywhere to add an annotation. Right-drag to draw a region.</span>
+            </div>
+          </div>
         </div>
-        <span id="toast-text">Click anywhere to add a pin. Right-drag to draw a region.</span>
+        <div class="session-mode-bar" id="session-banner" role="toolbar" aria-label="Session target">
+          <button type="button" class="session-mode-btn" id="session-mode-append" aria-pressed="false">Append session</button>
+          <button type="button" class="session-mode-btn" id="session-mode-new" aria-pressed="false">New session</button>
+        </div>
       </div>
-      <p class="toast-sub" id="toast-sub"></p>
-    </div>
-
-    <!-- Session target + change -->
-    <div class="session-banner" id="session-banner" style="display:none;">
-      <div class="session-pill">
-        <span class="session-pill-title" id="session-pill-title"></span>
-        <code class="session-pill-id" id="session-pill-id"></code>
-      </div>
-      <button type="button" class="session-change-btn" id="session-change-btn">Change session</button>
     </div>
 
     <!-- SVG connectors -->
@@ -178,11 +178,10 @@ const stepPickerEl   = document.getElementById('step-picker')!;
 const stepSetupEl    = document.getElementById('step-setup')!;
 const annotationUiEl = document.getElementById('annotation-ui')!;
 const sessionBannerEl = document.getElementById('session-banner')!;
-const sessionPillTitleEl = document.getElementById('session-pill-title')!;
-const sessionPillIdEl = document.getElementById('session-pill-id')!;
-const sessionChangeBtn = document.getElementById('session-change-btn') as HTMLButtonElement;
+const sessionModeAppendBtn = document.getElementById('session-mode-append') as HTMLButtonElement;
+const sessionModeNewBtn = document.getElementById('session-mode-new') as HTMLButtonElement;
+const toastEl = document.getElementById('toast')!;
 const toastTextEl    = document.getElementById('toast-text')!;
-const toastSubEl     = document.getElementById('toast-sub')!;
 const notePanelEl    = document.getElementById('note-panel') as HTMLDivElement;
 const noteTitleEl    = document.getElementById('note-title')!;
 const noteSubtitleEl = document.getElementById('note-subtitle')!;
@@ -233,21 +232,42 @@ function setToast(msg: string) { toastTextEl.textContent = msg; }
 
 function updateAnnotatingHints() {
   if (step !== 'annotating') {
-    toastSubEl.textContent = '';
-    toastSubEl.style.display = 'none';
+    toastEl.removeAttribute('title');
     return;
   }
-  toastSubEl.style.display = 'block';
-  toastSubEl.textContent =
-    'Nothing is sent to Claude/Codex/Cursor from this overlay. Finish opens Debugr → use the Submit step there.';
+  toastEl.title =
+    'Nothing sent to AI from here — Finish opens Debugr, then Submit for Claude / Codex / Cursor.';
 }
 
 function updateCounter() {
   const n = annotations.length;
   setToast(n > 0
     ? `${n} annotation${n > 1 ? 's' : ''} — save each note, then tap Finish below.`
-    : 'Click anywhere to add a pin. Right-drag to draw a region. (⌃⌘Z opens Debugr.)');
+    : 'Click anywhere to add an annotation. Right-drag to draw a region.');
   updateAnnotatingHints();
+}
+
+function confirmDiscardAnnotations(): boolean {
+  if (annotations.length === 0) return true;
+  const n = annotations.length;
+  return confirm(`Discard ${n} annotation${n === 1 ? '' : 's'} on screen and continue?`);
+}
+
+function resetAnnotationCanvas() {
+  clearAnnotationDOM();
+  connectorsEl.innerHTML = '';
+  annotations = [];
+  selectedId = null;
+  notePanelEl.style.display = 'none';
+}
+
+function updateSessionModeChrome() {
+  const append = targetSessionId !== null;
+  sessionModeAppendBtn.classList.toggle('active', append);
+  sessionModeNewBtn.classList.toggle('active', !append);
+  sessionModeAppendBtn.setAttribute('aria-pressed', append ? 'true' : 'false');
+  sessionModeNewBtn.setAttribute('aria-pressed', append ? 'false' : 'true');
+  sessionBannerEl.style.display = 'flex';
 }
 
 function readCachedPickerSessions(): PickerSession[] {
@@ -359,16 +379,10 @@ document.getElementById('picker-cancel')!.addEventListener('click', e => {
   e.stopPropagation(); void cancelOverlay();
 });
 
-sessionChangeBtn.addEventListener('click', e => {
+sessionModeAppendBtn.addEventListener('click', e => {
   e.stopPropagation();
-  if (annotations.length > 0) {
-    if (!confirm(`Switch to a different session? The ${annotations.length} annotation(s) on screen will be discarded.`)) return;
-  }
-  clearAnnotationDOM();
-  connectorsEl.innerHTML = '';
-  annotations = [];
-  selectedId = null;
-  notePanelEl.style.display = 'none';
+  if (!confirmDiscardAnnotations()) return;
+  resetAnnotationCanvas();
   targetSessionId = null;
   newSessionName = '';
   newSessionAbout = '';
@@ -378,6 +392,24 @@ sessionChangeBtn.addEventListener('click', e => {
   showStep('picking');
   setPickerLoading();
   void emit('request-sessions');
+});
+
+sessionModeNewBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  if (!confirmDiscardAnnotations()) return;
+  resetAnnotationCanvas();
+  targetSessionId = null;
+  setupNameEl.value = '';
+  setupAboutEl.value = '';
+  setupGithubEl.value = '';
+  setupFolderPath.style.display = 'none';
+  setupFolderBtn.textContent = '📁 Choose folder…';
+  localFolder = null;
+  githubRepo = '';
+  updateSetupState();
+  sessionBannerEl.style.display = 'none';
+  showStep('setup');
+  setTimeout(() => setupNameEl.focus(), 50);
 });
 
 // ── Step 2: New session setup ─────────────────────────────────────────────────
@@ -439,19 +471,9 @@ function enterAnnotating() {
     newSessionAbout = '';
   }
 
-  const label = targetSessionId ? `Adding to: ${newSessionName}` : `New: ${newSessionName}`;
-  sessionPillTitleEl.textContent = label;
-  if (targetSessionId) {
-    sessionPillIdEl.textContent = `${targetSessionId.slice(0, 8)}…`;
-    sessionPillIdEl.style.display = 'inline';
-  } else {
-    sessionPillIdEl.textContent = '';
-    sessionPillIdEl.style.display = 'none';
-  }
-  sessionBannerEl.style.display = 'flex';
-
   showStep('annotating');
   setTool('pin', false);
+  updateSessionModeChrome();
   updateCounter();
 }
 
@@ -847,7 +869,7 @@ root.addEventListener('contextmenu', e => e.preventDefault());
 root.addEventListener('pointerdown', e => {
   if (step !== 'annotating') return;
   const target = e.target as HTMLElement;
-  if (target.closest('.toolbar, .note-panel, .session-banner, .ann-pin, .ann-highlight, .ann-delete, .step-card')) return;
+  if (target.closest('.toolbar, .note-panel, .session-mode-bar, .ann-pin, .ann-highlight, .ann-delete, .step-card')) return;
 
   if (e.button === 0) {
     if (activeTool === 'pin') {
@@ -985,8 +1007,7 @@ function resetState() {
   screenshotBg.style.backgroundImage = '';
   notePanelEl.style.display = 'none';
   sessionBannerEl.style.display = 'none';
-  toastSubEl.textContent = '';
-  toastSubEl.style.display = 'none';
+  toastEl.removeAttribute('title');
   toolSaveBtn.disabled = false;
   toolSaveBtn.textContent = FINISH_TOOL_LABEL;
   setPickerLoading();

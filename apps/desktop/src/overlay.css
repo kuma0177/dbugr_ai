@@ -68,53 +68,197 @@ html, body {
   z-index: 1;
 }
 
-/* ── Toast ──────────────────────────────────────────────────────────────── */
-.toast {
+/* ── Top bar: left toast | notch gap | right session (same row, no overlap) ─ */
+.annotate-header-stack {
   position: fixed;
-  top: 52px; left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  padding: 10px 16px 11px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: var(--shadow);
-  font-size: 12px; color: var(--muted);
-  pointer-events: none;
-  max-width: min(440px, calc(100vw - 32px));
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: calc(10px + env(safe-area-inset-left, 0px));
+  right: calc(10px + env(safe-area-inset-right, 0px));
   z-index: 700;
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  pointer-events: none;
 }
-.toast-main {
-  display: flex;
+
+.annotate-header-row {
+  display: grid;
+  grid-template-columns: auto minmax(72px, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  column-gap: clamp(8px, 2vw, 20px);
+  width: 100%;
+  min-height: 0;
+  pointer-events: none;
 }
+
+.toast-center-slot {
+  grid-column: 1;
+  justify-self: start;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.annotate-header-stack .toast {
+  margin: 0;
+  width: fit-content;
+  max-width: min(560px, calc(50vw - 100px));
+}
+
+.toast {
+  display: block;
+  padding: 5px 13px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 3px 14px rgba(15, 23, 42, 0.08);
+  pointer-events: none;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.toast-inline {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
 .toast-shortcuts {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
 }
+
 .toast-shortcuts kbd {
-  min-width: 22px; padding: 3px 6px;
-  border: 1px solid #cbd5e1; border-bottom-width: 2px;
-  border-radius: 5px; background: #fff;
-  color: var(--text); font-size: 11px; font-weight: 700;
+  min-width: 18px;
+  padding: 2px 5px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 700;
   font-family: inherit;
+  line-height: 1.25;
 }
-.toast-sub {
-  margin: 0;
-  padding-left: 2px;
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--text-secondary);
+
+.toast-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  line-height: 1.3;
   font-weight: 500;
-  white-space: normal;
+  color: var(--text-secondary);
+}
+
+/* Session pill — column 3, hugs right; max-width keeps it out of notch band */
+.session-mode-bar {
+  grid-column: 3;
+  justify-self: end;
+  position: relative;
+  inset: auto;
+  transform: none;
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 3px 14px rgba(15, 23, 42, 0.08);
+  pointer-events: auto;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  max-width: min(340px, calc(50vw - 100px));
+}
+
+.session-mode-btn {
+  margin: 0;
+  border: none;
+  cursor: pointer;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  font-family: inherit;
+  background: transparent;
+  color: var(--text-secondary);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.session-mode-btn:hover {
+  color: var(--text);
+}
+
+/* Reference-style “Append”: soft blue chip when selected */
+.session-mode-btn.active {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.session-mode-btn.active:hover {
+  background: #dbeafe;
+  color: var(--blue-hover);
+}
+
+@media (max-width: 560px) {
+  .annotate-header-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 8px;
+  }
+
+  .toast-center-slot {
+    grid-column: 1;
+    justify-self: stretch;
+    justify-content: center;
+  }
+
+  .annotate-header-stack .toast {
+    width: 100%;
+    max-width: min(
+      100%,
+      calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 20px)
+    );
+  }
+
+  .toast-inline {
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .toast-text {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+  }
+
+  .session-mode-bar {
+    grid-column: 1;
+    justify-self: center;
+    max-width: min(
+      100%,
+      calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 24px)
+    );
+  }
+}
+
+@media (min-width: 561px) and (max-height: 600px) {
+  .annotate-header-stack {
+    top: calc(10px + env(safe-area-inset-top, 0px));
+  }
+
+  .toast {
+    padding: 4px 12px 5px;
+  }
 }
 
 /* ── Step cards (picker + setup) ────────────────────────────────────────── */
@@ -252,65 +396,6 @@ html, body {
   background: #cbd5e1;
   color: #f8fafc;
   cursor: not-allowed;
-}
-
-/* Session target — annotation mode */
-.session-banner {
-  position: fixed;
-  top: 112px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: none;
-  align-items: center;
-  gap: 10px;
-  z-index: 701;
-  pointer-events: auto;
-  max-width: min(520px, calc(100vw - 24px));
-  flex-wrap: wrap;
-  justify-content: center;
-}
-.session-pill {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 7px 14px;
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-}
-.session-pill-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-}
-.session-pill-id {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 2px 7px;
-  border-radius: 6px;
-  background: #f1f5f9;
-  color: var(--text-secondary);
-  letter-spacing: 0.02em;
-}
-.session-change-btn {
-  flex-shrink: 0;
-  padding: 7px 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--blue);
-  cursor: pointer;
-  box-shadow: var(--shadow-soft);
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-.session-change-btn:hover {
-  background: var(--blue-soft);
-  border-color: rgba(37, 99, 235, 0.35);
 }
 
 /* folder-pick-btn and folder-path used inside .step-card */
