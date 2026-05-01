@@ -2,73 +2,33 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import { listen, emit } from '@tauri-apps/api/event';
 import './index.css';
+import {
+  type Target,
+  type WorkspaceSection,
+  type SubmissionFlow,
+  type Session,
+  type CaptureCard,
+  type Annotation,
+  type Contribution,
+  type AgentFeedback,
+  uid,
+  escapeHtml,
+  providerLabel,
+  providerSubtitle,
+  flowLabel,
+  sectionLabel,
+  sortedSessions as sortedSessionsUtil,
+  totalAnnotations,
+  acceptedContributions,
+  getPendingSessions,
+  buildSessionPrompt,
+  buildCombinedPrompt,
+} from './core';
 
 const brandIconUrl = new URL('./assets/brand-icon.png', import.meta.url).href;
 
-type Target = 'claude' | 'codex' | 'cursor';
 type AppMode = 'welcome' | 'session' | 'confirmation';
 type BridgeMethod = 'mcp' | 'script';
-type WorkspaceSection = 'notes' | 'flow' | 'collab' | 'review' | 'submit' | 'insights';
-type SubmissionFlow = 'direct' | 'team' | 'public';
-
-interface Annotation {
-  id: string;
-  number: number;
-  x: number;
-  y: number;
-  width?: number;
-  height?: number;
-  kind?: 'pin' | 'region';
-  text: string;
-  tags: string[];
-  timestamp: string;
-}
-
-interface CaptureCard {
-  id: string;
-  title: string;
-  preview: string;
-  screenshotUrl?: string;
-  annotations: Annotation[];
-  timestamp: string;
-}
-
-interface Contribution {
-  id: string;
-  source: 'team' | 'community';
-  author: string;
-  type: 'annotation' | 'comment' | 'session_note';
-  body: string;
-  accepted: boolean;
-  timestamp: string;
-}
-
-interface Session {
-  id: string;
-  title: string;
-  captures: CaptureCard[];
-  createdAt: string;
-  status: 'draft' | 'sent' | 'responded';
-  about?: string;
-  sessionNote?: string;
-  projectFolder?: string | null;
-  githubRepo?: string;
-  submissionFlow: SubmissionFlow;
-  contributions: Contribution[];
-  collaborationReady: boolean;
-  lastTarget?: Target;
-  /** Last time user clicked Save session (explicit checkpoint). */
-  lastExplicitSaveAt?: string | null;
-}
-
-interface AgentFeedback {
-  title: string;
-  summary: string;
-  rootCause?: string;
-  suggestedFix?: string;
-  codeSnippet?: string;
-  nextSteps: string[];
-}
 
 interface BridgeCommand {
   label: string;
@@ -145,19 +105,6 @@ let providerConnections: Record<Target, ProviderConnection> = {
 const win = getCurrentWindow();
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
-function uid(prefix: string) {
-  return `${prefix}_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`;
-}
-
-function escapeHtml(value: string | undefined | null) {
-  return (value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
 function activeSession() {
   return sessions.find((session) => session.id === activeSessionId);
 }
@@ -174,44 +121,8 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-function providerLabel(value: Target) {
-  if (value === 'codex') return 'Codex';
-  if (value === 'cursor') return 'Cursor';
-  return 'Claude';
-}
-
-function providerSubtitle(value: Target) {
-  if (value === 'codex') return 'GPT-4.1 or local CLI';
-  if (value === 'cursor') return 'Cursor background agent';
-  return 'Anthropic Claude';
-}
-
-function flowLabel(flow: SubmissionFlow) {
-  if (flow === 'team') return 'Team review';
-  if (flow === 'public') return 'Public feed';
-  return 'Direct to AI';
-}
-
-function sectionLabel(section: WorkspaceSection) {
-  if (section === 'notes') return 'Annotate & note';
-  if (section === 'flow') return 'Choose flow';
-  if (section === 'collab') return 'Collaborate';
-  if (section === 'review') return 'Review & curate';
-  if (section === 'submit') return 'Submit';
-  return 'Insights';
-}
-
-function sortedSessions() {
-  return [...sessions].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
-}
-
-function totalAnnotations(session: Session) {
-  return session.captures.reduce((count, capture) => count + capture.annotations.length, 0);
-}
-
-function acceptedContributions(session: Session) {
-  return session.contributions.filter((item) => item.accepted);
-}
+// Local wrappers so module-level `sessions` state is used transparently
+function sortedSessions() { return sortedSessionsUtil(sessions); }
 
 function groupSessions() {
   const now = new Date();
@@ -1413,9 +1324,7 @@ async function loadSessionsFromApi() {
  * Mirrors the MCP flow:  get_pending_sessions → get_session → build_prompt
  */
 async function pushPendingSessions() {
-  const pending = sortedSessions().filter(
-    (s) => s.status !== 'sent' && totalAnnotations(s) > 0,
-  );
+  const pending = getPendingSessions(sessions);
 
   const btn = document.getElementById('push-pending-btn') as HTMLButtonElement | null;
 
@@ -1435,65 +1344,24 @@ async function pushPendingSessions() {
   await invoke('save_sessions_to_disk', { payload: { sessions } }).catch(() => {});
 
   try {
-    if (pending.length === 1) {
-      // Single session → use the same flow as sendSession() for a clean UX
-      const session = pending[0]!;
-      const prompt = buildSessionPrompt(session);
-      const cwd = session.projectFolder?.trim() || '';
+    const prompt = buildCombinedPrompt(pending);
+    const cwd = pending.find((s) => s.projectFolder?.trim())?.projectFolder?.trim() || '';
+    const titleSuffix = pending.length === 1 ? pending[0]!.title : `${pending.length} pending sessions`;
 
-      if (target === 'cursor') {
-        await invoke('open_in_cursor', { projectFolder: cwd || null });
-        await invoke('copy_to_clipboard', { text: prompt }).catch(() => {});
-      } else {
-        const cliName = target === 'codex' ? 'codex' : 'claude';
-        const escaped = prompt.replace(/'/g, "'\\''");
-        await invoke('open_command_in_terminal', {
-          cwd: cwd || process.env['HOME'] || '~',
-          command: `${cliName} '${escaped}'`,
-          title: `Debugr → ${providerLabel(target)}: ${session.title}`,
-        });
-      }
-
-      session.status = 'sent';
-      session.lastTarget = target;
+    if (target === 'cursor') {
+      await invoke('open_in_cursor', { projectFolder: cwd || null });
+      await invoke('copy_to_clipboard', { text: prompt }).catch(() => {});
     } else {
-      // Multiple sessions → build one combined prompt and send in a single terminal
-      const combined: string[] = [
-        `# Debugr — ${pending.length} pending sessions\n`,
-        `You have ${pending.length} unsent annotation sessions. Please work through each one.\n`,
-      ];
-
-      pending.forEach((session, i) => {
-        combined.push(`\n${'='.repeat(60)}`);
-        combined.push(`SESSION ${i + 1} OF ${pending.length}`);
-        combined.push('='.repeat(60));
-        combined.push(buildSessionPrompt(session));
+      const cliName = target === 'codex' ? 'codex' : 'claude';
+      const escaped = prompt.replace(/'/g, "'\\''");
+      await invoke('open_command_in_terminal', {
+        cwd: cwd || process.env['HOME'] || '~',
+        command: `${cliName} '${escaped}'`,
+        title: `Debugr → ${providerLabel(target)}: ${titleSuffix}`,
       });
-
-      combined.push('\n---');
-      combined.push('Please address all sessions above in order.');
-
-      const prompt = combined.join('\n');
-
-      // Use the first session's folder as cwd (best-effort)
-      const cwd = pending.find((s) => s.projectFolder?.trim())?.projectFolder?.trim() || '';
-
-      if (target === 'cursor') {
-        await invoke('open_in_cursor', { projectFolder: cwd || null });
-        await invoke('copy_to_clipboard', { text: prompt }).catch(() => {});
-      } else {
-        const cliName = target === 'codex' ? 'codex' : 'claude';
-        const escaped = prompt.replace(/'/g, "'\\''");
-        await invoke('open_command_in_terminal', {
-          cwd: cwd || process.env['HOME'] || '~',
-          command: `${cliName} '${escaped}'`,
-          title: `Debugr → ${providerLabel(target)}: ${pending.length} pending sessions`,
-        });
-      }
-
-      pending.forEach((s) => { s.status = 'sent'; s.lastTarget = target; });
     }
 
+    pending.forEach((s) => { s.status = 'sent'; s.lastTarget = target; });
     persistAppState();
     renderSession();
   } catch (err) {
@@ -1512,36 +1380,6 @@ async function pushPendingSessions() {
     btn.disabled = false;
     btn.innerHTML = `<span class="push-pending-icon">↗</span> Push pending to ${providerLabel(target)}`;
   }
-}
-
-/** Build a plain-text prompt from the session that Claude / Codex can act on. */
-function buildSessionPrompt(session: Session): string {
-  const lines: string[] = [];
-  lines.push(`# Debugr session: ${session.title}`);
-  if (session.about) lines.push(`\nContext: ${session.about}`);
-  if (session.sessionNote) lines.push(`\nSession note: ${session.sessionNote}`);
-  if (session.projectFolder) lines.push(`\nProject folder: ${session.projectFolder}`);
-  if (session.githubRepo) lines.push(`\nGitHub repo: ${session.githubRepo}`);
-
-  session.captures.forEach((capture, ci) => {
-    lines.push(`\n## Capture ${ci + 1}: ${capture.title || 'Untitled'}`);
-    if (capture.preview && capture.preview !== 'No annotation notes yet') {
-      lines.push(`Preview: ${capture.preview}`);
-    }
-    capture.annotations.forEach((ann, ai) => {
-      lines.push(`\n  Annotation ${ai + 1} (${ann.kind ?? 'pin'}):`);
-      if (ann.text) lines.push(`    Note: ${ann.text}`);
-      if (ann.tags?.length) lines.push(`    Tags: ${ann.tags.join(', ')}`);
-    });
-  });
-
-  lines.push('\n---');
-  lines.push('Please analyse the above session and provide:');
-  lines.push('1. The likely root cause of the issue');
-  lines.push('2. A suggested fix with code if applicable');
-  lines.push('3. Concrete next steps');
-
-  return lines.join('\n');
 }
 
 async function sendSession() {
