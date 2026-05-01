@@ -873,14 +873,32 @@ fn show_overlay_window(app: &AppHandle) {
         }
 
         let _ = overlay.emit("overlay-will-show", ());
-        if let Err(e) = overlay.show() {
-            log_backend("overlay.window.show_failed", e.to_string());
+
+        // Use orderFrontRegardless instead of show() / makeKeyAndOrderFront.
+        // makeKeyAndOrderFront (what Tauri's show() calls) steals app activation
+        // even without an explicit macos_activate() call, which causes macOS to
+        // route mouse events to feedbackagent first and breaks dock/Cmd+Tab.
+        // orderFrontRegardless makes the window visible and on top within its
+        // level WITHOUT changing the active application, so the dock (level 20)
+        // stays above the overlay (NSFloatingWindowLevel = 3) and remains usable.
+        #[cfg(target_os = "macos")]
+        {
+            use objc::runtime::Object;
+            use objc::{msg_send, sel, sel_impl};
+            if let Ok(ptr) = overlay.ns_window() {
+                unsafe {
+                    let ns_window = ptr as *mut Object;
+                    let _: () = msg_send![ns_window, orderFrontRegardless];
+                }
+            } else {
+                // Fallback in case ns_window() fails
+                let _ = overlay.show();
+            }
         }
-        // Do NOT call set_focus / macos_activate here — forcing feedbackagent to
-        // be the active app causes macOS to route all mouse events to our window
-        // first, which blocks the dock and Cmd+Tab.  The overlay sits at
-        // NSFloatingWindowLevel (3), below the dock (20), so the dock remains
-        // usable.  The user's first click on the overlay naturally focuses it.
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = overlay.show();
+        }
     }
 }
 
