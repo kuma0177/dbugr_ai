@@ -1249,7 +1249,8 @@ function renderCapturePayload(session: Session) {
       if (!annotationId) return;
       if (button.dataset.confirming) {
         deleteAnnotationFromCapture(session, capture.id, annotationId);
-        renderSession();
+        renderCaptureList(session);
+        renderCapturePayload(session);
       } else {
         button.dataset.confirming = '1';
         button.textContent = 'Sure?';

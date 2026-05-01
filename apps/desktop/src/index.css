@@ -264,9 +264,9 @@ input, textarea {
 }
 
 .mini-action-danger {
-  border-color: rgba(216, 89, 61, 0.22);
-  background: rgba(255, 244, 241, 0.98);
-  color: #b65235;
+  border-color: rgba(255, 0, 0, 0.25);
+  background: rgba(255, 0, 0, 0.06);
+  color: #f00;
 }
 
 .wide-btn {
@@ -802,9 +802,9 @@ kbd {
 
 .session-item-delete {
   flex-shrink: 0;
-  border: 1px solid rgba(216, 89, 61, 0.18);
-  background: rgba(255, 244, 241, 0.98);
-  color: #b65235;
+  border: 1px solid rgba(255, 0, 0, 0.25);
+  background: rgba(255, 0, 0, 0.06);
+  color: #f00;
   border-radius: 999px;
   padding: 5px 8px;
   font-size: 10px;
@@ -813,7 +813,7 @@ kbd {
 }
 
 .session-item-delete:hover {
-  background: rgba(255, 239, 234, 1);
+  background: rgba(255, 0, 0, 0.12);
 }
 
 .view-all-link {
@@ -1181,9 +1181,9 @@ kbd {
 
 .capture-card-delete {
   align-self: flex-start;
-  border: 1px solid rgba(216, 89, 61, 0.22);
-  background: rgba(255, 244, 241, 0.98);
-  color: #b65235;
+  border: 1px solid rgba(255, 0, 0, 0.25);
+  background: rgba(255, 0, 0, 0.06);
+  color: #f00;
   border-radius: 999px;
   padding: 6px 10px;
   font-size: 11px;
@@ -1193,7 +1193,7 @@ kbd {
 }
 
 .capture-card-delete:hover {
-  background: rgba(255, 239, 234, 1);
+  background: rgba(255, 0, 0, 0.12);
 }
 
 .capture-payload {
@@ -1341,9 +1341,9 @@ kbd {
 
 .annotation-row-delete {
   justify-self: end;
-  border: 1px solid rgba(216, 89, 61, 0.18);
-  background: rgba(255, 244, 241, 0.98);
-  color: #b65235;
+  border: 1px solid rgba(255, 0, 0, 0.25);
+  background: rgba(255, 0, 0, 0.06);
+  color: #f00;
   border-radius: 999px;
   padding: 5px 9px;
   font-size: 11px;
@@ -1352,7 +1352,7 @@ kbd {
 }
 
 .annotation-row-delete:hover {
-  background: rgba(255, 239, 234, 1);
+  background: rgba(255, 0, 0, 0.12);
 }
 
 .capture-payload-note {
