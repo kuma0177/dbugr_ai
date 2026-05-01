@@ -1368,12 +1368,17 @@ async function pushPendingSessions() {
     renderSession();
   } catch (err) {
     console.error('[Debugr] pushPendingSessions failed:', err);
+    const hint = target === 'codex'
+      ? 'Set OPENAI_API_KEY or install: npm i -g @openai/codex'
+      : 'Run: claude /login  or install: npm i -g @anthropic-ai/claude-code';
     if (btn) {
-      btn.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+      btn.title = hint;
+      btn.textContent = `CLI error — see terminal`;
       setTimeout(() => {
         btn.disabled = false;
+        btn.title = '';
         btn.innerHTML = `<span class="push-pending-icon">↗</span> Push pending to ${providerLabel(target)}`;
-      }, 3000);
+      }, 4000);
       return;
     }
   }
@@ -1412,9 +1417,10 @@ async function saveScreenshots(capturesToSave: Array<{ id: string; screenshotUrl
 /** Build the shell command string for launching the AI CLI with auth guidance. */
 function buildCliCommand(cliName: 'claude' | 'codex', prompt: string): string {
   const escaped = prompt.replace(/'/g, "'\\''");
+  // Claude: needs /login  |  Codex: needs OPENAI_API_KEY env var
   const authHint = cliName === 'claude'
-    ? `echo "💡 Not logged in? Run: claude /login" && echo "" && `
-    : `echo "💡 Not logged in? Run: codex login" && echo "" && `;
+    ? `echo "💡 Auth error? Run: claude /login" && echo "" && `
+    : `echo "💡 Auth error? Set your key: export OPENAI_API_KEY=sk-..." && echo "" && `;
   return `${authHint}${cliName} '${escaped}'`;
 }
 
@@ -1463,9 +1469,13 @@ async function sendSession() {
       title: 'Could not launch CLI',
       summary: `Failed to open ${providerLabel(target)}: ${err instanceof Error ? err.message : String(err)}. Make sure the CLI is installed and on your PATH.`,
       nextSteps: [
-        target === 'codex' ? 'Install Codex CLI: npm install -g @openai/codex' : 'Install Claude CLI: npm install -g @anthropic-ai/claude-code',
-        target === 'codex' ? 'Authenticate: codex login' : 'Authenticate: claude /login',
-        'Re-open the terminal and try again',
+        target === 'codex'
+          ? 'Install: npm install -g @openai/codex'
+          : 'Install: npm install -g @anthropic-ai/claude-code',
+        target === 'codex'
+          ? 'Set API key: export OPENAI_API_KEY=sk-...  (get one at platform.openai.com/api-keys)'
+          : 'Log in: claude /login',
+        'Re-open Debugr and send again',
       ],
     };
   }
