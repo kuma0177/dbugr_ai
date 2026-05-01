@@ -50,7 +50,7 @@ interface BridgeSetup {
 
 const API = 'http://127.0.0.1:3001/api';
 const MAX_ANNOTATIONS = 5;
-const SESSION_CACHE_KEY = 'debugr-session-cache';
+const SESSION_CACHE_KEY = 'debugr-session-cache-v2';
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -73,80 +73,7 @@ let lastSavedCapture: { sessionTitle: string; annotationCount: number } | null =
 const win = getCurrentWindow();
 
 // ── Seed data (so the app looks great immediately) ────────────────────────────
-
-const seedSessions: Session[] = [
-  {
-    id: 'session_demo_1',
-    title: 'Onboarding flow bug',
-    status: 'responded',
-    createdAt: new Date(Date.now() - 5 * 60_000).toISOString(),
-    captures: [
-      {
-        id: 'cap_1', title: 'Setup skip crash',
-        preview: 'The onboarding flow is breaking for users who skip setup.',
-        annotations: [
-          { id: 'a1', number: 1, x: 120, y: 200, text: 'The onboarding flow is breaking for users who skip setup.', tags: ['Bug', 'Blocking'], timestamp: new Date(Date.now() - 5 * 60_000).toISOString() },
-        ],
-        timestamp: new Date(Date.now() - 5 * 60_000).toISOString(),
-      },
-      {
-        id: 'cap_2', title: 'Missing preferences',
-        preview: 'Console shows undefined error in UserSettings.tsx',
-        annotations: [
-          { id: 'a2', number: 1, x: 340, y: 180, text: 'Console shows undefined error in UserSettings.tsx', tags: ['Bug'], timestamp: new Date(Date.now() - 3 * 60_000).toISOString() },
-        ],
-        timestamp: new Date(Date.now() - 3 * 60_000).toISOString(),
-      },
-      {
-        id: 'cap_3', title: 'Broken CTA state',
-        preview: 'Confusing fallback state when no workspace exists',
-        annotations: [
-          { id: 'a3', number: 1, x: 200, y: 300, text: 'Confusing fallback state when no workspace exists', tags: ['UX'], timestamp: new Date(Date.now() - 1 * 60_000).toISOString() },
-        ],
-        timestamp: new Date(Date.now() - 1 * 60_000).toISOString(),
-      },
-    ],
-  },
-  {
-    id: 'session_demo_2',
-    title: 'API error on save',
-    status: 'draft',
-    createdAt: new Date(Date.now() - 70 * 60_000).toISOString(),
-    captures: [
-      {
-        id: 'cap_4', title: 'Save fails silently',
-        preview: 'No error shown when POST /api/save returns 500',
-        annotations: [],
-        timestamp: new Date(Date.now() - 70 * 60_000).toISOString(),
-      },
-    ],
-  },
-  {
-    id: 'session_demo_3',
-    title: 'Settings confusion',
-    status: 'draft',
-    createdAt: new Date(Date.now() - 28 * 3600_000).toISOString(),
-    captures: [
-      {
-        id: 'cap_5', title: 'Unclear toggle labels',
-        preview: 'Users don\'t understand what "sync" means in preferences',
-        annotations: [],
-        timestamp: new Date(Date.now() - 28 * 3600_000).toISOString(),
-      },
-      {
-        id: 'cap_6', title: 'Missing help text',
-        preview: 'No tooltip on the notification toggle',
-        annotations: [],
-        timestamp: new Date(Date.now() - 27 * 3600_000).toISOString(),
-      },
-    ],
-  },
-];
-
-const deletedIds = new Set<string>(JSON.parse(localStorage.getItem('deleted-session-ids') ?? '[]'));
-sessions = seedSessions.filter(s => !deletedIds.has(s.id));
-activeSessionId = sessions[0]?.id ?? null;
-activeCaptureId = sessions[0]?.captures[0]?.id ?? null;
+// Sessions are loaded from the local SQLite-backed API; no baked-in demo data.
 
 // ── DOM root ──────────────────────────────────────────────────────────────────
 
@@ -245,7 +172,9 @@ function renderWelcome() {
             <button class="recent-sessions-link" id="open-sessions-btn">Open all</button>
           </div>
           <div class="recent-session-list">
-            ${recentSessions.map(session => `
+            ${recentSessions.length === 0 ? `
+              <div class="recent-session-empty">No saved sessions yet. Your first capture will show up here.</div>
+            ` : recentSessions.map(session => `
               <div class="recent-session-item">
                 <button class="recent-session-open" data-session-id="${session.id}">
                   <strong>${session.title}</strong>
@@ -304,9 +233,6 @@ function renderWelcome() {
       sessions = sessions.filter(s => s.id !== sessionId);
       if (activeSessionId === sessionId) activeSessionId = sessions[0]?.id ?? null;
       persistSessionCache();
-      const stored = new Set<string>(JSON.parse(localStorage.getItem('deleted-session-ids') ?? '[]'));
-      stored.add(sessionId);
-      localStorage.setItem('deleted-session-ids', JSON.stringify([...stored]));
       renderWelcome();
     });
   });

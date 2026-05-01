@@ -529,8 +529,13 @@ function renderPin(ann: Annotation) {
   del.dataset.annId = ann.id;
   del.textContent = '×';
   del.title = 'Delete annotation';
+  del.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    e.preventDefault();
+  });
   del.addEventListener('click', e => {
     e.stopPropagation();
+    e.preventDefault();
     deleteAnnotation(ann.id);
   });
   del.style.left = `${ann.x + 20}px`;
@@ -606,8 +611,13 @@ function renderRegion(ann: Annotation) {
   del.dataset.annId = ann.id;
   del.textContent = '×';
   del.title = 'Delete annotation';
+  del.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    e.preventDefault();
+  });
   del.addEventListener('click', e => {
     e.stopPropagation();
+    e.preventDefault();
     deleteAnnotation(ann.id);
   });
   del.style.left = `${b.left + b.width - 10}px`;
@@ -762,7 +772,7 @@ root.addEventListener('contextmenu', e => e.preventDefault());
 root.addEventListener('pointerdown', e => {
   if (step !== 'annotating') return;
   const target = e.target as HTMLElement;
-  if (target.closest('.toolbar, .note-panel, .session-label, .ann-pin, .ann-highlight, .step-card')) return;
+  if (target.closest('.toolbar, .note-panel, .session-label, .ann-pin, .ann-highlight, .ann-delete, .step-card')) return;
 
   if (e.button === 0) {
     if (activeTool === 'pin') {
