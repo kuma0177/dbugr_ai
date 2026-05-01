@@ -29,6 +29,7 @@ export type IntegrationTarget =
   | 'github'
   | 'codex'
   | 'claude'
+  | 'cursor'
   | 'chatgpt'
   | 'gemini'
   | 'figma';
@@ -39,6 +40,7 @@ export type IntegrationProvider =
   | 'figma'
   | 'codex'
   | 'claude'
+  | 'cursor'
   | 'openai'
   | 'gemini'
   | 'youtube'

@@ -7,6 +7,8 @@ import { generateClaudeFeedback, generateCodexFeedback, type CaptureContext } fr
 
 export const feedbackSessionRouter = Router();
 
+type AgentTarget = 'claude' | 'codex' | 'cursor';
+
 const DEMO_USER_ID = 'user_demo';
 const DEMO_ORG_ID = 'org_demo';
 const DEMO_PROJECT_ID = 'proj_demo';
@@ -63,6 +65,16 @@ function getRepoContext() {
   const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
   const repoName = match ? `${match[1]}/${match[2].replace(/\.git$/, '')}` : '';
   return { repoUrl, repoName, repoBranch };
+}
+
+function parseTarget(value: unknown): AgentTarget {
+  return value === 'codex' || value === 'cursor' ? value : 'claude';
+}
+
+function targetLabel(target: AgentTarget) {
+  if (target === 'codex') return 'Codex';
+  if (target === 'cursor') return 'Cursor';
+  return 'Claude Code';
 }
 
 function extractSessionContext(userIntent?: string | null) {
@@ -268,8 +280,8 @@ feedbackSessionRouter.post('/feedback-sessions/:id/send-to-claude', async (req: 
     },
   });
 
-  const resolvedTarget = target === 'codex' ? 'codex' : 'claude';
-  const targetLabel = resolvedTarget === 'codex' ? 'Codex' : 'Claude Code';
+  const resolvedTarget = parseTarget(target);
+  const resolvedTargetLabel = targetLabel(resolvedTarget);
   const { repoUrl, repoName, repoBranch } = getRepoContext();
 
   // Parse userIntent if available (from native capture)
@@ -294,7 +306,7 @@ feedbackSessionRouter.post('/feedback-sessions/:id/send-to-claude', async (req: 
   // Generate real feedback from Claude or Codex
   let agentFeedback;
   try {
-    if (resolvedTarget === 'codex') {
+    if (resolvedTarget === 'codex' || resolvedTarget === 'cursor') {
       agentFeedback = await generateCodexFeedback(
         captureContext || {
           title: session.title,
@@ -333,7 +345,7 @@ feedbackSessionRouter.post('/feedback-sessions/:id/send-to-claude', async (req: 
     data: {
       task_id: task.id,
       feedback_id: session.id,
-      message: `Feedback from ${targetLabel} is ready.`,
+      message: `Feedback from ${resolvedTargetLabel} is ready.`,
       agent_feedback: agentFeedback,
     },
   });

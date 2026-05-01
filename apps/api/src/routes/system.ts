@@ -7,6 +7,8 @@ const execFileAsync = promisify(execFile);
 
 export const systemRouter = Router();
 
+type AgentTarget = 'claude' | 'codex' | 'cursor';
+
 const smokeLogEntries: Array<{
   timestamp: string;
   stage: string;
@@ -41,8 +43,18 @@ function getApiBaseUrl() {
   return process.env.DEBUGR_API_URL?.trim() || 'http://127.0.0.1:3001/api';
 }
 
+function parseTarget(value: unknown): AgentTarget {
+  return value === 'codex' || value === 'cursor' ? value : 'claude';
+}
+
+function agentLabel(target: AgentTarget) {
+  if (target === 'codex') return 'Codex';
+  if (target === 'cursor') return 'Cursor';
+  return 'Claude Code';
+}
+
 systemRouter.get('/system/bridge-setup', (req: Request, res: Response) => {
-  const target = req.query.target === 'codex' ? 'codex' : 'claude';
+  const target = parseTarget(req.query.target);
   const repoRoot = getRepoRoot();
   const apiBaseUrl = getApiBaseUrl();
 
@@ -122,14 +134,15 @@ systemRouter.get('/system/chrome-tabs', async (_req: Request, res: Response) => 
 });
 
 systemRouter.get('/system/handoff-context', (req: Request, res: Response) => {
-  const target = req.query.target === 'codex' ? 'codex' : 'claude';
+  const target = parseTarget(req.query.target);
+  const label = agentLabel(target);
   const { repoUrl, repoName, repoBranch } = getRepoContext();
 
   return res.json({
     data: {
       target,
-      agentLabel: target === 'codex' ? 'Codex' : 'Claude Code',
-      agentSessionLabel: target === 'codex' ? 'Current Codex work session' : 'Current Claude Code session',
+      agentLabel: label,
+      agentSessionLabel: `Current ${label} work session`,
       repoUrl: repoUrl || null,
       repoName: repoName || null,
       repoBranch,
