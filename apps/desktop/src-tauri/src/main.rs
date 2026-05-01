@@ -511,6 +511,8 @@ fn main() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             // ── Tray menu ──────────────────────────────────────────────────
+            let home = MenuItemBuilder::new("Open Debugr")
+                .id("home").build(app)?;
             let annotate = MenuItemBuilder::new("New Annotation  ⌃⌘Z")
                 .id("annotate").build(app)?;
             let sessions = MenuItemBuilder::new("Sessions")
@@ -519,6 +521,8 @@ fn main() {
                 .id("quit").build(app)?;
 
             let menu = MenuBuilder::new(app)
+                .item(&home)
+                .separator()
                 .item(&annotate)
                 .item(&sessions)
                 .separator()
@@ -531,9 +535,18 @@ fn main() {
                 .menu(&menu)
                 .tooltip("Debugr — ⌃⌘Z to annotate")
                 .on_menu_event(|app, event| match event.id().as_ref() {
+                    "home" => {
+                        if let Some(win) = app.get_webview_window("main") {
+                            macos_activate();
+                            let _ = win.emit("go-home", ());
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
                     "annotate"  => trigger_overlay(app),
                     "sessions"  => {
                         if let Some(win) = app.get_webview_window("main") {
+                            macos_activate();
                             let _ = win.emit("enter-session-mode", ());
                             let _ = win.show();
                             let _ = win.set_focus();
@@ -541,6 +554,22 @@ fn main() {
                     }
                     "quit" => app.exit(0),
                     _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    // Left-click on the tray icon → open home screen
+                    if let tauri::tray::TrayIconEvent::Click {
+                        button: tauri::tray::MouseButton::Left,
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        ..
+                    } = event {
+                        let app = tray.app_handle();
+                        if let Some(win) = app.get_webview_window("main") {
+                            macos_activate();
+                            let _ = win.emit("go-home", ());
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
                 })
                 .build(app)?;
 

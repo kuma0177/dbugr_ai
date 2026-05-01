@@ -1553,6 +1553,11 @@ async function listenForAnnotations() {
     }
     await enterSessionMode('notes');
   });
+
+  await listen('go-home', () => {
+    appMode = 'welcome';
+    render();
+  });
 }
 
 async function loadProviderConfig() {
