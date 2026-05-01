@@ -57,6 +57,8 @@ interface Session {
   contributions: Contribution[];
   collaborationReady: boolean;
   lastTarget?: Target;
+  /** Last time user clicked Save session (explicit checkpoint). */
+  lastExplicitSaveAt?: string | null;
 }
 
 interface AgentFeedback {
@@ -93,6 +95,8 @@ interface AuthState {
   name: string;
   email: string;
   avatarInitials: string;
+  company: string;
+  role: string;
 }
 
 interface PersistedState {
@@ -121,12 +125,16 @@ let connectingTarget: Target | null = null;
 let bridgeLaunchMessage = '';
 let contextToggles = { consoleLogs: true, networkLogs: true, environmentInfo: true };
 let lastSavedCapture: { sessionTitle: string; annotationCount: number } | null = null;
+/** Inline validation when Send is blocked (e.g. missing session note). */
+let submitGateError = '';
 let authState: AuthState = {
   authenticated: false,
   profileInitialized: false,
   name: 'Kumar',
   email: 'kumar@example.com',
   avatarInitials: 'KU',
+  company: '',
+  role: '',
 };
 let providerConnections: Record<Target, ProviderConnection> = {
   claude: { connected: false, method: null },
@@ -256,6 +264,7 @@ function hydrateAppState() {
         contributions: Array.isArray(session.contributions) ? session.contributions : [],
         collaborationReady: Boolean(session.collaborationReady),
         lastTarget: session.lastTarget === 'codex' || session.lastTarget === 'cursor' ? session.lastTarget : 'claude',
+        lastExplicitSaveAt: session.lastExplicitSaveAt ?? null,
       }));
     }
     if (parsed.authState) {
@@ -265,6 +274,8 @@ function hydrateAppState() {
         name: parsed.authState.name || authState.name,
         email: parsed.authState.email || authState.email,
         avatarInitials: parsed.authState.avatarInitials || authState.avatarInitials,
+        company: typeof parsed.authState.company === 'string' ? parsed.authState.company : '',
+        role: typeof parsed.authState.role === 'string' ? parsed.authState.role : '',
       };
     }
     if (parsed.providerConnections) {
@@ -445,12 +456,26 @@ function renderWelcome() {
             <button class="btn-secondary wide-btn" id="finish-setup-btn" ${canFinishSetup ? '' : 'disabled'}>
               ${authState.profileInitialized ? 'Setup complete' : 'Finish setup'}
             </button>
+            ${authState.authenticated ? `
+            <div class="welcome-profile-fields">
+              <div class="panel-kicker">Optional profile</div>
+              <p class="panel-copy">Company and role are saved locally and included in AI submission payloads.</p>
+              <label class="field-block welcome-field">
+                <span class="field-label-inline">Company <span class="field-optional">(optional)</span></span>
+                <input class="field-input" id="profile-company-input" type="text" value="${escapeHtml(authState.company)}" placeholder="Acme Inc." autocomplete="organization" />
+              </label>
+              <label class="field-block welcome-field">
+                <span class="field-label-inline">Role <span class="field-optional">(optional)</span></span>
+                <input class="field-input" id="profile-role-input" type="text" value="${escapeHtml(authState.role)}" placeholder="Engineer, PM, …" autocomplete="organization-title" />
+              </label>
+            </div>` : ''}
           </section>
 
           <section class="welcome-panel">
             <div class="panel-kicker">Connect AI platforms</div>
             <h2>MCP destinations</h2>
             <p class="panel-copy">Launch the bridge you want for each AI surface. These buttons open the real helper in Terminal.</p>
+            <p class="panel-copy panel-copy-muted">No cloud MCP tokens are stored in the app — the bridge runs locally on your machine.</p>
             <div class="provider-list">
               ${(['claude', 'codex', 'cursor'] as Target[]).map((provider) => `
                 <div class="provider-card">
@@ -523,12 +548,16 @@ function renderWelcome() {
     renderWelcome();
   });
 
+  document.getElementById('profile-company-input')?.addEventListener('input', (event) => {
+    authState.company = (event.target as HTMLInputElement).value;
+    persistAppState();
+  });
+  document.getElementById('profile-role-input')?.addEventListener('input', (event) => {
+    authState.role = (event.target as HTMLInputElement).value;
+    persistAppState();
+  });
+
   document.getElementById('start-bg-btn')?.addEventListener('click', async () => {
-    try {
-      await invoke('register_global_shortcut');
-    } catch {
-      // ignore if already registered
-    }
     await invoke('hide_main_window');
   });
 
@@ -640,7 +669,7 @@ function renderConfirmation() {
             : 'Your annotation was added to the active session.'}
         </p>
         <div class="confirm-summary">
-          <div><strong>Next:</strong> add more notes, choose the submission flow, then send to Claude, Codex, or Cursor.</div>
+          <div><strong>Next:</strong> in the Debugr workspace, open <strong>Submit</strong> and choose Claude, Codex, or Cursor — captures are not sent from the overlay itself.</div>
         </div>
         <div class="confirm-actions">
           <button class="btn-secondary" id="confirm-more-btn">+ Add more annotations</button>
@@ -713,13 +742,17 @@ function renderSession() {
                   <div class="session-title">${escapeHtml(session.title)}</div>
                   <div class="session-meta">${fmtDate(session.createdAt)} · ${fmtTime(session.createdAt)} · ${flowLabel(session.submissionFlow)} · ${buildStatusCopy(session)}</div>
                 </div>
-                <div class="session-badge responded">${escapeHtml(session.status === 'responded' ? 'Responded' : session.status === 'sent' ? 'Submitted' : 'Draft')}</div>
+                <div class="session-header-actions">
+                  <button type="button" class="mini-action" id="save-session-btn">Save session</button>
+                  <div class="session-badge responded">${escapeHtml(session.status === 'responded' ? 'Responded' : session.status === 'sent' ? 'Submitted' : 'Draft')}</div>
+                </div>
               </div>
               <div class="session-summary-strip">
                 <div class="summary-chip">${session.captures.length} capture${session.captures.length === 1 ? '' : 's'}</div>
                 <div class="summary-chip">${totalAnnotations(session)} annotations</div>
                 <div class="summary-chip">${acceptedContributions(session).length} curated items</div>
                 <div class="summary-chip">${providerConnections[target].connected ? `${providerLabel(target)} connected` : `${providerLabel(target)} pending`}</div>
+                ${session.lastExplicitSaveAt ? `<div class="summary-chip subtle">Checkpoint ${fmtTime(session.lastExplicitSaveAt)}</div>` : ''}
               </div>
             </div>
 
@@ -743,6 +776,9 @@ function renderSession() {
                     <span class="field-label-inline">Session note</span>
                     <textarea class="field-textarea compact" id="session-note-input" placeholder="Add session-level notes, expected behavior, or reproduction detail.">${escapeHtml(session.sessionNote ?? '')}</textarea>
                     <span class="field-helper">This is the human note that should travel with the whole session, not just a single screenshot.</span>
+                    ${totalAnnotations(session) > 1 && !(session.sessionNote ?? '').trim()
+    ? '<span class="field-helper field-helper-warn">Required before you can send to AI when this session has more than one annotation.</span>'
+    : ''}
                   </label>
                 </section>
 
@@ -1051,6 +1087,7 @@ function renderWorkspacePanel() {
         <div class="right-panel-sub">Choose the destination and the final context packet.</div>
       </div>
       <div class="right-panel-body stacked-panel">
+        ${submitGateError ? `<div class="submit-gate-error" role="alert">${escapeHtml(submitGateError)}</div>` : ''}
         <div class="field-label">Destination</div>
         <div class="target-grid target-grid-wide">
           ${(['claude', 'codex', 'cursor'] as Target[]).map((provider) => `
@@ -1124,9 +1161,14 @@ function renderWorkspacePanel() {
             <p>${escapeHtml(feedback.summary)}</p>
             ${feedback.rootCause ? `<p class="feedback-label">Root cause</p><p>${escapeHtml(feedback.rootCause)}</p>` : ''}
             ${feedback.suggestedFix ? `<p class="feedback-label">Suggested fix</p><p>${escapeHtml(feedback.suggestedFix)}</p>` : ''}
-            ${feedback.codeSnippet ? `<pre><code>${feedback.codeSnippet}</code></pre>` : ''}
+            ${feedback.codeSnippet ? `<pre><code>${escapeHtml(feedback.codeSnippet)}</code></pre>` : ''}
             <div class="next-step-list">
               ${(feedback.nextSteps ?? []).map((step) => `<div class="next-step-item">${escapeHtml(step)}</div>`).join('')}
+            </div>
+            <div class="insights-actions">
+              <button type="button" class="btn-secondary" id="copy-insights-summary">Copy summary</button>
+              ${feedback.codeSnippet ? '<button type="button" class="btn-secondary" id="copy-insights-code">Copy code</button>' : ''}
+              <button type="button" class="btn-secondary" id="open-in-cursor-btn">Open in Cursor</button>
             </div>
           </div>
         </div>
@@ -1143,6 +1185,43 @@ function renderWorkspacePanel() {
     workspaceSection = 'submit';
     renderSession();
   });
+
+  if (feedback) {
+    document.getElementById('copy-insights-summary')?.addEventListener('click', async () => {
+      const text = [
+        feedback.title,
+        feedback.summary,
+        feedback.rootCause ? `Root cause:\n${feedback.rootCause}` : '',
+        feedback.suggestedFix ? `Suggested fix:\n${feedback.suggestedFix}` : '',
+        (feedback.nextSteps ?? []).length > 0
+          ? `Next steps:\n${(feedback.nextSteps ?? []).map((s, i) => `${i + 1}. ${s}`).join('\n')}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        window.alert('Could not copy to clipboard.');
+      }
+    });
+    document.getElementById('copy-insights-code')?.addEventListener('click', async () => {
+      if (!feedback.codeSnippet) return;
+      try {
+        await navigator.clipboard.writeText(feedback.codeSnippet);
+      } catch {
+        window.alert('Could not copy to clipboard.');
+      }
+    });
+    document.getElementById('open-in-cursor-btn')?.addEventListener('click', async () => {
+      const folder = activeSession()?.projectFolder?.trim();
+      try {
+        await invoke('open_in_cursor', { projectFolder: folder && folder.length > 0 ? folder : null });
+      } catch (e) {
+        window.alert(e instanceof Error ? e.message : 'Could not open Cursor. Is it installed?');
+      }
+    });
+  }
 }
 
 function bindSessionActions() {
@@ -1165,11 +1244,17 @@ function bindSessionActions() {
       const section = button.dataset.section as WorkspaceSection | undefined;
       if (!section) return;
       workspaceSection = section;
+      if (section === 'submit') submitGateError = '';
       renderSession();
     });
   });
   if (!session) return;
 
+  document.getElementById('save-session-btn')?.addEventListener('click', () => {
+    session.lastExplicitSaveAt = new Date().toISOString();
+    persistAppState();
+    renderSession();
+  });
   const titleInput = document.getElementById('session-title-input') as HTMLInputElement | null;
   const aboutInput = document.getElementById('session-about-input') as HTMLTextAreaElement | null;
   const noteInput = document.getElementById('session-note-input') as HTMLTextAreaElement | null;
@@ -1189,6 +1274,7 @@ function bindSessionActions() {
   });
   noteInput?.addEventListener('input', () => {
     session.sessionNote = noteInput.value;
+    submitGateError = '';
     persistAppState();
   });
   folderInput?.addEventListener('input', () => {
@@ -1303,6 +1389,7 @@ async function loadSessionsFromApi() {
         contributions: [],
         collaborationReady: false,
         lastTarget: 'claude',
+        lastExplicitSaveAt: null,
       });
     }
     sessions = sortedSessions();
@@ -1318,6 +1405,16 @@ async function loadSessionsFromApi() {
 async function sendSession() {
   const session = activeSession();
   if (!session) return;
+
+  const annCount = totalAnnotations(session);
+  if (annCount > 1 && !(session.sessionNote ?? '').trim()) {
+    submitGateError =
+      'Add a session-level note before sending. It is required when this session has more than one annotation.';
+    workspaceSection = 'submit';
+    renderSession();
+    return;
+  }
+  submitGateError = '';
 
   isSending = true;
   session.status = 'sent';
@@ -1341,6 +1438,8 @@ async function sendSession() {
         projectFolder: session.projectFolder ?? '',
         githubRepo: session.githubRepo ?? '',
         submissionFlow: session.submissionFlow,
+        profileCompany: authState.company ?? '',
+        profileRole: authState.role ?? '',
       },
       captures: session.captures,
       curatedContributions: acceptedContributions(session),
@@ -1357,8 +1456,19 @@ async function sendSession() {
     });
     if (response.ok) {
       const json = await response.json();
-      const sessionId = json.data?.id;
+      const sessionId = json.data?.id as string | undefined;
       if (sessionId) {
+        if (session.submissionFlow === 'team' || session.submissionFlow === 'public') {
+          try {
+            await fetch(`${API}/feedback-sessions/${sessionId}/finalize`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ durationMs: 0 }),
+            });
+          } catch {
+            /* finalize is best-effort for desktop handoff */
+          }
+        }
         const sendResponse = await fetch(`${API}/feedback-sessions/${sessionId}/send-to-claude`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1468,6 +1578,7 @@ async function listenForAnnotations() {
         contributions: [],
         collaborationReady: false,
         lastTarget: target,
+        lastExplicitSaveAt: null,
       };
       sessions.unshift(session);
       activeSessionId = session.id;

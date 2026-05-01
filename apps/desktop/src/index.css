@@ -1169,6 +1169,65 @@ kbd {
   font-size: 12px;
 }
 
+.session-header-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.panel-copy-muted {
+  margin-top: -6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.welcome-profile-fields {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.welcome-profile-fields .welcome-field {
+  gap: 8px;
+}
+
+.field-optional {
+  font-weight: 400;
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.field-helper-warn {
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.submit-gate-error {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.06);
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.insights-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.insights-actions .btn-secondary {
+  width: auto;
+  min-height: 36px;
+}
+
 @media (max-width: 900px) {
   .welcome-grid {
     grid-template-columns: 1fr;

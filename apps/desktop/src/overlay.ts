@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { emit, listen } from '@tauri-apps/api/event';
+import { emit, emitTo, listen } from '@tauri-apps/api/event';
 import './overlay.css';
 
 declare const __DEBUGR_BUILD_STAMP__: string;
@@ -28,6 +28,8 @@ const MAX_ANNOTATIONS = 5;
 const MIN_REGION = 36;
 const TAGS = ['Bug', 'UX', 'Blocking', 'Question'];
 const SESSION_CACHE_KEY = 'debugr-session-cache';
+const MAIN_WEBVIEW_LABEL = 'main';
+const FINISH_TOOL_LABEL = 'Finish → workspace';
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -110,12 +112,23 @@ root.innerHTML = `
   <div id="annotation-ui" style="display:none;">
     <!-- Top-center toast -->
     <div class="toast" id="toast">
-      <kbd>⌃</kbd><kbd>⌘</kbd><kbd>Z</kbd>
-      <span id="toast-text">Click anywhere to add a pin. Right-drag to draw a region.</span>
+      <div class="toast-main">
+        <div class="toast-shortcuts">
+          <kbd>⌃</kbd><kbd>⌘</kbd><kbd>Z</kbd>
+        </div>
+        <span id="toast-text">Click anywhere to add a pin. Right-drag to draw a region.</span>
+      </div>
+      <p class="toast-sub" id="toast-sub"></p>
     </div>
 
-    <!-- Session label -->
-    <div class="session-label" id="session-label"></div>
+    <!-- Session target + change -->
+    <div class="session-banner" id="session-banner" style="display:none;">
+      <div class="session-pill">
+        <span class="session-pill-title" id="session-pill-title"></span>
+        <code class="session-pill-id" id="session-pill-id"></code>
+      </div>
+      <button type="button" class="session-change-btn" id="session-change-btn">Change session</button>
+    </div>
 
     <!-- SVG connectors -->
     <svg class="ann-connector" id="connectors" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -150,7 +163,7 @@ root.innerHTML = `
       </button>
       <div class="toolbar-divider"></div>
       <button class="tool-btn cancel" id="tool-cancel">Esc</button>
-      <button class="tool-btn save-btn" id="tool-save">Save →</button>
+      <button class="tool-btn save-btn" id="tool-save">${FINISH_TOOL_LABEL}</button>
     </div>
   </div>
 
@@ -164,8 +177,12 @@ const pickerListEl   = document.getElementById('picker-list')!;
 const stepPickerEl   = document.getElementById('step-picker')!;
 const stepSetupEl    = document.getElementById('step-setup')!;
 const annotationUiEl = document.getElementById('annotation-ui')!;
-const sessionLabelEl = document.getElementById('session-label')!;
+const sessionBannerEl = document.getElementById('session-banner')!;
+const sessionPillTitleEl = document.getElementById('session-pill-title')!;
+const sessionPillIdEl = document.getElementById('session-pill-id')!;
+const sessionChangeBtn = document.getElementById('session-change-btn') as HTMLButtonElement;
 const toastTextEl    = document.getElementById('toast-text')!;
+const toastSubEl     = document.getElementById('toast-sub')!;
 const notePanelEl    = document.getElementById('note-panel') as HTMLDivElement;
 const noteTitleEl    = document.getElementById('note-title')!;
 const noteSubtitleEl = document.getElementById('note-subtitle')!;
@@ -179,6 +196,7 @@ const setupGithubEl  = document.getElementById('setup-github') as HTMLInputEleme
 const setupFolderBtn = document.getElementById('setup-folder-btn') as HTMLButtonElement;
 const setupFolderPath = document.getElementById('setup-folder-path')!;
 const setupStartBtn = document.getElementById('setup-start') as HTMLButtonElement;
+const toolSaveBtn = document.getElementById('tool-save') as HTMLButtonElement;
 
 // ── Step transitions ──────────────────────────────────────────────────────────
 
@@ -213,11 +231,23 @@ function boxOf(ann: Annotation) {
 
 function setToast(msg: string) { toastTextEl.textContent = msg; }
 
+function updateAnnotatingHints() {
+  if (step !== 'annotating') {
+    toastSubEl.textContent = '';
+    toastSubEl.style.display = 'none';
+    return;
+  }
+  toastSubEl.style.display = 'block';
+  toastSubEl.textContent =
+    'Nothing is sent to Claude/Codex/Cursor from this overlay. Finish opens Debugr → use the Submit step there.';
+}
+
 function updateCounter() {
   const n = annotations.length;
   setToast(n > 0
-    ? `${n} annotation${n > 1 ? 's' : ''} added — click Save when done.`
-    : `Click anywhere to add a pin. Right-drag to draw a region. (⌃⌘Z opens Debugr.)`);
+    ? `${n} annotation${n > 1 ? 's' : ''} — save each note, then tap Finish below.`
+    : 'Click anywhere to add a pin. Right-drag to draw a region. (⌃⌘Z opens Debugr.)');
+  updateAnnotatingHints();
 }
 
 function readCachedPickerSessions(): PickerSession[] {
@@ -329,6 +359,27 @@ document.getElementById('picker-cancel')!.addEventListener('click', e => {
   e.stopPropagation(); void cancelOverlay();
 });
 
+sessionChangeBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  if (annotations.length > 0) {
+    if (!confirm(`Switch to a different session? The ${annotations.length} annotation(s) on screen will be discarded.`)) return;
+  }
+  clearAnnotationDOM();
+  connectorsEl.innerHTML = '';
+  annotations = [];
+  selectedId = null;
+  notePanelEl.style.display = 'none';
+  targetSessionId = null;
+  newSessionName = '';
+  newSessionAbout = '';
+  localFolder = null;
+  githubRepo = '';
+  sessionBannerEl.style.display = 'none';
+  showStep('picking');
+  setPickerLoading();
+  void emit('request-sessions');
+});
+
 // ── Step 2: New session setup ─────────────────────────────────────────────────
 
 document.getElementById('setup-back')!.addEventListener('click', e => {
@@ -388,10 +439,16 @@ function enterAnnotating() {
     newSessionAbout = '';
   }
 
-  // Show session context label in annotation mode
   const label = targetSessionId ? `Adding to: ${newSessionName}` : `New: ${newSessionName}`;
-  sessionLabelEl.textContent = label;
-  sessionLabelEl.style.display = 'block';
+  sessionPillTitleEl.textContent = label;
+  if (targetSessionId) {
+    sessionPillIdEl.textContent = `${targetSessionId.slice(0, 8)}…`;
+    sessionPillIdEl.style.display = 'inline';
+  } else {
+    sessionPillIdEl.textContent = '';
+    sessionPillIdEl.style.display = 'none';
+  }
+  sessionBannerEl.style.display = 'flex';
 
   showStep('annotating');
   setTool('pin', false);
@@ -434,16 +491,28 @@ document.addEventListener('keydown', e => {
 
 async function saveAll() {
   if (annotations.length === 0) { void cancelOverlay(); return; }
-  await emit('annotations-saved', {
-    annotations,
-    targetSessionId,
-    newSessionName,
-    newSessionAbout,
-    localFolder,
-    githubRepo,
-  });
-  await invoke('show_session_window');
-  await invoke('hide_overlay');
+  const prevLabel = toolSaveBtn.textContent || FINISH_TOOL_LABEL;
+  toolSaveBtn.disabled = true;
+  toolSaveBtn.textContent = 'Opening…';
+  try {
+    await emitTo(MAIN_WEBVIEW_LABEL, 'annotations-saved', {
+      annotations,
+      targetSessionId,
+      newSessionName,
+      newSessionAbout,
+      localFolder,
+      githubRepo,
+    });
+    await invoke('show_session_window');
+    await invoke('hide_overlay');
+  } catch (err) {
+    console.error(err);
+    setToast(`Couldn't finish — ${err instanceof Error ? err.message : String(err)}`);
+    updateAnnotatingHints();
+    toolSaveBtn.disabled = false;
+    toolSaveBtn.textContent = prevLabel;
+    return;
+  }
   setTimeout(resetState, 400);
 }
 
@@ -697,7 +766,9 @@ function deselectAnnotation() {
 
 function showNotePanel(ann: Annotation) {
   noteTitleEl.textContent = `Annotation ${ann.number}`;
-  noteSubtitleEl.textContent = ann.kind === 'region' ? 'Region — resize by dragging edges' : 'Pin annotation';
+  noteSubtitleEl.textContent = ann.kind === 'region'
+    ? 'Drag handles to resize. Save note closes this panel — Finish opens Debugr.'
+    : 'Save note closes this panel — Finish opens Debugr.';
   noteBodyEl.innerHTML = `
     <div class="note-label">Notes</div>
     <textarea id="note-ta" placeholder="What should Claude know about this area?">${ann.text}</textarea>
@@ -705,7 +776,7 @@ function showNotePanel(ann: Annotation) {
     <div class="chips">
       ${TAGS.map(t => `<button class="chip${ann.tags.includes(t) ? ' active' : ''}" data-tag="${t}">${t}</button>`).join('')}
     </div>
-    <button class="save-ann-btn" id="save-ann">Save annotation  ⌘↵</button>
+    <button class="save-ann-btn" id="save-ann">Save note  ⌘↵</button>
   `;
 
   const ta = noteBodyEl.querySelector<HTMLTextAreaElement>('#note-ta')!;
@@ -736,11 +807,15 @@ function showNotePanel(ann: Annotation) {
 
 function saveAnnotation(ann: Annotation) {
   const btn = noteBodyEl.querySelector<HTMLButtonElement>('#save-ann')!;
+  const defaultLabel = 'Save note  ⌘↵';
   btn.textContent = '✓ Saved';
   btn.style.background = '#16a34a';
   setTimeout(() => {
+    btn.textContent = defaultLabel;
+    btn.style.background = '';
     deselectAnnotation();
-    setToast(`Annotation ${ann.number} saved — add more or click Save when done.`);
+    setToast(`Annotation ${ann.number} saved — add more or tap Finish when done.`);
+    updateAnnotatingHints();
   }, 400);
 }
 
@@ -772,7 +847,7 @@ root.addEventListener('contextmenu', e => e.preventDefault());
 root.addEventListener('pointerdown', e => {
   if (step !== 'annotating') return;
   const target = e.target as HTMLElement;
-  if (target.closest('.toolbar, .note-panel, .session-label, .ann-pin, .ann-highlight, .ann-delete, .step-card')) return;
+  if (target.closest('.toolbar, .note-panel, .session-banner, .ann-pin, .ann-highlight, .ann-delete, .step-card')) return;
 
   if (e.button === 0) {
     if (activeTool === 'pin') {
@@ -909,7 +984,11 @@ function resetState() {
   selRectEl.style.display = 'none';
   screenshotBg.style.backgroundImage = '';
   notePanelEl.style.display = 'none';
-  sessionLabelEl.style.display = 'none';
+  sessionBannerEl.style.display = 'none';
+  toastSubEl.textContent = '';
+  toastSubEl.style.display = 'none';
+  toolSaveBtn.disabled = false;
+  toolSaveBtn.textContent = FINISH_TOOL_LABEL;
   setPickerLoading();
   setupNameEl.value = '';
   setupAboutEl.value = '';

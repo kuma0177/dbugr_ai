@@ -189,7 +189,6 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn show_session_window(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
-        let _ = win.emit("enter-session-mode", ());
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
     }
@@ -202,6 +201,32 @@ fn hide_main_window(app: AppHandle) -> Result<(), String> {
         win.hide().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Open Cursor at an optional project folder (macOS). Falls back to opening the app with no path.
+#[tauri::command]
+fn open_in_cursor(project_folder: Option<String>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = Command::new("open");
+        cmd.arg("-a").arg("Cursor");
+        if let Some(folder) = project_folder {
+            let trimmed = folder.trim();
+            if !trimmed.is_empty() {
+                cmd.arg(trimmed);
+            }
+        }
+        let status = cmd.status().map_err(|e| format!("Failed to launch Cursor: {e}"))?;
+        if !status.success() {
+            return Err("Cursor did not open successfully.".into());
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = project_folder;
+        Err("Open in Cursor is only available on macOS.".into())
+    }
 }
 
 fn tray_template_icon() -> Image<'static> {
@@ -380,6 +405,7 @@ fn main() {
             show_session_window,
             hide_main_window,
             pick_folder,
+            open_in_cursor,
         ])
         .run(tauri::generate_context!())
         .expect("error while running debugr.ai");

@@ -73,24 +73,48 @@ html, body {
   position: fixed;
   top: 52px; left: 50%;
   transform: translateX(-50%);
-  display: flex; align-items: center; gap: 8px;
-  padding: 9px 16px 9px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 10px 16px 11px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: var(--shadow);
   font-size: 12px; color: var(--muted);
-  pointer-events: none; white-space: nowrap;
+  pointer-events: none;
+  max-width: min(440px, calc(100vw - 32px));
   z-index: 700;
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
 }
-.toast kbd {
+.toast-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toast-shortcuts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.toast-shortcuts kbd {
   min-width: 22px; padding: 3px 6px;
   border: 1px solid #cbd5e1; border-bottom-width: 2px;
   border-radius: 5px; background: #fff;
   color: var(--text); font-size: 11px; font-weight: 700;
   font-family: inherit;
+}
+.toast-sub {
+  margin: 0;
+  padding-left: 2px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  font-weight: 500;
+  white-space: normal;
 }
 
 /* ── Step cards (picker + setup) ────────────────────────────────────────── */
@@ -230,17 +254,63 @@ html, body {
   cursor: not-allowed;
 }
 
-/* Session label shown in annotation mode */
-.session-label {
-  position: fixed; top: 106px; left: 50%; transform: translateX(-50%);
-  padding: 6px 16px;
-  background: rgba(255,255,255,0.96);
-  border: 1px solid var(--border); border-radius: 999px;
-  box-shadow: var(--shadow);
-  font-size: 12px; font-weight: 600; color: var(--text);
-  pointer-events: none; z-index: 700;
-  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+/* Session target — annotation mode */
+.session-banner {
+  position: fixed;
+  top: 112px;
+  left: 50%;
+  transform: translateX(-50%);
   display: none;
+  align-items: center;
+  gap: 10px;
+  z-index: 701;
+  pointer-events: auto;
+  max-width: min(520px, calc(100vw - 24px));
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.session-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 14px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.session-pill-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.session-pill-id {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+}
+.session-change-btn {
+  flex-shrink: 0;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--blue);
+  cursor: pointer;
+  box-shadow: var(--shadow-soft);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.session-change-btn:hover {
+  background: var(--blue-soft);
+  border-color: rgba(37, 99, 235, 0.35);
 }
 
 /* folder-pick-btn and folder-path used inside .step-card */
