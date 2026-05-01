@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}, io::Write as _};
+use std::{ffi::CStr, fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}, io::Write as _};
 use core_graphics::display::CGDisplay;
 use tauri::{AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri::image::Image;
@@ -25,6 +25,69 @@ fn macos_activate() {
 
 #[cfg(not(target_os = "macos"))]
 fn macos_activate() {}
+
+#[cfg(target_os = "macos")]
+fn macos_frontmost_bundle_identifier() -> Option<String> {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    unsafe {
+        let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+        if workspace.is_null() {
+            return None;
+        }
+        let app: *mut Object = msg_send![workspace, frontmostApplication];
+        if app.is_null() {
+            return None;
+        }
+        let bundle_id: *mut Object = msg_send![app, bundleIdentifier];
+        if bundle_id.is_null() {
+            return None;
+        }
+        let utf8: *const std::os::raw::c_char = msg_send![bundle_id, UTF8String];
+        if utf8.is_null() {
+            return None;
+        }
+        Some(CStr::from_ptr(utf8).to_string_lossy().into_owned())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_frontmost_bundle_identifier() -> Option<String> {
+    None
+}
+
+fn restore_frontmost_bundle(bundle_id: &str, own_bundle_id: &str) {
+    if bundle_id.is_empty() || bundle_id == own_bundle_id {
+        return;
+    }
+
+    log_backend(
+        "overlay.restore_frontmost.start",
+        format!("bundle_id={bundle_id}"),
+    );
+
+    match Command::new("open").args(["-b", bundle_id]).status() {
+        Ok(status) if status.success() => {
+            log_backend(
+                "overlay.restore_frontmost.success",
+                format!("bundle_id={bundle_id}"),
+            );
+        }
+        Ok(status) => {
+            log_backend(
+                "overlay.restore_frontmost.failed",
+                format!("bundle_id={bundle_id} status={status}"),
+            );
+        }
+        Err(error) => {
+            log_backend(
+                "overlay.restore_frontmost.error",
+                format!("bundle_id={bundle_id} error={error}"),
+            );
+        }
+    }
+}
 
 // ── CoreGraphics for screen-capture permissions ───────────────────────────────
 
@@ -540,33 +603,6 @@ fn take_silent_screenshot() -> Result<String, String> {
     Ok(encode_png_bytes_to_data_url(&png_bytes))
 }
 
-/// Interactive fallback capture when silent capture fails.
-fn take_interactive_fallback_screenshot() -> Result<String, String> {
-    let path = temp_capture_path();
-    log_backend(
-        "screenshot.interactive_fallback.start",
-        format!("path={}", path.display()),
-    );
-    let ok = Command::new("screencapture")
-        .args(["-i", "-x", "-t", "png"])
-        .arg(&path)
-        .status()
-        .map_err(|e| format!("interactive screencapture failed: {e}"))?
-        .success();
-    if !ok || !path.exists() {
-        log_backend(
-            "screenshot.interactive_fallback.failed",
-            format!("path={} command_ok={ok} exists={}", path.display(), path.exists()),
-        );
-        return Err("Interactive screenshot cancelled or failed".into());
-    }
-    log_backend(
-        "screenshot.interactive_fallback.success",
-        format!("path={}", path.display()),
-    );
-    encode_image_at(&path)
-}
-
 /// Interactive screenshot (used from session window).
 #[tauri::command]
 fn capture_interactive_screenshot(app: AppHandle) -> Result<String, String> {
@@ -636,7 +672,7 @@ fn finish_annotations(
 #[tauri::command]
 fn show_overlay(app: AppHandle) -> Result<(), String> {
     log_backend("overlay.show.requested", "source=frontend");
-    trigger_overlay(&app);
+    trigger_overlay(&app, "frontend");
     Ok(())
 }
 
@@ -649,6 +685,14 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
     if let Some(main) = app.get_webview_window("main") {
         main.show().map_err(|e| e.to_string())?;
         let _ = main.set_focus();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn suspend_overlay(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("overlay") {
+        let _ = win.hide();
     }
     Ok(())
 }
@@ -904,8 +948,8 @@ fn show_overlay_window(app: &AppHandle) {
     }
 }
 
-fn trigger_overlay(app: &AppHandle) {
-    log_backend("overlay.trigger.start", "source=shortcut_or_ui");
+fn trigger_overlay(app: &AppHandle, source: &str) {
+    log_backend("overlay.trigger.start", format!("source={source}"));
     // If already visible, hide it (toggle)
     if let Some(overlay) = app.get_webview_window("overlay") {
         if overlay.is_visible().unwrap_or(false) {
@@ -928,6 +972,9 @@ fn trigger_overlay(app: &AppHandle) {
         }
     }
 
+    let frontmost_bundle = macos_frontmost_bundle_identifier();
+    let own_bundle_id = app.config().identifier.clone();
+
     // Hide main window before capturing so it never appears in the screenshot
     // and doesn't block the user from selecting regions on the target app.
     if let Some(main) = app.get_webview_window("main") {
@@ -941,27 +988,31 @@ fn trigger_overlay(app: &AppHandle) {
         std::thread::sleep(std::time::Duration::from_millis(200));
 
         log_backend("overlay.capture.thread_start", "delay_ms=200");
-        let screenshot = take_silent_screenshot().or_else(|e| {
-            log_backend("overlay.capture.silent_failed", e);
-            take_interactive_fallback_screenshot()
-        });
+        if let Some(bundle_id) = frontmost_bundle.as_deref() {
+            restore_frontmost_bundle(bundle_id, &own_bundle_id);
+            std::thread::sleep(std::time::Duration::from_millis(140));
+        }
 
-        show_overlay_window(&app);
-        if let Some(overlay) = app.get_webview_window("overlay") {
-            match screenshot {
-                Ok(data_url) => {
+        match take_silent_screenshot() {
+            Ok(data_url) => {
+                show_overlay_window(&app);
+                if let Some(overlay) = app.get_webview_window("overlay") {
                     log_backend(
                         "overlay.capture.success",
                         format!("data_url_len={}", data_url.len()),
                     );
                     let _ = overlay.emit("set-screenshot", data_url);
                 }
-                Err(e) => {
-                    log_backend("overlay.capture.failed", e.clone());
-                    let _ = overlay.emit("set-screenshot", String::new());
-                    if let Some(main) = app.get_webview_window("main") {
-                        let _ = main.emit("screen-capture-failed", e.clone());
-                    }
+            }
+            Err(e) => {
+                log_backend("overlay.capture.failed", e.clone());
+                if let Some(overlay) = app.get_webview_window("overlay") {
+                    let _ = overlay.hide();
+                }
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.emit("screen-capture-failed", e.clone());
+                    let _ = main.show();
+                    let _ = main.set_focus();
                 }
             }
         }
@@ -1020,7 +1071,7 @@ fn main() {
                             let _ = win.set_focus();
                         }
                     }
-                    "annotate"  => trigger_overlay(app),
+                    "annotate"  => trigger_overlay(app, "tray"),
                     "sessions"  => {
                         if let Some(win) = app.get_webview_window("main") {
                             macos_activate();
@@ -1057,7 +1108,7 @@ fn main() {
                 move |_app, _shortcut, event| {
                     // Only fire on key-down, not key-up
                     if event.state == ShortcutState::Pressed {
-                        trigger_overlay(&handle);
+                        trigger_overlay(&handle, "shortcut");
                     }
                 },
             )?;
@@ -1076,6 +1127,7 @@ fn main() {
             finish_annotations,
             show_overlay,
             hide_overlay,
+            suspend_overlay,
             show_session_window,
             hide_main_window,
             pick_folder,

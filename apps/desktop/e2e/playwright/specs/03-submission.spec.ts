@@ -58,18 +58,23 @@ const ONE_SESSION_WITH_ANNOTATIONS = {
 };
 
 async function loadSessionAndNavigateToSubmit(page: Page) {
-  await page.evaluate((state) => {
+  await page.addInitScript((state) => {
     localStorage.setItem('debugr-desktop-v2-state', JSON.stringify(state));
   }, ONE_SESSION_WITH_ANNOTATIONS);
-  await page.reload();
+  await page.goto('/');
   await page.waitForTimeout(600);
 
-  // The app should auto-enter session mode when sessions exist
-  // Click on the session in the sidebar if visible
+  // The app may land on the welcome screen first; open the existing session.
   const sessionItem = page.locator('.session-item').first();
-  if (await sessionItem.isVisible()) {
+  if (await sessionItem.isVisible({ timeout: 1000 }).catch(() => false)) {
     await sessionItem.click();
     await page.waitForTimeout(200);
+  } else {
+    const recentTile = page.locator('.recent-session-tile').first();
+    if (await recentTile.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await recentTile.click();
+      await page.waitForTimeout(200);
+    }
   }
 
   // Navigate to submit tab
@@ -93,6 +98,7 @@ test.describe('07 — AI submission UI', () => {
       pick_folder: '/Users/kumar/myapp',
     });
     await page.addInitScript(() => { localStorage.clear(); });
+    await page.goto('/');
   });
 
   test('submit section renders send button when session has annotations', async ({ page }) => {
@@ -104,8 +110,12 @@ test.describe('07 — AI submission UI', () => {
       await expect(sendBtn).toBeVisible();
     } else {
       // Fallback: check that the submit panel is rendered
-      const submitPanel = page.locator('.right-panel, .main-pane');
-      await expect(submitPanel).toBeVisible();
+      const rightPanel = page.locator('.right-panel').first();
+      if (await rightPanel.count() > 0) {
+        await expect(rightPanel).toBeVisible();
+      } else {
+        await expect(page.locator('.main-pane').first()).toBeVisible();
+      }
     }
   });
 
@@ -131,10 +141,10 @@ test.describe('08 — Session status lifecycle', () => {
   test('session status changes from draft → sent are persisted', async ({ page }) => {
     await injectTauriMock(page);
     await page.addInitScript(() => { localStorage.clear(); });
-
-    await page.evaluate((state) => {
+    await page.addInitScript((state) => {
       localStorage.setItem('debugr-desktop-v2-state', JSON.stringify(state));
     }, ONE_SESSION_WITH_ANNOTATIONS);
+    await page.goto('/');
 
     // Simulate marking as sent
     await page.evaluate(() => {
@@ -159,10 +169,10 @@ test.describe('09 — Continuous loop (re-submission)', () => {
 
     const sentSession = JSON.parse(JSON.stringify(ONE_SESSION_WITH_ANNOTATIONS));
     sentSession.sessions[0].status = 'sent';
-
-    await page.evaluate((state) => {
+    await page.addInitScript((state) => {
       localStorage.setItem('debugr-desktop-v2-state', JSON.stringify(state));
     }, sentSession);
+    await page.goto('/');
 
     // Add a new annotation (simulates "add annotation → re-submit" loop)
     await page.evaluate(() => {
@@ -190,11 +200,9 @@ test.describe('10 — Edge cases', () => {
   test('overlay cancel mid-selection: session state is unchanged', async ({ page }) => {
     await injectTauriMock(page);
     await page.addInitScript(() => { localStorage.clear(); });
-
-    await page.evaluate((state) => {
+    await page.addInitScript((state) => {
       localStorage.setItem('debugr-desktop-v2-state', JSON.stringify(state));
     }, ONE_SESSION_WITH_ANNOTATIONS);
-
     await page.goto('/');
     await page.waitForTimeout(300);
 
@@ -213,9 +221,10 @@ test.describe('10 — Edge cases', () => {
   test('offline: localStorage state is preserved when fetch fails', async ({ page }) => {
     await injectTauriMock(page);
     await page.addInitScript(() => { localStorage.clear(); });
-    await page.evaluate((state) => {
+    await page.addInitScript((state) => {
       localStorage.setItem('debugr-desktop-v2-state', JSON.stringify(state));
     }, ONE_SESSION_WITH_ANNOTATIONS);
+    await page.goto('/');
 
     // Simulate offline by aborting all fetch requests
     await page.route('**/*', (route) => {
@@ -240,9 +249,10 @@ test.describe('10 — Edge cases', () => {
   test('multi-monitor: session state is consistent regardless of window size', async ({ page }) => {
     await injectTauriMock(page);
     await page.addInitScript(() => { localStorage.clear(); });
-    await page.evaluate((state) => {
+    await page.addInitScript((state) => {
       localStorage.setItem('debugr-desktop-v2-state', JSON.stringify(state));
     }, ONE_SESSION_WITH_ANNOTATIONS);
+    await page.goto('/');
 
     // Simulate a different viewport (second monitor resolution)
     await page.setViewportSize({ width: 2560, height: 1440 });

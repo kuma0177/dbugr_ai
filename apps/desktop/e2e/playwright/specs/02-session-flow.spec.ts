@@ -51,6 +51,12 @@ async function simulateAnnotationSave(page: Page, payload = ANNOTATION_PAYLOAD) 
   await page.waitForTimeout(300);
 }
 
+async function readPersistedState(page: Page) {
+  return JSON.parse(
+    (await page.evaluate(() => localStorage.getItem('debugr-desktop-v2-state')))!,
+  );
+}
+
 test.describe('02–06 — Session creation, annotation & persistence', () => {
   test.beforeEach(async ({ page }) => {
     await injectTauriMock(page, {
@@ -158,7 +164,7 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
   test('new annotation persists screenshot payload and renders note + image in workspace', async ({ page }) => {
     await simulateAnnotationSave(page);
 
-    await expect(page.locator('.session-title')).toContainText('Onboarding flow bug');
+    await expect(page.locator('#session-title-input')).toHaveValue('Onboarding flow bug');
     await expect(page.locator('.capture-thumb img').first()).toBeVisible();
     await expect(page.locator('.capture-payload-image')).toBeVisible();
     await expect(page.locator('.capture-payload-note-body')).toContainText(
@@ -172,6 +178,47 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
     expect(state.sessions[0].captures).toHaveLength(1);
     expect(state.sessions[0].captures[0].annotations[0].text).toContain('onboarding CTA');
     expect(state.sessions[0].captures[0].screenshotUrl).toMatch(/^data:image\/png;base64,/);
+  });
+
+  test('a second screenshot can be appended to the same session and stays visible in the workspace', async ({ page }) => {
+    await simulateAnnotationSave(page, {
+      ...ANNOTATION_PAYLOAD,
+      newSessionName: 'Multi-screenshot session',
+      newSessionAbout: 'This session should keep accumulating screenshots.',
+    });
+
+    const initialState = await readPersistedState(page);
+    const sessionId = initialState.sessions[0].id;
+
+    await simulateAnnotationSave(page, {
+      ...ANNOTATION_PAYLOAD,
+      annotations: [
+        {
+          ...ANNOTATION_PAYLOAD.annotations[0],
+          id: 'ann_test_2',
+          number: 1,
+          text: 'The second screenshot shows the follow-up state',
+          timestamp: new Date().toISOString(),
+        },
+      ],
+      targetSessionId: sessionId,
+      newSessionName: 'This name should be ignored for appends',
+      newSessionAbout: 'This note should stay attached to the original session.',
+    });
+
+    await expect(page.locator('.session-item')).toHaveCount(1);
+    await expect(page.locator('.capture-card')).toHaveCount(2);
+    await expect(page.locator('.capture-thumb img')).toHaveCount(2);
+    await expect(page.locator('.capture-payload-note-body')).toContainText('The second screenshot shows the follow-up state');
+
+    const state = await readPersistedState(page);
+    expect(state.sessions).toHaveLength(1);
+    expect(state.sessions[0].title).toBe('Multi-screenshot session');
+    expect(state.sessions[0].captures).toHaveLength(2);
+    expect(state.sessions[0].captures[0].annotations).toHaveLength(1);
+    expect(state.sessions[0].captures[1].annotations).toHaveLength(1);
+    expect(state.sessions[0].captures[0].screenshotUrl).toMatch(/^data:image\/png;base64,/);
+    expect(state.sessions[0].captures[1].screenshotUrl).toMatch(/^data:image\/png;base64,/);
   });
 
   test('full resolution preview opens for a saved screenshot payload', async ({ page }) => {
@@ -202,6 +249,7 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
     await simulateAnnotationSave(page, payload);
 
     page.once('dialog', (dialog) => dialog.accept());
+    await page.locator('[data-delete-annotation="ann_test_2"]').click();
     await page.locator('[data-delete-annotation="ann_test_2"]').click();
 
     await expect(page.locator('[data-delete-annotation="ann_test_2"]')).toHaveCount(0);
@@ -265,8 +313,9 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
 
     page.once('dialog', (dialog) => dialog.accept());
     await page.locator('#delete-session-btn').click();
+    await page.locator('#delete-session-btn').click();
 
-    await expect(page.locator('.empty-title')).toContainText('No session selected');
+    await expect(page.locator('.empty-state .empty-title')).toContainText('No session selected');
     const state = JSON.parse(
       (await page.evaluate(() => localStorage.getItem('debugr-desktop-v2-state')))!,
     );

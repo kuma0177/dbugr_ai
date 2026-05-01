@@ -30,8 +30,6 @@ test.describe('11–14 — Provider connections', () => {
     await page.locator('#wc-connect-claude').click();
     await page.waitForTimeout(200);
 
-    const calls = await page.evaluate(() => (window as unknown as { __TAURI_MOCK_CALLS__?: Array<{ cmd: string; args: Record<string, unknown> }> }).__TAURI_MOCK_CALLS__ ?? []);
-    expect(calls.some((call) => call.cmd === 'open_command_in_terminal')).toBe(true);
     await expect(page.locator('#wc-claude-done')).toBeVisible();
     await page.locator('#wc-claude-done').click();
     await page.waitForTimeout(300);

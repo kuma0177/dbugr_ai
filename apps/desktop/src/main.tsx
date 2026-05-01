@@ -320,8 +320,8 @@ function sessionWindowSize(): [number, number] {
 }
 
 function welcomeWindowSize(): [number, number] {
-  const width = Math.round(Math.max(1180, Math.min(1680, window.screen.availWidth * 0.94)));
-  const height = Math.round(Math.max(860, Math.min(1080, window.screen.availHeight * 0.92)));
+  const width = Math.round(Math.max(1160, Math.min(1500, window.screen.availWidth * 0.88)));
+  const height = Math.round(Math.max(840, Math.min(1000, window.screen.availHeight * 0.9)));
   return [width, height];
 }
 

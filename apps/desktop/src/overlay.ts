@@ -468,6 +468,13 @@ function updateSetupState() {
   setupStartBtn.disabled = !newSessionName || !newSessionAbout;
 }
 
+window.addEventListener('blur', () => {
+  // If the user switches apps before placing any annotations, step out of the
+  // overlay so it behaves like a background utility instead of a modal wall.
+  if (step !== 'annotating' || annotations.length > 0) return;
+  void invoke('suspend_overlay').catch(() => {});
+});
+
 function enterAnnotating() {
   if (!targetSessionId) {
     updateSetupState();
@@ -1007,7 +1014,9 @@ void listen<Array<PickerSession>>('sessions-list', event => {
 
 void listen('overlay-will-show', () => {
   applyDockOffset();
-  resetState();
+  if (step !== 'annotating') {
+    resetState();
+  }
   // Request sessions for picker
   void emit('request-sessions');
   window.setTimeout(() => void emit('request-sessions'), 300);

@@ -24,7 +24,7 @@ test.describe('01 — App launch', () => {
   });
 
   test('shows the Debugr branding on the welcome card', async ({ page }) => {
-    await expect(page.locator('.welcome-card, .welcome-shell, body')).toBeVisible();
+    await expect(page.locator('.welcome-card').first()).toBeVisible();
   });
 
   test('no unhandled console errors on load', async ({ page }) => {
