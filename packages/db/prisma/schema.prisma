@@ -52,6 +52,9 @@ model FeedbackSession {
   projectId   String
   createdBy   String
   title       String
+  about       String?
+  projectFolder String?
+  githubRepo  String?
   status      String   @default("draft")
   visibility  String   @default("private")
   videoUrl    String?

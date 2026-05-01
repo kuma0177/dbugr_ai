@@ -814,7 +814,11 @@ async function sendSession() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        projectId: 'proj_demo',
         title: session.title,
+        about: session.about ?? '',
+        projectFolder: session.projectFolder ?? '',
+        githubRepo: session.githubRepo ?? '',
         userIntent: JSON.stringify({
           sessionContext: {
             about: session.about ?? '',

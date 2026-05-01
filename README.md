@@ -27,19 +27,17 @@ debugr/
 
 ## Setup
 
+1. Copy `.env.example` to `.env` at the repo root.
+2. Install dependencies.
+3. Create and seed the local SQLite database.
+
 ```bash
+cp .env.example .env
 pnpm install
-pnpm db:generate
-pnpm db:push
+pnpm db:setup
 ```
 
-Optional local seed:
-
-```bash
-cd apps/api
-pnpm ts-node src/lib/seed.ts
-cd ../..
-```
+The database lives in `packages/db/prisma/dev.db`. It is a local SQLite file, so every clone gets its own copy once `pnpm db:setup` runs.
 
 ## Running Locally
 
@@ -63,6 +61,15 @@ During development:
 
 - Desktop app preview: `http://127.0.0.1:5173`
 - Review dashboard: `http://127.0.0.1:3000`
+- API: `http://127.0.0.1:3001`
+- Worker: `http://127.0.0.1:3002`
+
+If you need to reset the local store after changing the schema:
+
+```bash
+pnpm db:push
+pnpm db:seed
+```
 
 ## Product Flow
 

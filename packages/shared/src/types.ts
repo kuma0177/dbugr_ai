@@ -148,6 +148,9 @@ export interface FeedbackSession {
   projectId: string;
   createdBy: string;
   title: string;
+  about?: string | null;
+  projectFolder?: string | null;
+  githubRepo?: string | null;
   status: FeedbackStatus;
   visibility: FeedbackVisibility;
   videoUrl?: string;
@@ -187,6 +190,10 @@ export interface AuditLog {
 export interface CreateFeedbackSessionRequest {
   title: string;
   visibility?: FeedbackVisibility;
+  about?: string;
+  projectFolder?: string;
+  githubRepo?: string;
+  userIntent?: string;
 }
 
 export interface FinalizeFeedbackSessionRequest {

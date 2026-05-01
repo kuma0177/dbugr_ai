@@ -6,6 +6,8 @@ import path from 'node:path';
 function loadLocalEnv() {
   const candidatePaths = [
     path.resolve(process.cwd(), '.env'),
+    path.resolve(process.cwd(), '..', '..', '.env'),
+    path.resolve(__dirname, '..', '..', '..', '.env'),
     path.resolve(__dirname, '..', '.env'),
   ];
 
@@ -21,8 +23,14 @@ function loadLocalEnv() {
       if (equalsIndex === -1) continue;
 
       const key = trimmed.slice(0, equalsIndex).trim();
-      const value = trimmed.slice(equalsIndex + 1).trim().replace(/^"(.*)"$/, '$1');
-      process.env[key] = value;
+      const rawValue = trimmed.slice(equalsIndex + 1).trim().replace(/^"(.*)"$/, '$1');
+      if (key === 'DATABASE_URL' && rawValue.startsWith('file:')) {
+        const filePath = rawValue.slice('file:'.length);
+        const absolutePath = path.isAbsolute(filePath) ? filePath : path.resolve(path.dirname(envPath), filePath);
+        process.env[key] = `file:${absolutePath}`;
+      } else {
+        process.env[key] = rawValue;
+      }
     }
 
     return;

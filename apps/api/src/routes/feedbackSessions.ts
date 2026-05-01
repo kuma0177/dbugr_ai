@@ -9,6 +9,7 @@ export const feedbackSessionRouter = Router();
 
 const DEMO_USER_ID = 'user_demo';
 const DEMO_ORG_ID = 'org_demo';
+const DEMO_PROJECT_ID = 'proj_demo';
 
 // Configure multer for video uploads
 const uploadDir = process.env.UPLOAD_DIR ?? '/tmp/feedbackagent-videos';
@@ -22,6 +23,10 @@ const upload = multer({
 const createSchema = z.object({
   title: z.string().min(1),
   visibility: z.enum(['private', 'public', 'org']).default('private'),
+  about: z.string().optional(),
+  projectFolder: z.string().optional(),
+  githubRepo: z.string().optional(),
+  userIntent: z.string().optional(),
 });
 
 const finalizeSchema = z.object({
@@ -44,6 +49,9 @@ const patchSchema = z.object({
   aiSummary: z.string().optional(),
   aiTaskBrief: z.string().optional(),
   userIntent: z.string().optional(), // stores serialized native capture annotations
+  about: z.string().nullable().optional(),
+  projectFolder: z.string().nullable().optional(),
+  githubRepo: z.string().nullable().optional(),
 });
 
 function getRepoContext() {
@@ -56,6 +64,56 @@ function getRepoContext() {
   const repoName = match ? `${match[1]}/${match[2].replace(/\.git$/, '')}` : '';
   return { repoUrl, repoName, repoBranch };
 }
+
+function extractSessionContext(userIntent?: string | null) {
+  if (!userIntent) return {};
+  try {
+    const parsed = JSON.parse(userIntent);
+    const sessionContext = parsed.sessionContext ?? {};
+    return {
+      about: typeof sessionContext.about === 'string' ? sessionContext.about : typeof parsed.about === 'string' ? parsed.about : undefined,
+      projectFolder: typeof sessionContext.projectFolder === 'string' ? sessionContext.projectFolder : typeof parsed.projectFolder === 'string' ? parsed.projectFolder : undefined,
+      githubRepo: typeof sessionContext.githubRepo === 'string' ? sessionContext.githubRepo : typeof parsed.githubRepo === 'string' ? parsed.githubRepo : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+async function createSessionRecord(
+  projectId: string,
+  parsed: z.infer<typeof createSchema>,
+  createdBy = DEMO_USER_ID,
+) {
+  const context = extractSessionContext(parsed.userIntent);
+  return prisma.feedbackSession.create({
+    data: {
+      projectId,
+      createdBy,
+      title: parsed.title,
+      visibility: parsed.visibility,
+      status: 'draft',
+      userIntent: parsed.userIntent,
+      about: parsed.about ?? context.about,
+      projectFolder: parsed.projectFolder ?? context.projectFolder,
+      githubRepo: parsed.githubRepo ?? context.githubRepo,
+    },
+  });
+}
+
+feedbackSessionRouter.post('/feedback-sessions', async (req: Request, res: Response) => {
+  const parsed = createSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const projectId = typeof req.body?.projectId === 'string' && req.body.projectId.trim()
+    ? req.body.projectId.trim()
+    : DEMO_PROJECT_ID;
+
+  const session = await createSessionRecord(projectId, parsed.data);
+  return res.status(201).json({ data: session });
+});
 
 // POST /api/feedback-sessions/upload (from recorder)
 feedbackSessionRouter.post(
@@ -70,7 +128,7 @@ feedbackSessionRouter.post(
       // Create a draft session
       const session = await prisma.feedbackSession.create({
         data: {
-          projectId: 'proj_demo',
+          projectId: DEMO_PROJECT_ID,
           createdBy: DEMO_USER_ID,
           title,
           visibility: 'private',
@@ -99,15 +157,7 @@ feedbackSessionRouter.post(
       return res.status(400).json({ error: parsed.error.flatten() });
     }
 
-    const session = await prisma.feedbackSession.create({
-      data: {
-        projectId: req.params.projectId,
-        createdBy: DEMO_USER_ID,
-        title: parsed.data.title,
-        visibility: parsed.data.visibility,
-        status: 'draft',
-      },
-    });
+    const session = await createSessionRecord(req.params.projectId, parsed.data);
     console.log('[api] session created:', session.id, 'title:', session.title);
     return res.status(201).json({ data: session });
   }
@@ -229,7 +279,7 @@ feedbackSessionRouter.post('/feedback-sessions/:id/send-to-claude', async (req: 
       const parsed = JSON.parse(session.userIntent);
       captureContext = {
         title: session.title,
-        notes: parsed.sessionNote || parsed.notes,
+        notes: [session.about, parsed.sessionNote || parsed.notes].filter(Boolean).join('\n\n') || undefined,
         boxes: parsed.boxes || [],
         repoUrl,
         repoName,
@@ -248,6 +298,7 @@ feedbackSessionRouter.post('/feedback-sessions/:id/send-to-claude', async (req: 
       agentFeedback = await generateCodexFeedback(
         captureContext || {
           title: session.title,
+          notes: session.about ?? undefined,
           boxes: [],
           repoUrl,
           repoName,
@@ -259,6 +310,7 @@ feedbackSessionRouter.post('/feedback-sessions/:id/send-to-claude', async (req: 
       agentFeedback = await generateClaudeFeedback(
         captureContext || {
           title: session.title,
+          notes: session.about ?? undefined,
           boxes: [],
           repoUrl,
           repoName,

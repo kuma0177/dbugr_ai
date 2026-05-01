@@ -8,6 +8,8 @@
     "build": "pnpm --filter './packages/*' build && pnpm --filter './apps/*' build",
     "db:generate": "pnpm --filter @feedbackagent/db generate",
     "db:push": "pnpm --filter @feedbackagent/db db:push",
+    "db:seed": "pnpm --filter @feedbackagent/api seed",
+    "db:setup": "pnpm db:generate && pnpm db:push && pnpm db:seed",
     "db:migrate": "pnpm --filter @feedbackagent/db migrate"
   },
   "workspaces": [
