@@ -991,10 +991,7 @@ void listen('overlay-will-show', () => {
 });
 
 function applyDockOffset() {
-  const dockH = Math.max(
-    0,
-    window.screen.height - window.screen.availTop - window.screen.availHeight,
-  );
+  const dockH = Math.max(0, window.screen.height - window.screen.availHeight);
   document.documentElement.style.setProperty('--dock-offset', `${dockH + 12}px`);
 }
 

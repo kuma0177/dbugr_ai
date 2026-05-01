@@ -9,6 +9,7 @@ export type Target = 'claude' | 'codex' | 'cursor';
 export type AppMode = 'welcome' | 'session' | 'confirmation';
 export type WorkspaceSection = 'notes' | 'flow' | 'collab' | 'review' | 'submit' | 'insights';
 export type SubmissionFlow = 'direct' | 'team' | 'public';
+export type ProviderConnectionMethod = 'oauth' | 'api_key' | 'installed';
 
 export interface Annotation {
   id: string;
@@ -68,6 +69,12 @@ export interface AgentFeedback {
   nextSteps: string[];
 }
 
+export interface ProviderConnectionState {
+  connected: boolean;
+  method: ProviderConnectionMethod | null;
+  lastConnectedAt?: string;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 export function uid(prefix: string): string {
@@ -93,6 +100,55 @@ export function providerSubtitle(value: Target): string {
   if (value === 'codex') return 'GPT-4.1 or local CLI';
   if (value === 'cursor') return 'Cursor background agent';
   return 'Anthropic Claude';
+}
+
+export function providerConnectionMethodLabel(method: ProviderConnectionMethod | null): string {
+  if (method === 'oauth') return 'browser login';
+  if (method === 'api_key') return 'API key';
+  if (method === 'installed') return 'installed app';
+  return 'connection';
+}
+
+export function isProviderConnected(
+  provider: Target,
+  connection: ProviderConnectionState | null | undefined,
+): boolean {
+  if (!connection?.connected) return false;
+  if (provider === 'claude') return connection.method === 'oauth' || connection.method === 'api_key';
+  if (provider === 'codex') return connection.method === 'api_key';
+  return connection.method === 'installed';
+}
+
+export function providerConnectionPendingCopy(
+  provider: Target,
+  method: ProviderConnectionMethod,
+): string {
+  if (provider === 'claude' && method === 'api_key') {
+    return 'Paste your Anthropic API key below and click Verify & Save. Debugr verifies it before saving it locally.';
+  }
+  if (provider === 'claude') {
+    return 'Debugr will open a Terminal window and run `claude /login`. Finish the Claude CLI login flow, then click Done to verify it worked.';
+  }
+  if (provider === 'codex') {
+    return 'Open the OpenAI API keys page, then paste your key below and click Verify & Save. Opening the page alone does not connect Debugr.';
+  }
+  return 'Install Cursor to send sessions directly to the Cursor AI agent. No API key is required.';
+}
+
+export function providerConnectionReadyCopy(
+  provider: Target,
+  method: ProviderConnectionMethod | null,
+): string {
+  if (provider === 'claude' && method === 'api_key') {
+    return 'Your Anthropic API key is stored locally on this Mac. When you click Send, Debugr will use it to hand off the session to Claude.';
+  }
+  if (provider === 'claude') {
+    return 'You can now send any session straight to Claude from the Submit tab. Claude will read your screenshots and annotations and reply with a diagnosis.';
+  }
+  if (provider === 'codex') {
+    return 'Your OpenAI API key is stored locally on this Mac. When you click Send, Debugr will use it to hand off the session to Codex.';
+  }
+  return 'No login needed. Debugr will open your project folder directly in Cursor with the session prompt ready to paste.';
 }
 
 export function flowLabel(flow: SubmissionFlow): string {

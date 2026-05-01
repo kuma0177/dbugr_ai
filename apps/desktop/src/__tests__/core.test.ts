@@ -19,6 +19,10 @@ import {
   escapeHtml,
   providerLabel,
   providerSubtitle,
+  providerConnectionMethodLabel,
+  providerConnectionPendingCopy,
+  providerConnectionReadyCopy,
+  isProviderConnected,
   flowLabel,
   sectionLabel,
   sortedSessions,
@@ -90,6 +94,38 @@ describe('providerSubtitle()', () => {
     (['claude', 'codex', 'cursor'] as Target[]).forEach((t) => {
       expect(providerSubtitle(t).length).toBeGreaterThan(0);
     });
+  });
+});
+
+describe('provider connection helpers', () => {
+  it('requires the real connection method for each provider', () => {
+    expect(isProviderConnected('claude', { connected: true, method: 'oauth' })).toBe(true);
+    expect(isProviderConnected('claude', { connected: true, method: 'api_key' })).toBe(true);
+    expect(isProviderConnected('claude', { connected: true, method: null })).toBe(false);
+    expect(isProviderConnected('codex', { connected: true, method: 'api_key' })).toBe(true);
+    expect(isProviderConnected('codex', { connected: true, method: 'oauth' })).toBe(false);
+    expect(isProviderConnected('cursor', { connected: true, method: 'installed' })).toBe(true);
+    expect(isProviderConnected('cursor', { connected: true, method: 'oauth' })).toBe(false);
+  });
+
+  it('describes the action a user should expect after clicking connect', () => {
+    expect(providerConnectionPendingCopy('claude', 'oauth')).toContain('claude /login');
+    expect(providerConnectionPendingCopy('claude', 'api_key')).toContain('Anthropic API key');
+    expect(providerConnectionPendingCopy('codex', 'api_key')).toContain('OpenAI API keys page');
+    expect(providerConnectionPendingCopy('cursor', 'installed')).toContain('Install Cursor');
+  });
+
+  it('describes the ready state for each provider', () => {
+    expect(providerConnectionReadyCopy('claude', 'oauth')).toContain('send any session straight to Claude');
+    expect(providerConnectionReadyCopy('claude', 'api_key')).toContain('Anthropic API key');
+    expect(providerConnectionReadyCopy('codex', 'api_key')).toContain('OpenAI API key');
+    expect(providerConnectionReadyCopy('cursor', 'installed')).toContain('Cursor');
+  });
+
+  it('formats the connection method label', () => {
+    expect(providerConnectionMethodLabel('oauth')).toBe('browser login');
+    expect(providerConnectionMethodLabel('api_key')).toBe('API key');
+    expect(providerConnectionMethodLabel('installed')).toBe('installed app');
   });
 });
 

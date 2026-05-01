@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}, io::Write as _};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
@@ -67,12 +67,37 @@ fn escape_applescript_text(value: &str) -> String {
 }
 
 /// Open any URL in the user's default browser.
+/// Uses `sh -c "open URL"` so the process inherits the user's full
+/// environment and is not affected by any Tauri process sandboxing.
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
-    Command::new("open")
-        .arg(&url)
+    // Escape single quotes in the URL before embedding in shell string.
+    let safe = url.replace('\'', r"'\''");
+    Command::new("sh")
+        .arg("-c")
+        .arg(format!("open '{safe}'"))
         .status()
         .map_err(|e| format!("Failed to open URL: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_auth_popup(app: AppHandle, url: String, title: String, label: String) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(&label) {
+        window.show().map_err(|e| format!("Failed to show auth popup: {e}"))?;
+        window.set_focus().map_err(|e| format!("Failed to focus auth popup: {e}"))?;
+        return Ok(());
+    }
+
+    let parsed = Url::parse(&url).map_err(|e| format!("Invalid auth popup URL: {e}"))?;
+    WebviewWindowBuilder::new(&app, label, WebviewUrl::External(parsed))
+        .title(&title)
+        .inner_size(960.0, 760.0)
+        .resizable(true)
+        .visible(true)
+        .build()
+        .map_err(|e| format!("Failed to open auth popup: {e}"))?;
+
     Ok(())
 }
 
@@ -92,6 +117,115 @@ fn save_provider_config(payload: serde_json::Value) -> Result<(), String> {
     file.write_all(json.as_bytes())
         .map_err(|e| format!("Failed to write provider config: {e}"))?;
     Ok(())
+}
+
+// ── Provider verification commands ───────────────────────────────────────────
+
+/// Check that the claude CLI is installed and that an auth credentials file
+/// exists (created by `claude /login`).  Returns the CLI version string on
+/// success, or an error message the frontend can display.
+#[tauri::command]
+fn verify_claude_auth() -> Result<String, String> {
+    // 1. Is the CLI on PATH?
+    let which = Command::new("which")
+        .arg("claude")
+        .output()
+        .map_err(|_| "Could not search PATH".to_string())?;
+    if !which.status.success() {
+        return Err(
+            "claude CLI not found. Visit claude.ai/download to install it first.".to_string(),
+        );
+    }
+
+    // 2. Does it run?
+    let ver = Command::new("claude")
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("Failed to run claude: {e}"))?;
+    if !ver.status.success() {
+        return Err(
+            "claude CLI found but returned an error. Try reinstalling.".to_string(),
+        );
+    }
+    let version = String::from_utf8_lossy(&ver.stdout).trim().to_string();
+
+    // 3. Check credentials file written by `claude /login`
+    let home = std::env::var("HOME").unwrap_or_default();
+    let creds = PathBuf::from(&home).join(".claude").join("credentials.json");
+    if !creds.exists() {
+        return Err(
+            "Not signed in yet. Click 'Connect Claude' and complete the Claude CLI login flow.".to_string(),
+        );
+    }
+
+    Ok(version)
+}
+
+/// Validate an Anthropic API key by checking the models endpoint.
+#[tauri::command]
+fn verify_claude_api_key(api_key: String) -> Result<String, String> {
+    if !api_key.starts_with("sk-ant-") || api_key.len() < 20 {
+        return Err("Key must start with 'sk-ant-' and be at least 20 characters.".to_string());
+    }
+
+    let output = Command::new("curl")
+        .args([
+            "-s", "-o", "/dev/null",
+            "-w", "%{http_code}",
+            "--max-time", "8",
+            "https://api.anthropic.com/v1/models",
+            "-H", &format!("x-api-key: {api_key}"),
+            "-H", "anthropic-version: 2023-06-01",
+        ])
+        .output()
+        .map_err(|e| format!("Network check failed: {e}"))?;
+
+    let code = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    match code.as_str() {
+        "200" => Ok("✓ API key verified".to_string()),
+        "401" => Err("Invalid key — check you copied the full Anthropic API key.".to_string()),
+        "403" => Err("Key is valid but does not have access to this workspace.".to_string()),
+        "429" => Ok("✓ Key valid (rate-limited, that's fine)".to_string()),
+        other => Err(format!("Unexpected response ({other}). Check your internet connection.")),
+    }
+}
+
+/// Validate an OpenAI API key by making a lightweight authenticated request
+/// to /v1/models.  Uses curl (always present on macOS) to avoid adding an
+/// HTTP library dependency.
+#[tauri::command]
+fn verify_codex_key(api_key: String) -> Result<String, String> {
+    if !api_key.starts_with("sk-") || api_key.len() < 20 {
+        return Err("Key must start with 'sk-' and be at least 20 characters.".to_string());
+    }
+
+    let output = Command::new("curl")
+        .args([
+            "-s", "-o", "/dev/null",
+            "-w", "%{http_code}",
+            "--max-time", "8",
+            "https://api.openai.com/v1/models",
+            "-H", &format!("Authorization: Bearer {api_key}"),
+        ])
+        .output()
+        .map_err(|e| format!("Network check failed: {e}"))?;
+
+    let code = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    match code.as_str() {
+        "200" => Ok("✓ API key verified".to_string()),
+        "429" => Ok("✓ Key valid (rate-limited, that's fine)".to_string()),
+        "401" => Err("Invalid key — check you copied the full key from OpenAI.".to_string()),
+        "403" => Err("Key is valid but has insufficient permissions.".to_string()),
+        other => Err(format!("Unexpected response ({other}). Check your internet connection.")),
+    }
+}
+
+/// Returns true if Cursor.app is installed in the standard macOS locations.
+#[tauri::command]
+fn check_cursor_installed() -> bool {
+    let home = std::env::var("HOME").unwrap_or_default();
+    PathBuf::from("/Applications/Cursor.app").exists()
+        || PathBuf::from(&home).join("Applications/Cursor.app").exists()
 }
 
 /// Read provider connection config from disk.
@@ -439,6 +573,19 @@ fn trigger_overlay(app: &AppHandle) {
         eprintln!("Debugr overlay window not found");
     }
 
+    if !get_screen_capture_permission() {
+        let _ = request_screen_capture_permission();
+        if !get_screen_capture_permission() {
+            if let Some(main) = app.get_webview_window("main") {
+                macos_activate();
+                let _ = main.emit("screen-capture-permission-needed", ());
+                let _ = main.show();
+                let _ = main.set_focus();
+            }
+            return;
+        }
+    }
+
     // Show the native overlay immediately so the toolbar/inspector are visible
     // even if capture permission is slow or unavailable.
     //
@@ -593,6 +740,7 @@ fn main() {
             open_screen_capture_settings,
             capture_interactive_screenshot,
             open_command_in_terminal,
+            open_auth_popup,
             finish_annotations,
             show_overlay,
             hide_overlay,
@@ -606,6 +754,10 @@ fn main() {
             open_url,
             save_provider_config,
             get_provider_config,
+            verify_claude_auth,
+            verify_claude_api_key,
+            verify_codex_key,
+            check_cursor_installed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running debugr.ai");

@@ -17,8 +17,11 @@ export async function injectTauriMock(page: Page, overrides: InvokeOverrides = {
     const overrides = JSON.parse(overridesJson) as Record<string, unknown>;
 
     // Tauri v2 reads from window.__TAURI_INTERNALS__
+    const callLog: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+    (window as unknown as Record<string, unknown>)['__TAURI_MOCK_CALLS__'] = callLog;
     (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {
       invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
+        callLog.push({ cmd, args });
         if (cmd in overrides) {
           const val = overrides[cmd];
           return typeof val === 'function' ? (val as (a: typeof args) => unknown)(args) : val;

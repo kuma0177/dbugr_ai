@@ -11,10 +11,15 @@ import {
   type Annotation,
   type Contribution,
   type AgentFeedback,
+  type ProviderConnectionState,
+  type ProviderConnectionMethod,
   uid,
   escapeHtml,
   providerLabel,
   providerSubtitle,
+  providerConnectionPendingCopy,
+  providerConnectionReadyCopy,
+  isProviderConnected,
   flowLabel,
   sectionLabel,
   sortedSessions as sortedSessionsUtil,
@@ -28,11 +33,6 @@ import {
 const brandIconUrl = new URL('./assets/brand-icon.png', import.meta.url).href;
 
 type AppMode = 'welcome' | 'session' | 'confirmation';
-interface ProviderConnection {
-  connected: boolean;
-  method: string | null;
-  lastConnectedAt?: string;
-}
 
 interface AuthState {
   authenticated: boolean;
@@ -47,13 +47,14 @@ interface AuthState {
 interface PersistedState {
   sessions: Session[];
   authState: AuthState;
-  providerConnections: Record<Target, ProviderConnection>;
+  providerConnections: Record<Target, ProviderConnectionState>;
   target: Target;
 }
 
 const API = 'http://127.0.0.1:3001/api';
 const APP_STATE_KEY = 'debugr-desktop-v2-state';
 const MAX_ANNOTATIONS = 5;
+const SCREEN_CAPTURE_PERMISSION_PROMPT_KEY = 'debugr.screen-capture-permission-prompted.v1';
 
 let appMode: AppMode = 'welcome';
 let sessions: Session[] = [];
@@ -70,12 +71,19 @@ let lastSavedCapture: { sessionTitle: string; annotationCount: number } | null =
 let submitGateError = '';
 /** Stored Codex API key (loaded from disk on startup). */
 let codexApiKey = '';
+let claudeApiKey = '';
 /** Whether the user has completed Claude login (stored on disk). */
 let claudeConnected = false;
 /** true while connect-claude terminal is open and we're waiting for confirmation */
 let claudeConnecting = false;
+let claudeConnectMode: ProviderConnectionMethod = 'oauth';
 /** true after "Connect Codex" is clicked — shows the key-paste step */
 let codexConnecting = false;
+let codexConnectMode: ProviderConnectionMethod = 'api_key';
+/** true if Cursor.app is found on disk (checked at startup) */
+let cursorInstalled = false;
+/** Verification error shown below the connect card */
+let connectVerifyError = '';
 let authState: AuthState = {
   authenticated: false,
   profileInitialized: false,
@@ -85,7 +93,7 @@ let authState: AuthState = {
   company: '',
   role: '',
 };
-let providerConnections: Record<Target, ProviderConnection> = {
+let providerConnections: Record<Target, ProviderConnectionState> = {
   claude: { connected: false, method: null },
   codex: { connected: false, method: null },
   cursor: { connected: false, method: null },
@@ -128,6 +136,22 @@ function groupSessions() {
     groups.set(label, [...(groups.get(label) ?? []), session]);
   }
   return groups;
+}
+
+function normalizeProviderConnection(
+  provider: Target,
+  connection: ProviderConnectionState | undefined,
+): ProviderConnectionState {
+  if (!connection) {
+    return providerConnections[provider];
+  }
+  if (connection.connected && !connection.method) {
+    return {
+      ...connection,
+      method: provider === 'cursor' ? 'installed' : provider === 'codex' ? 'api_key' : 'oauth',
+    };
+  }
+  return connection;
 }
 
 function persistAppState() {
@@ -185,9 +209,9 @@ function hydrateAppState() {
     }
     if (parsed.providerConnections) {
       providerConnections = {
-        claude: parsed.providerConnections.claude ?? providerConnections.claude,
-        codex: parsed.providerConnections.codex ?? providerConnections.codex,
-        cursor: parsed.providerConnections.cursor ?? providerConnections.cursor,
+        claude: normalizeProviderConnection('claude', parsed.providerConnections.claude ?? providerConnections.claude),
+        codex: normalizeProviderConnection('codex', parsed.providerConnections.codex ?? providerConnections.codex),
+        cursor: normalizeProviderConnection('cursor', parsed.providerConnections.cursor ?? providerConnections.cursor),
       };
     }
     if (parsed.target === 'codex' || parsed.target === 'cursor') {
@@ -239,7 +263,7 @@ async function enterSessionMode(section: WorkspaceSection = 'notes') {
 }
 
 function connectedProviderCount() {
-  return Object.values(providerConnections).filter((provider) => provider.connected).length;
+  return (['claude', 'codex', 'cursor'] as Target[]).filter((provider) => isProviderConnected(provider, providerConnections[provider])).length;
 }
 
 function mockContributionBody(flow: SubmissionFlow, session: Session, index: number) {
@@ -389,17 +413,33 @@ function renderWelcome() {
                 </div>
                 ${claudeConnected ? `<button class="wc-disconnect-btn" id="wc-disconnect-claude">Disconnect</button>` : ''}
               </div>
-              ${!claudeConnected ? `
+              ${claudeConnected ? `
+                <p class="wc-hint wc-connected-hint">${escapeHtml(providerConnectionReadyCopy('claude', claudeConnectMode))}</p>
+              ` : `
                 <div class="wc-connect-body">
-                  ${claudeConnecting ? `
-                    <p class="wc-hint">A browser window opened — complete the login, then click below.</p>
-                    <div class="wc-waiting"><div class="connect-spinner"></div>Waiting for login…</div>
-                    <button class="wc-done-btn" id="wc-claude-done">✓ Done — I'm logged in</button>
+                  <div class="wc-connect-mode-switch">
+                    <button class="wc-mode-btn ${claudeConnectMode === 'oauth' ? 'active' : ''}" id="wc-claude-mode-oauth">Browser login</button>
+                    <button class="wc-mode-btn ${claudeConnectMode === 'api_key' ? 'active' : ''}" id="wc-claude-mode-api">API key</button>
+                  </div>
+                  ${claudeConnectMode === 'api_key' ? `
+                    <p class="wc-hint">${escapeHtml(providerConnectionPendingCopy('claude', 'api_key'))}</p>
+                    ${connectVerifyError ? `<div class="wc-verify-error">${escapeHtml(connectVerifyError)}</div>` : ''}
+                    <div class="wc-key-row">
+                      <input class="connect-key-input" id="wc-claude-key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
+                      <button class="connect-save-btn" id="wc-save-claude">Verify &amp; Save</button>
+                    </div>
+                    <div class="connect-key-hint">Stored locally on this Mac only — never sent anywhere.</div>
+                  ` : claudeConnecting ? `
+                    <p class="wc-hint">${escapeHtml(providerConnectionPendingCopy('claude', 'oauth'))}</p>
+                    <div class="wc-waiting"><div class="connect-spinner"></div>Waiting for you to finish in the browser…</div>
+                    ${connectVerifyError ? `<div class="wc-verify-error">${escapeHtml(connectVerifyError)}</div>` : ''}
+                    <button class="wc-done-btn" id="wc-claude-done">✓ Done — verify my login</button>
                   ` : `
+                    <p class="wc-hint">${escapeHtml(providerConnectionPendingCopy('claude', 'oauth'))}</p>
                     <button class="wc-connect-btn" id="wc-connect-claude">Connect Claude →</button>
                   `}
                 </div>
-              ` : ''}
+              `}
             </div>
 
             ${/* ── Codex ── */ ''}
@@ -411,19 +451,22 @@ function renderWelcome() {
                 </div>
                 ${codexApiKey ? `<button class="wc-disconnect-btn" id="wc-disconnect-codex">Disconnect</button>` : ''}
               </div>
-              ${!codexApiKey ? `
+              ${codexApiKey ? `
+                <p class="wc-hint wc-connected-hint">${escapeHtml(providerConnectionReadyCopy('codex', 'api_key'))}</p>
+              ` : `
                 <div class="wc-connect-body">
-                  ${codexConnecting ? `
-                    <p class="wc-hint">Copy your API key from the page that opened and paste it below.</p>
-                    <div class="wc-key-row">
-                      <input class="connect-key-input" id="wc-codex-key" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" autofocus />
-                      <button class="connect-save-btn" id="wc-save-codex">Save</button>
-                    </div>
-                  ` : `
-                    <button class="wc-connect-btn" id="wc-connect-codex">Connect Codex →</button>
-                  `}
+                  <p class="wc-hint">${escapeHtml(providerConnectionPendingCopy('codex', 'api_key'))}</p>
+                  ${connectVerifyError ? `<div class="wc-verify-error">${escapeHtml(connectVerifyError)}</div>` : ''}
+                  <div class="wc-key-row">
+                    <input class="connect-key-input" id="wc-codex-key" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" />
+                    <button class="connect-save-btn" id="wc-save-codex">Verify &amp; Save</button>
+                  </div>
+                  <div class="connect-key-hint">Stored locally on this Mac only — never sent anywhere.</div>
+                  <div class="wc-inline-actions">
+                    <button class="wc-connect-btn secondary" id="wc-open-codex-keys">Open API keys page</button>
+                  </div>
                 </div>
-              ` : ''}
+              `}
             </div>
 
             ${/* ── Cursor ── */ ''}
@@ -431,10 +474,14 @@ function renderWelcome() {
               <div class="wc-provider-header">
                 <div class="wc-provider-name">
                   <strong>Cursor</strong>
-                  <span class="provider-pill connected">● Always ready</span>
+                  <span class="provider-pill ${cursorInstalled ? 'connected' : 'not-installed'}">${cursorInstalled ? '● Ready' : '○ Not installed'}</span>
                 </div>
+                ${!cursorInstalled ? `<a class="wc-disconnect-btn" id="wc-get-cursor" href="#">Get Cursor →</a>` : ''}
               </div>
-              <p class="wc-hint" style="margin:4px 0 0">No login needed — Debugr opens your project directly in Cursor.</p>
+              ${cursorInstalled
+                ? `<p class="wc-hint wc-connected-hint">${escapeHtml(providerConnectionReadyCopy('cursor', 'installed'))}</p>`
+                : `<p class="wc-hint">${escapeHtml(providerConnectionPendingCopy('cursor', 'installed'))}</p>`
+              }
             </div>
           </section>
         </div>
@@ -507,14 +554,29 @@ function renderWelcome() {
     void enterSessionMode('notes');
   });
 
+  document.getElementById('wc-claude-mode-oauth')?.addEventListener('click', () => {
+    claudeConnectMode = 'oauth';
+    claudeConnecting = false;
+    connectVerifyError = '';
+    renderWelcome();
+  });
+
+  document.getElementById('wc-claude-mode-api')?.addEventListener('click', () => {
+    claudeConnectMode = 'api_key';
+    claudeConnecting = false;
+    connectVerifyError = '';
+    renderWelcome();
+  });
+
   // ── Claude connect (welcome screen) ─────────────────────────────────────
   document.getElementById('wc-connect-claude')?.addEventListener('click', async () => {
     claudeConnecting = true;
+    connectVerifyError = '';
     renderWelcome();
     const script = [
       `echo "=== Connecting Debugr to Claude ==="`,
       `echo ""`,
-      `echo "A browser window will open. Log in, then come back to Debugr."`,
+      `echo "Complete the Claude CLI login flow, then come back to Debugr and click Done."`,
       `echo ""`,
       `claude /login`,
     ].join(' && ');
@@ -522,49 +584,103 @@ function renderWelcome() {
       cwd: process.env['HOME'] || '~',
       command: script,
       title: 'Connect Debugr to Claude',
-    }).catch(() => {});
+    }).catch(() => {
+      claudeConnecting = false;
+      connectVerifyError = 'Could not open Claude CLI login automatically. Open Terminal, run `claude /login`, finish the login flow, then return here and click Done.';
+      renderWelcome();
+    });
   });
 
   document.getElementById('wc-claude-done')?.addEventListener('click', async () => {
-    claudeConnected = true;
-    claudeConnecting = false;
-    await saveProviderConfig();
+    connectVerifyError = '';
+    renderWelcome(); // show spinner-like state while verifying
+    try {
+      const version = await invoke<string>('verify_claude_auth');
+      claudeApiKey = '';
+      claudeConnected = true;
+      claudeConnecting = false;
+      claudeConnectMode = 'oauth';
+      providerConnections.claude = { connected: true, method: 'oauth' };
+      connectVerifyError = '';
+      await saveProviderConfig();
+      // Briefly show version before re-render
+      console.info('Claude verified:', version);
+    } catch (err) {
+      connectVerifyError = String(err);
+    }
+    renderWelcome();
+  });
+
+  document.getElementById('wc-save-claude')?.addEventListener('click', async () => {
+    const input = document.getElementById('wc-claude-key') as HTMLInputElement | null;
+    const key = input?.value.trim() ?? '';
+    connectVerifyError = '';
+    try {
+      await invoke<string>('verify_claude_api_key', { apiKey: key });
+      claudeApiKey = key;
+      claudeConnected = true;
+      claudeConnecting = false;
+      claudeConnectMode = 'api_key';
+      providerConnections.claude = { connected: true, method: 'api_key' };
+      await saveProviderConfig();
+    } catch (err) {
+      connectVerifyError = String(err);
+    }
     renderWelcome();
   });
 
   document.getElementById('wc-disconnect-claude')?.addEventListener('click', async () => {
+    claudeApiKey = '';
     claudeConnected = false;
     claudeConnecting = false;
+    claudeConnectMode = 'oauth';
+    providerConnections.claude = { connected: false, method: null };
+    connectVerifyError = '';
     await saveProviderConfig();
     renderWelcome();
   });
 
   // ── Codex connect (welcome screen) ──────────────────────────────────────
-  document.getElementById('wc-connect-codex')?.addEventListener('click', async () => {
+  document.getElementById('wc-open-codex-keys')?.addEventListener('click', async () => {
     codexConnecting = true;
+    connectVerifyError = '';
     renderWelcome();
-    // Open the API keys page so they can copy a key
-    await invoke('open_url', { url: 'https://platform.openai.com/api-keys' }).catch(() => {});
+    await invoke('open_auth_popup', {
+      url: 'https://platform.openai.com/api-keys',
+      title: 'Connect Debugr to Codex',
+      label: 'auth-codex-key',
+    }).catch(() => {});
   });
 
   document.getElementById('wc-save-codex')?.addEventListener('click', async () => {
     const input = document.getElementById('wc-codex-key') as HTMLInputElement | null;
     const key = input?.value.trim() ?? '';
-    if (!key.startsWith('sk-') || key.length < 20) {
-      if (input) { input.classList.add('input-error'); input.placeholder = 'Must start with sk-…'; }
-      return;
+    connectVerifyError = '';
+    try {
+      await invoke<string>('verify_codex_key', { apiKey: key });
+      codexApiKey = key;
+      codexConnecting = false;
+      providerConnections.codex = { connected: true, method: 'api_key' };
+      await saveProviderConfig();
+    } catch (err) {
+      connectVerifyError = String(err);
     }
-    codexApiKey = key;
-    codexConnecting = false;
-    await saveProviderConfig();
     renderWelcome();
   });
 
   document.getElementById('wc-disconnect-codex')?.addEventListener('click', async () => {
     codexApiKey = '';
     codexConnecting = false;
+    providerConnections.codex = { connected: false, method: null };
+    connectVerifyError = '';
     await saveProviderConfig();
     renderWelcome();
+  });
+
+  // ── Cursor (welcome screen) ──────────────────────────────────────────────
+  document.getElementById('wc-get-cursor')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    void invoke('open_url', { url: 'https://cursor.sh' });
   });
 
   document.querySelectorAll<HTMLButtonElement>('.recent-session-tile').forEach((button) => {
@@ -625,20 +741,23 @@ function renderConfirmation() {
 function renderSession() {
   const session = activeSession();
   const capture = activeCapture();
+  const selectedSessionCount = sessions.length;
   app.innerHTML = `
     <div class="app-shell visible">
       <div class="topbar">
-        <div class="traffic-lights">
-          <div class="traffic-light red"></div>
-          <div class="traffic-light yellow"></div>
-          <div class="traffic-light green"></div>
+        <div class="topbar-left">
+          <div class="traffic-lights">
+            <div class="traffic-light red"></div>
+            <div class="traffic-light yellow"></div>
+            <div class="traffic-light green"></div>
+          </div>
+          <button class="topbar-back-link" id="back-home-btn">← Back to home</button>
         </div>
         <div class="topbar-title">
           <img class="topbar-brand-icon" src="${brandIconUrl}" alt="" />
           <span>Debugr</span>
         </div>
         <div class="topbar-actions">
-          <button class="mini-action" id="back-home-btn">Home</button>
           <button class="btn-new-capture" id="new-ann-btn">+ New Capture</button>
         </div>
       </div>
@@ -654,7 +773,12 @@ function renderSession() {
 
       <div class="app-body">
         <aside class="sidebar">
-          <div class="sidebar-label">Sessions</div>
+          <div class="sidebar-label">Workspace</div>
+          <div class="sidebar-title-row">
+            <strong>Sessions</strong>
+            <span>${selectedSessionCount} total</span>
+          </div>
+          <div class="sidebar-helper">Choose a saved session, refresh from the API, or start a new capture.</div>
           <div id="session-list"></div>
           <button class="view-all-link" id="view-all-sessions-btn">Refresh sessions ↻</button>
           <button class="push-pending-btn" id="push-pending-btn" title="Find all unsent sessions and open them in your chosen AI CLI">
@@ -1011,9 +1135,9 @@ function renderWorkspacePanel() {
 
   if (workspaceSection === 'submit') {
     const annCount = totalAnnotations(session);
-    const isClaudeReady = claudeConnected;
-    const isCodexReady = codexApiKey.length > 0;
-    const isCursorReady = true; // Cursor needs no auth — just opens the app
+    const isClaudeReady = isProviderConnected('claude', providerConnections.claude);
+    const isCodexReady = isProviderConnected('codex', providerConnections.codex);
+    const isCursorReady = isProviderConnected('cursor', providerConnections.cursor);
     const isReady = target === 'claude' ? isClaudeReady : target === 'codex' ? isCodexReady : isCursorReady;
 
     // ── Connect card for Claude ─────────────────────────────────────────────
@@ -1021,11 +1145,12 @@ function renderWorkspacePanel() {
       <div class="connect-card">
         <div class="connect-card-title">Connect Claude</div>
         ${claudeConnecting ? `
-          <div class="connect-card-body">A browser window opened — complete the login, then click below.</div>
-          <div class="connect-waiting"><div class="connect-spinner"></div>Waiting for login…</div>
-          <button class="connect-done-btn" id="claude-done-btn">✓ Done — I'm logged in</button>
+          <div class="connect-card-body">${escapeHtml(providerConnectionPendingCopy('claude', 'oauth'))}</div>
+          <div class="connect-waiting"><div class="connect-spinner"></div>Waiting for browser login…</div>
+          ${connectVerifyError ? `<div class="connect-verify-error">${escapeHtml(connectVerifyError)}</div>` : ''}
+          <button class="connect-done-btn" id="claude-done-btn">✓ Done — verify my login</button>
         ` : `
-          <div class="connect-card-body">A browser window will open. Log in, then come back and click Done.</div>
+          <div class="connect-card-body">${escapeHtml(providerConnectionPendingCopy('claude', 'oauth'))}</div>
           <button class="connect-primary-btn" id="connect-claude-btn">Connect Claude →</button>
         `}
       </div>
@@ -1035,17 +1160,14 @@ function renderWorkspacePanel() {
     const codexConnectCard = isCodexReady ? '' : `
       <div class="connect-card">
         <div class="connect-card-title">Connect Codex</div>
-        ${codexConnecting ? `
-          <div class="connect-card-body">Copy your API key from the page that opened and paste it below.</div>
-          <div class="connect-key-row">
-            <input class="connect-key-input" id="codex-key-input" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" autofocus />
-            <button class="connect-save-btn" id="save-codex-key-btn">Save</button>
-          </div>
-          <div class="connect-key-hint">Stored locally on this Mac only.</div>
-        ` : `
-          <div class="connect-card-body">A browser window will open. Copy your API key, then come back and paste it.</div>
-          <button class="connect-primary-btn" id="connect-codex-btn">Connect Codex →</button>
-        `}
+        <div class="connect-card-body">${escapeHtml(providerConnectionPendingCopy('codex', 'api_key'))}</div>
+        ${connectVerifyError ? `<div class="connect-verify-error">${escapeHtml(connectVerifyError)}</div>` : ''}
+        <div class="connect-key-row">
+          <input class="connect-key-input" id="codex-key-input" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" />
+          <button class="connect-save-btn" id="save-codex-key-btn">Verify &amp; Save</button>
+        </div>
+        <div class="connect-key-hint">Stored locally on this Mac only — never sent anywhere.</div>
+        <button class="connect-primary-btn secondary" id="connect-codex-btn">Open API keys page</button>
       </div>
     `;
 
@@ -1073,11 +1195,13 @@ function renderWorkspacePanel() {
         </div>
 
         ${isReady ? `
-          <div class="save-banner">✓ ${target === 'cursor' ? 'Cursor is always ready — opens your project' : 'Connected and ready to send'}</div>
+          <div class="save-banner">✓ ${escapeHtml(providerConnectionReadyCopy(target, providerConnections[target].method))}</div>
           <button class="send-btn" id="send-btn" ${isSending ? 'disabled' : ''}>
             ${isSending ? 'Opening…' : `Send to ${providerLabel(target)} ⌘↵`}
           </button>
-          <div class="send-tip">${target === 'cursor' ? 'Cursor will open with your project — paste the session prompt into the Cursor chat.' : 'Tip: set a project folder so the agent can navigate your code.'}</div>
+          <div class="send-tip">${target === 'cursor'
+            ? 'Debugr will open Cursor with your project folder and the session prompt ready to paste.'
+            : 'Tip: set a project folder so the agent can navigate your code.'}</div>
           ${session.projectFolder
             ? `<div class="context-folder">📁 ${escapeHtml(session.projectFolder)}</div>`
             : `<button class="link-btn" id="add-folder-btn">+ Add project folder</button>`}
@@ -1109,16 +1233,16 @@ function renderWorkspacePanel() {
       if (folder) { session.projectFolder = folder; persistAppState(); renderSession(); }
     });
 
-    // ── Claude connect ──────────────────────────────────────────────────────
+    // ── Claude connect (Submit tab) ─────────────────────────────────────────
     document.getElementById('connect-claude-btn')?.addEventListener('click', async () => {
       claudeConnecting = true;
+      connectVerifyError = '';
       renderSession();
-      // Open a friendly terminal that handles the login — no commands visible
+      // Also try Terminal for the CLI auth step
       const script = [
         `echo "=== Connecting Debugr to Claude ==="`,
         `echo ""`,
-        `echo "A browser window will open for you to log in."`,
-        `echo "Once you see 'Logged in' in the browser, come back here."`,
+        `echo "Complete the Claude CLI login flow, then come back to Debugr and click Done."`,
         `echo ""`,
         `claude /login`,
       ].join(' && ');
@@ -1126,45 +1250,73 @@ function renderWorkspacePanel() {
         cwd: process.env['HOME'] || '~',
         command: script,
         title: 'Connect Debugr to Claude',
-      }).catch(() => {});
+      }).catch(() => {
+        claudeConnecting = false;
+        connectVerifyError = 'Could not open Claude CLI login automatically. Open Terminal, run `claude /login`, finish the login flow, then return here and click Done.';
+        renderSession();
+      });
     });
 
     document.getElementById('claude-done-btn')?.addEventListener('click', async () => {
+      connectVerifyError = '';
+      try {
+      await invoke<string>('verify_claude_auth');
+      claudeApiKey = '';
       claudeConnected = true;
       claudeConnecting = false;
-      await saveProviderConfig();
+      claudeConnectMode = 'oauth';
+      providerConnections.claude = { connected: true, method: 'oauth' };
+        connectVerifyError = '';
+        await saveProviderConfig();
+      } catch (err) {
+        connectVerifyError = String(err);
+      }
       renderSession();
     });
 
-    // ── Codex connect ───────────────────────────────────────────────────────
+    // ── Codex connect (Submit tab) ──────────────────────────────────────────
     document.getElementById('connect-codex-btn')?.addEventListener('click', async () => {
       codexConnecting = true;
+      connectVerifyError = '';
       renderSession();
-      await invoke('open_url', { url: 'https://platform.openai.com/api-keys' }).catch(() => {});
+      await invoke('open_auth_popup', {
+        url: 'https://platform.openai.com/api-keys',
+        title: 'Connect Debugr to Codex',
+        label: 'auth-codex-key',
+      }).catch(() => {});
     });
 
     document.getElementById('save-codex-key-btn')?.addEventListener('click', async () => {
       const input = document.getElementById('codex-key-input') as HTMLInputElement | null;
       const key = input?.value.trim() ?? '';
-      if (!key.startsWith('sk-') || key.length < 20) {
-        if (input) { input.classList.add('input-error'); input.placeholder = 'Must start with sk-…'; }
+      connectVerifyError = '';
+      try {
+        await invoke<string>('verify_codex_key', { apiKey: key });
+      } catch (err) {
+        connectVerifyError = String(err);
+        renderSession();
         return;
       }
       codexApiKey = key;
       codexConnecting = false;
+      providerConnections.codex = { connected: true, method: 'api_key' };
       await saveProviderConfig();
       renderSession();
     });
 
     // ── Disconnect ──────────────────────────────────────────────────────────
     document.getElementById('disconnect-claude-btn')?.addEventListener('click', async () => {
+      claudeApiKey = '';
       claudeConnected = false;
+      claudeConnectMode = 'oauth';
+      providerConnections.claude = { connected: false, method: null };
       await saveProviderConfig();
       renderSession();
     });
     document.getElementById('disconnect-codex-btn')?.addEventListener('click', async () => {
       codexApiKey = '';
       codexConnecting = false;
+      providerConnections.codex = { connected: false, method: null };
       await saveProviderConfig();
       renderSession();
     });
@@ -1212,15 +1364,16 @@ function renderWorkspacePanel() {
     renderSession();
   });
 
-  if (feedback) {
+  const currentFeedback = feedback;
+  if (currentFeedback) {
     document.getElementById('copy-insights-summary')?.addEventListener('click', async () => {
       const text = [
-        feedback.title,
-        feedback.summary,
-        feedback.rootCause ? `Root cause:\n${feedback.rootCause}` : '',
-        feedback.suggestedFix ? `Suggested fix:\n${feedback.suggestedFix}` : '',
-        (feedback.nextSteps ?? []).length > 0
-          ? `Next steps:\n${(feedback.nextSteps ?? []).map((s, i) => `${i + 1}. ${s}`).join('\n')}`
+        currentFeedback.title,
+        currentFeedback.summary,
+        currentFeedback.rootCause ? `Root cause:\n${currentFeedback.rootCause}` : '',
+        currentFeedback.suggestedFix ? `Suggested fix:\n${currentFeedback.suggestedFix}` : '',
+        (currentFeedback.nextSteps ?? []).length > 0
+          ? `Next steps:\n${(currentFeedback.nextSteps ?? []).map((s, i) => `${i + 1}. ${s}`).join('\n')}`
           : '',
       ]
         .filter(Boolean)
@@ -1232,9 +1385,9 @@ function renderWorkspacePanel() {
       }
     });
     document.getElementById('copy-insights-code')?.addEventListener('click', async () => {
-      if (!feedback.codeSnippet) return;
+      if (!currentFeedback.codeSnippet) return;
       try {
-        await navigator.clipboard.writeText(feedback.codeSnippet);
+        await navigator.clipboard.writeText(currentFeedback.codeSnippet);
       } catch {
         window.alert('Could not copy to clipboard.');
       }
@@ -1259,6 +1412,8 @@ function bindSessionActions() {
     render();
   });
   document.getElementById('new-ann-btn')?.addEventListener('click', async () => {
+    const allowed = await ensureScreenCaptureAccess({ promptToOpenSettings: true });
+    if (!allowed) return;
     await invoke('show_overlay');
   });
   document.getElementById('view-all-sessions-btn')?.addEventListener('click', () => {
@@ -1320,13 +1475,65 @@ async function checkPermission() {
   if (!note) return;
   try {
     const granted = await invoke<boolean>('get_screen_capture_permission');
-    note.textContent = granted ? '● Screen capture enabled' : '⚠ Screen capture blocked';
-    note.className = `perm-note ${granted ? 'ok' : 'warn'}`;
-    if (!granted) {
-      note.addEventListener('click', () => void invoke('open_screen_capture_settings'), { once: true });
+    if (granted) {
+      note.innerHTML = `
+        <strong>Screen capture ready</strong>
+        <span>Debugr can capture your screen and create new annotations.</span>
+      `;
+      note.className = 'perm-note ok';
+      return;
     }
+    note.innerHTML = `
+      <strong>Screen capture blocked</strong>
+      <span>Debugr still needs macOS Screen &amp; System Audio Recording access. Open the Screen Recording panel, enable Debugr, then quit and reopen the app if macOS asks.</span>
+      <button type="button" class="perm-note-action" id="open-screen-settings-btn">Open Screen Recording settings</button>
+    `;
+    note.className = 'perm-note warn';
+    document.getElementById('open-screen-settings-btn')?.addEventListener('click', () => {
+      void invoke('open_screen_capture_settings');
+    });
+    return;
   } catch {
-    note.style.display = 'none';
+    note.innerHTML = `
+      <strong>Screen capture status unavailable</strong>
+      <span>Debugr could not check macOS screen-recording permissions right now. Try reopening the app, then open System Settings if capture still fails.</span>
+    `;
+    note.className = 'perm-note warn';
+  }
+}
+
+async function ensureScreenCaptureAccess(options: { promptToOpenSettings?: boolean } = {}) {
+  try {
+    const granted = await invoke<boolean>('get_screen_capture_permission');
+    if (granted) return true;
+
+    const hasPromptedBefore = localStorage.getItem(SCREEN_CAPTURE_PERMISSION_PROMPT_KEY) === '1';
+    if (!hasPromptedBefore) {
+      localStorage.setItem(SCREEN_CAPTURE_PERMISSION_PROMPT_KEY, '1');
+      await invoke<boolean>('request_screen_capture_permission').catch(() => false);
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      const grantedAfterPrompt = await invoke<boolean>('get_screen_capture_permission').catch(() => false);
+      if (grantedAfterPrompt) {
+        await checkPermission();
+        return true;
+      }
+    }
+
+    await checkPermission();
+    if (options.promptToOpenSettings) {
+      const shouldOpenSettings = window.confirm(
+        'Debugr needs macOS Screen & System Audio Recording permission before it can start annotating.\n\nOpen System Settings to the Screen Recording panel now?',
+      );
+      if (shouldOpenSettings) {
+        await invoke('open_screen_capture_settings').catch(() => {});
+      }
+    }
+    return false;
+  } catch {
+    if (options.promptToOpenSettings) {
+      window.alert('Debugr could not check screen-recording permissions right now. Please open System Settings → Privacy & Security → Screen Recording and enable Debugr.');
+    }
+    return false;
   }
 }
 
@@ -1652,16 +1859,41 @@ async function listenForAnnotations() {
     codexConnecting = false;
     render();
   });
+
+  await listen('screen-capture-permission-needed', async () => {
+    if (!authState.authenticated) {
+      appMode = 'welcome';
+      render();
+    } else {
+      await enterSessionMode('notes');
+    }
+    await checkPermission();
+    const shouldOpenSettings = window.confirm(
+      'Debugr needs macOS Screen & System Audio Recording permission before it can start annotating.\n\nOpen System Settings to the Screen Recording panel now?',
+    );
+    if (shouldOpenSettings) {
+      await invoke('open_screen_capture_settings').catch(() => {});
+    }
+  });
 }
 
 async function loadProviderConfig() {
   try {
     const cfg = await invoke<Record<string, unknown>>('get_provider_config');
+    if (typeof cfg.claude_api_key === 'string' && cfg.claude_api_key) {
+      claudeApiKey = cfg.claude_api_key;
+      claudeConnected = true;
+      claudeConnectMode = 'api_key';
+      providerConnections.claude = { connected: true, method: 'api_key' };
+    } else if (cfg.claude_connected === true) {
+      claudeConnected = true;
+      claudeConnectMode = cfg.claude_connection_method === 'api_key' ? 'api_key' : 'oauth';
+      providerConnections.claude = { connected: true, method: claudeConnectMode };
+    }
     if (typeof cfg.codex_api_key === 'string' && cfg.codex_api_key) {
       codexApiKey = cfg.codex_api_key;
-    }
-    if (cfg.claude_connected === true) {
-      claudeConnected = true;
+      codexConnectMode = 'api_key';
+      providerConnections.codex = { connected: true, method: 'api_key' };
     }
   } catch {
     // config doesn't exist yet — first run
@@ -1671,8 +1903,11 @@ async function loadProviderConfig() {
 async function saveProviderConfig() {
   await invoke('save_provider_config', {
     payload: {
+      claude_api_key: claudeApiKey,
       codex_api_key: codexApiKey,
       claude_connected: claudeConnected,
+      claude_connection_method: claudeConnected ? claudeConnectMode : null,
+      codex_connection_method: codexApiKey ? codexConnectMode : null,
     },
   }).catch(() => {});
 }
@@ -1680,6 +1915,16 @@ async function saveProviderConfig() {
 async function init() {
   hydrateAppState();
   await loadProviderConfig();
+  // Check Cursor installation without blocking render
+  invoke<boolean>('check_cursor_installed').then((installed) => {
+    cursorInstalled = installed;
+    providerConnections.cursor = {
+      connected: installed,
+      method: installed ? 'installed' : null,
+    };
+    persistAppState();
+    if (appMode === 'welcome') render();
+  }).catch(() => {});
   render();
   await listenForAnnotations();
   void loadSessionsFromApi();
