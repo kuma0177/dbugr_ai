@@ -110,8 +110,8 @@ root.innerHTML = `
   <div id="annotation-ui" style="display:none;">
     <!-- Top-center toast -->
     <div class="toast" id="toast">
-      <kbd>⌘</kbd><kbd>⌥</kbd><kbd>A</kbd>
-      <span id="toast-text">Click anywhere to add an annotation. Right-drag to draw a region.</span>
+      <kbd>⌃</kbd><kbd>⌘</kbd><kbd>Z</kbd>
+      <span id="toast-text">Click anywhere to add a pin. Right-drag to draw a region.</span>
     </div>
 
     <!-- Session label -->
@@ -217,7 +217,7 @@ function updateCounter() {
   const n = annotations.length;
   setToast(n > 0
     ? `${n} annotation${n > 1 ? 's' : ''} added — click Save when done.`
-    : `Click anywhere to add an annotation. Right-drag to draw a region.`);
+    : `Click anywhere to add a pin. Right-drag to draw a region. (⌃⌘Z opens Debugr.)`);
 }
 
 function readCachedPickerSessions(): PickerSession[] {

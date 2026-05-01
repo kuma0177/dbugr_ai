@@ -19,7 +19,7 @@ function getSteps() {
         </div>
         <div style={launchCanvas}>
           <div style={menuCard}>
-            <div style={menuItem(true)}>New Annotation <span style={shortcut}>⌥⌘A</span></div>
+            <div style={menuItem(true)}>New Annotation <span style={shortcut}>⌃⌘Z</span></div>
             <div style={menuItem()}>Sessions <span style={shortcut}>⌘J</span></div>
             <div style={menuItem()}>Settings <span style={chev}>›</span></div>
             <div style={menuItem()}>What&apos;s New</div>
@@ -28,7 +28,7 @@ function getSteps() {
           <div style={statusCard}>
             <div style={statusBadge}>dmg</div>
             <div style={{ fontSize: 15, fontWeight: 700, marginTop: 14 }}>Debugr is running</div>
-            <div style={{ color: '#475569', marginTop: 6, fontSize: 12.5 }}>Press <strong>⌥⌘A</strong> to annotate</div>
+            <div style={{ color: '#475569', marginTop: 6, fontSize: 12.5 }}>Press <strong>⌃⌘Z</strong> (Control + Command + Z) to annotate</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 18, color: '#16a34a', fontSize: 12 }}>
               <span style={greenDot} /> Active
             </div>
@@ -40,7 +40,7 @@ function getSteps() {
   {
     n: '2',
     title: 'Trigger annotation with a shortcut',
-    body: 'Press \u2318\u2325A from anywhere to start annotating your screen.',
+    body: 'Press Control + Command + Z (\u2303\u2318Z) from anywhere to start annotating your screen.',
     panel: (
       <div style={mockBoard}>
         <div style={githubHeader}>
@@ -58,7 +58,7 @@ function getSteps() {
           <div style={repoRow}><span>src/</span><span>Fix analytics event</span><span>5h ago</span></div>
           <div style={repoRow}><span>package.json</span><span>Bump deps</span><span>yesterday</span></div>
         </div>
-        <div style={shortcutChip}><span>⌥</span><span>⌘</span><span>A</span></div>
+        <div style={shortcutChip}><span>⌃</span><span>⌘</span><span>Z</span></div>
       </div>
     ),
   },
@@ -210,7 +210,7 @@ export default function HomePage() {
         </p>
         <div style={ctaRow}>
           <Link href="/sessions" style={primaryCta}>Open Sessions</Link>
-          <span style={secondaryCta}>Shortcut: ⌥⌘A</span>
+          <span style={secondaryCta}>Shortcut: ⌃⌘Z</span>
         </div>
       </section>
 
@@ -232,7 +232,7 @@ export default function HomePage() {
       <section style={footerGrid}>
         <div style={footerCard}>
           <div style={footerTitle}>Always one shortcut away</div>
-          <p style={footerText}>Launch Debugr once, then use the global shortcut to start a session from anywhere.</p>
+          <p style={footerText}>Launch Debugr once, then press Control + Command + Z from any app to open the annotation overlay.</p>
         </div>
         <div style={footerCard}>
           <div style={footerTitle}>Bridge options are real</div>

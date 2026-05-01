@@ -322,7 +322,7 @@ fn main() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             // ── Tray menu ──────────────────────────────────────────────────
-            let annotate = MenuItemBuilder::new("New Annotation  ⌘⌥A")
+            let annotate = MenuItemBuilder::new("New Annotation  ⌃⌘Z")
                 .id("annotate").build(app)?;
             let sessions = MenuItemBuilder::new("Sessions")
                 .id("sessions").build(app)?;
@@ -340,7 +340,7 @@ fn main() {
                 .icon(tray_template_icon())
                 .icon_as_template(true)   // renders correctly in both light & dark menu bar
                 .menu(&menu)
-                .tooltip("Debugr — ⌘⌥A to annotate")
+                .tooltip("Debugr — ⌃⌘Z to annotate")
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "annotate"  => trigger_overlay(app),
                     "sessions"  => {
@@ -355,10 +355,10 @@ fn main() {
                 })
                 .build(app)?;
 
-            // ── Global shortcut ⌘⌥A ───────────────────────────────────────
+            // ── Global shortcut ⌃⌘Z (Control + Command + Z) ───────────────
             let handle = app.handle().clone();
             app.global_shortcut().on_shortcut(
-                "Cmd+Alt+A",
+                "Ctrl+Cmd+Z",
                 move |_app, _shortcut, event| {
                     // Only fire on key-down, not key-up
                     if event.state == ShortcutState::Pressed {

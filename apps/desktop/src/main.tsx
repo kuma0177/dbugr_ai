@@ -290,6 +290,12 @@ function sessionWindowSize(): [number, number] {
   return [width, height];
 }
 
+function welcomeWindowSize(): [number, number] {
+  const width = Math.round(Math.max(1180, Math.min(1680, window.screen.availWidth * 0.94)));
+  const height = Math.round(Math.max(860, Math.min(1080, window.screen.availHeight * 0.92)));
+  return [width, height];
+}
+
 async function fitWindowToContent() {
   await new Promise((resolve) => requestAnimationFrame(resolve));
   const card = document.querySelector<HTMLElement>('.welcome-card');
@@ -297,6 +303,13 @@ async function fitWindowToContent() {
   const maxHeight = Math.round(window.screen.availHeight * 0.9);
   const height = Math.min(card.scrollHeight + 48, maxHeight);
   await win.setSize(new LogicalSize(Math.min(980, Math.max(460, card.scrollWidth + 48)), height));
+}
+
+async function fitWelcomeWindow() {
+  const [width, height] = welcomeWindowSize();
+  await win.setSize(new LogicalSize(width, height));
+  await win.setResizable(true);
+  await win.center();
 }
 
 async function enterSessionMode(section: WorkspaceSection = 'notes') {
@@ -394,12 +407,6 @@ function renderWelcome() {
           </div>
         </div>
 
-        <div class="journey-strip">
-          ${['Sign in', 'Connect MCP', 'Capture', 'Review', 'Submit', 'Insights'].map((label, index) => `
-            <div class="journey-chip ${index < (authState.authenticated ? 2 : 1) ? 'done' : ''}">${index + 1}. ${label}</div>
-          `).join('')}
-        </div>
-
         <div class="welcome-grid">
           <section class="welcome-panel">
             <div class="panel-kicker">Launch & sign in</div>
@@ -469,10 +476,10 @@ function renderWelcome() {
           <section class="welcome-panel">
             <div class="panel-kicker">Start capturing</div>
             <h2>Always one shortcut away</h2>
-            <p class="panel-copy">Debugr still lives in the background. Press the global shortcut to open the annotation overlay from any app.</p>
+            <p class="panel-copy">Debugr stays in the background. Press <strong>Control + Command + Z</strong> from any app to open the annotation overlay.</p>
             <div class="shortcut-row large-shortcut">
               <span class="shortcut-label">Global shortcut</span>
-              <kbd>⌘</kbd><kbd>⌥</kbd><kbd>A</kbd>
+              <kbd>⌃</kbd><kbd>⌘</kbd><kbd>Z</kbd>
             </div>
             <button class="btn-secondary wide-btn" id="start-bg-btn">Start background mode</button>
           </section>
@@ -552,7 +559,7 @@ function renderWelcome() {
     });
   });
 
-  void fitWindowToContent();
+  void fitWelcomeWindow();
 }
 
 function renderConnectionSetup() {
@@ -770,9 +777,9 @@ function renderSession() {
                 </div>
                 ${session.captures.length === 0 ? `
                   <div class="empty-state capture-empty-state">
-                    <div class="empty-icon">⌘⌥A</div>
+                    <div class="empty-icon">⌃⌘Z</div>
                     <div class="empty-title">No captures yet</div>
-                    <div class="empty-copy">Use the global shortcut or the New Capture button to start the background annotation flow.</div>
+                    <div class="empty-copy">Press <strong>Control + Command + Z</strong> or use New Capture to start annotating from any app.</div>
                   </div>
                 ` : `
                   <div class="capture-preview-card">
