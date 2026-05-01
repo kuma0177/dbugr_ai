@@ -232,6 +232,21 @@ fn hide_main_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Copy text to the macOS clipboard via pbcopy.
+#[tauri::command]
+fn copy_to_clipboard(text: String) -> Result<(), String> {
+    use std::io::Write;
+    let mut child = Command::new("pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("pbcopy failed: {e}"))?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(text.as_bytes()).map_err(|e| format!("write failed: {e}"))?;
+    }
+    child.wait().map_err(|e| format!("pbcopy wait failed: {e}"))?;
+    Ok(())
+}
+
 /// Open Cursor at an optional project folder (macOS). Falls back to opening the app with no path.
 #[tauri::command]
 fn open_in_cursor(project_folder: Option<String>) -> Result<(), String> {
@@ -436,6 +451,7 @@ fn main() {
             hide_main_window,
             pick_folder,
             open_in_cursor,
+            copy_to_clipboard,
         ])
         .run(tauri::generate_context!())
         .expect("error while running debugr.ai");

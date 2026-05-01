@@ -1402,110 +1402,85 @@ async function loadSessionsFromApi() {
   }
 }
 
+/** Build a plain-text prompt from the session that Claude / Codex can act on. */
+function buildSessionPrompt(session: Session): string {
+  const lines: string[] = [];
+  lines.push(`# Debugr session: ${session.title}`);
+  if (session.about) lines.push(`\nContext: ${session.about}`);
+  if (session.sessionNote) lines.push(`\nSession note: ${session.sessionNote}`);
+  if (session.projectFolder) lines.push(`\nProject folder: ${session.projectFolder}`);
+  if (session.githubRepo) lines.push(`\nGitHub repo: ${session.githubRepo}`);
+
+  session.captures.forEach((capture, ci) => {
+    lines.push(`\n## Capture ${ci + 1}: ${capture.title || 'Untitled'}`);
+    if (capture.preview && capture.preview !== 'No annotation notes yet') {
+      lines.push(`Preview: ${capture.preview}`);
+    }
+    capture.annotations.forEach((ann, ai) => {
+      lines.push(`\n  Annotation ${ai + 1} (${ann.kind ?? 'pin'}):`);
+      if (ann.text) lines.push(`    Note: ${ann.text}`);
+      if (ann.tags?.length) lines.push(`    Tags: ${ann.tags.join(', ')}`);
+    });
+  });
+
+  lines.push('\n---');
+  lines.push('Please analyse the above session and provide:');
+  lines.push('1. The likely root cause of the issue');
+  lines.push('2. A suggested fix with code if applicable');
+  lines.push('3. Concrete next steps');
+
+  return lines.join('\n');
+}
+
 async function sendSession() {
   const session = activeSession();
   if (!session) return;
 
-  const annCount = totalAnnotations(session);
-  if (annCount > 1 && !(session.sessionNote ?? '').trim()) {
-    submitGateError =
-      'Add a session-level note before sending. It is required when this session has more than one annotation.';
-    workspaceSection = 'submit';
-    renderSession();
-    return;
-  }
   submitGateError = '';
-
   isSending = true;
   session.status = 'sent';
   session.lastTarget = target;
-  workspaceSection = 'insights';
-  feedback = null;
   persistAppState();
   renderSession();
 
-  const payload = {
-    projectId: 'proj_demo',
-    title: session.title,
-    about: session.about ?? '',
-    projectFolder: session.projectFolder ?? '',
-    githubRepo: session.githubRepo ?? '',
-    visibility: session.submissionFlow === 'public' ? 'public' : session.submissionFlow === 'team' ? 'org' : 'private',
-    userIntent: JSON.stringify({
-      sessionContext: {
-        about: session.about ?? '',
-        sessionNote: session.sessionNote ?? '',
-        projectFolder: session.projectFolder ?? '',
-        githubRepo: session.githubRepo ?? '',
-        submissionFlow: session.submissionFlow,
-        profileCompany: authState.company ?? '',
-        profileRole: authState.role ?? '',
-      },
-      captures: session.captures,
-      curatedContributions: acceptedContributions(session),
-      target,
-      contextToggles,
-    }),
-  };
+  const prompt = buildSessionPrompt(session);
+  const cwd = session.projectFolder?.trim() || (await invoke<string>('pick_folder').catch(() => '')) || '';
+  const title = `Debugr → ${providerLabel(target)}: ${session.title}`;
 
   try {
-    const response = await fetch(`${API}/feedback-sessions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (response.ok) {
-      const json = await response.json();
-      const sessionId = json.data?.id as string | undefined;
-      if (sessionId) {
-        if (session.submissionFlow === 'team' || session.submissionFlow === 'public') {
-          try {
-            await fetch(`${API}/feedback-sessions/${sessionId}/finalize`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ durationMs: 0 }),
-            });
-          } catch {
-            /* finalize is best-effort for desktop handoff */
-          }
-        }
-        const sendResponse = await fetch(`${API}/feedback-sessions/${sessionId}/send-to-claude`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ target }),
-        });
-        if (sendResponse.ok) {
-          const sendJson = await sendResponse.json();
-          const agent = sendJson.data?.agent_feedback;
-          if (agent) {
-            feedback = {
-              title: agent.title || 'Analysis complete',
-              summary: agent.summary || sendJson.data.message,
-              rootCause: agent.root_cause,
-              suggestedFix: agent.suggested_fix,
-              codeSnippet: agent.code_snippet,
-              nextSteps: agent.next_steps || [],
-            };
-          }
-        }
-      }
+    if (target === 'cursor') {
+      // Open Cursor at the project folder — user pastes prompt manually
+      await invoke('open_in_cursor', { projectFolder: cwd || null });
+      feedback = {
+        title: 'Cursor opened',
+        summary: 'Your project has been opened in Cursor. The session prompt has been copied to your clipboard — paste it into the Cursor agent chat.',
+        nextSteps: ['Paste the session prompt into Cursor chat', 'The agent will analyse the annotated areas'],
+      };
+      await invoke('copy_to_clipboard', { text: prompt }).catch(() => {});
+    } else {
+      // Claude CLI: `claude "prompt"` — Codex CLI: `codex "prompt"`
+      const cliName = target === 'codex' ? 'codex' : 'claude';
+      // Escape single quotes in prompt for shell safety
+      const escaped = prompt.replace(/'/g, "'\\''");
+      const command = `${cliName} '${escaped}'`;
+      await invoke('open_command_in_terminal', { cwd: cwd || process.env['HOME'] || '~', command, title });
+      feedback = {
+        title: `${providerLabel(target)} is running in Terminal`,
+        summary: `A Terminal window has opened with your session context. ${providerLabel(target)} CLI is now analysing your annotations.`,
+        nextSteps: [
+          'Check the Terminal window that just opened',
+          `${providerLabel(target)} will respond with its analysis there`,
+          'Copy any suggested fixes back to your editor',
+        ],
+      };
     }
-  } catch {
-    // fall back below
-  }
-
-  if (!feedback) {
-    await new Promise((resolve) => setTimeout(resolve, 1300));
+  } catch (err) {
     feedback = {
-      title: `${providerLabel(target)} found the likely root cause`,
-      summary: 'The captured flow suggests the session is missing a setup guard, so the optional path falls through before the expected state is initialized.',
-      rootCause: 'The about text and annotations point to a skipped initialization branch. That leaves downstream components reading undefined data.',
-      suggestedFix: 'Add a guard around the setup-dependent render path and use the session note as the reproduction breadcrumb in the resulting task.',
-      codeSnippet: `const prefs = user.preferences?.setup ?? null\nif (!prefs) return <SetupWizard />`,
+      title: 'Could not launch CLI',
+      summary: `Failed to open ${providerLabel(target)}: ${err instanceof Error ? err.message : String(err)}. Make sure the CLI is installed and on your PATH.`,
       nextSteps: [
-        'Reproduce the issue with the onboarding skip path.',
-        'Add a guard before the session-dependent component renders.',
-        'Keep the session note in the final implementation task so the coding agent sees the expected behavior.',
+        `Install ${target === 'codex' ? 'Codex' : 'Claude'} CLI if not already installed`,
+        'Check that the CLI is accessible from Terminal',
       ],
     };
   }
