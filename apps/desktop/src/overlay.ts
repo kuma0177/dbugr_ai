@@ -523,6 +523,7 @@ async function saveAll() {
       newSessionName,
     });
 
+    // Emit event to main window to save annotations
     await emitTo(MAIN_WEBVIEW_LABEL, 'annotations-saved', {
       annotations,
       targetSessionId,
@@ -533,13 +534,18 @@ async function saveAll() {
     });
     console.log('[Debugr] Event emitted successfully');
 
-    console.log('[Debugr] Showing session window...');
-    await invoke('show_session_window');
-    console.log('[Debugr] Session window shown');
+    // Small delay to ensure event listener processes the event
+    await new Promise(resolve => setTimeout(resolve, 100));
 
+    // Hide overlay first (it's on top of the main window)
     console.log('[Debugr] Hiding overlay...');
     await invoke('hide_overlay');
     console.log('[Debugr] Overlay hidden');
+
+    // Then show and focus the main window
+    console.log('[Debugr] Showing session window...');
+    await invoke('show_session_window');
+    console.log('[Debugr] Session window shown and focused');
   } catch (err) {
     console.error('[Debugr] Error in saveAll():', err);
     const errorMsg = err instanceof Error ? err.message : String(err);
