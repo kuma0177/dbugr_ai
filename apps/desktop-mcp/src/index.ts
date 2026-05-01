@@ -8,7 +8,7 @@
  *                ~/.config/debugr/sessions.json                       (Linux)
  *                %APPDATA%\debugr\sessions.json                        (Windows)
  *
- * Claude Desktop config (~/.claude/claude_desktop_config.json):
+ * ── Claude Desktop config (~/.claude/claude_desktop_config.json) ──────────────
  *
  *   {
  *     "mcpServers": {
@@ -19,7 +19,15 @@
  *     }
  *   }
  *
- * Or if running from source with tsx:
+ * ── Codex CLI config (~/.codex/config.yaml) ────────────────────────────────
+ *
+ *   mcpServers:
+ *     debugr:
+ *       command: node
+ *       args:
+ *         - /path/to/debugr/apps/desktop-mcp/dist/index.js
+ *
+ * Or if running from source with tsx (both clients):
  *   "command": "npx",
  *   "args": ["tsx", "/path/to/debugr/apps/desktop-mcp/src/index.ts"]
  */

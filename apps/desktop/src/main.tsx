@@ -736,6 +736,10 @@ function renderSession() {
           <div class="sidebar-label">Sessions</div>
           <div id="session-list"></div>
           <button class="view-all-link" id="view-all-sessions-btn">Refresh sessions ↻</button>
+          <button class="push-pending-btn" id="push-pending-btn" title="Find all unsent sessions and open them in your chosen AI CLI">
+            <span class="push-pending-icon">↗</span>
+            Push pending to ${providerLabel(target)}
+          </button>
           <div class="perm-note" id="perm-note">Checking permissions…</div>
         </aside>
 
@@ -1235,6 +1239,9 @@ function bindSessionActions() {
   document.getElementById('view-all-sessions-btn')?.addEventListener('click', () => {
     void loadSessionsFromApi();
   });
+  document.getElementById('push-pending-btn')?.addEventListener('click', () => {
+    void pushPendingSessions();
+  });
   document.querySelectorAll<HTMLButtonElement>('[data-section]').forEach((button) => {
     button.addEventListener('click', () => {
       const section = button.dataset.section as WorkspaceSection | undefined;
@@ -1395,6 +1402,115 @@ async function loadSessionsFromApi() {
     render();
   } catch {
     render();
+  }
+}
+
+/**
+ * Find every session that has annotations but hasn't been sent yet,
+ * build a combined prompt, and open the active AI CLI (Claude or Codex)
+ * in a Terminal window.
+ *
+ * Mirrors the MCP flow:  get_pending_sessions → get_session → build_prompt
+ */
+async function pushPendingSessions() {
+  const pending = sortedSessions().filter(
+    (s) => s.status !== 'sent' && totalAnnotations(s) > 0,
+  );
+
+  const btn = document.getElementById('push-pending-btn') as HTMLButtonElement | null;
+
+  if (pending.length === 0) {
+    if (btn) {
+      const orig = btn.textContent ?? '';
+      btn.textContent = 'No pending sessions';
+      btn.disabled = true;
+      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000);
+    }
+    return;
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = `Opening ${pending.length} session${pending.length > 1 ? 's' : ''}…`; }
+
+  // Ensure sessions.json is up to date before the CLI can read it via MCP
+  await invoke('save_sessions_to_disk', { payload: { sessions } }).catch(() => {});
+
+  try {
+    if (pending.length === 1) {
+      // Single session → use the same flow as sendSession() for a clean UX
+      const session = pending[0]!;
+      const prompt = buildSessionPrompt(session);
+      const cwd = session.projectFolder?.trim() || '';
+
+      if (target === 'cursor') {
+        await invoke('open_in_cursor', { projectFolder: cwd || null });
+        await invoke('copy_to_clipboard', { text: prompt }).catch(() => {});
+      } else {
+        const cliName = target === 'codex' ? 'codex' : 'claude';
+        const escaped = prompt.replace(/'/g, "'\\''");
+        await invoke('open_command_in_terminal', {
+          cwd: cwd || process.env['HOME'] || '~',
+          command: `${cliName} '${escaped}'`,
+          title: `Debugr → ${providerLabel(target)}: ${session.title}`,
+        });
+      }
+
+      session.status = 'sent';
+      session.lastTarget = target;
+    } else {
+      // Multiple sessions → build one combined prompt and send in a single terminal
+      const combined: string[] = [
+        `# Debugr — ${pending.length} pending sessions\n`,
+        `You have ${pending.length} unsent annotation sessions. Please work through each one.\n`,
+      ];
+
+      pending.forEach((session, i) => {
+        combined.push(`\n${'='.repeat(60)}`);
+        combined.push(`SESSION ${i + 1} OF ${pending.length}`);
+        combined.push('='.repeat(60));
+        combined.push(buildSessionPrompt(session));
+      });
+
+      combined.push('\n---');
+      combined.push('Please address all sessions above in order.');
+
+      const prompt = combined.join('\n');
+
+      // Use the first session's folder as cwd (best-effort)
+      const cwd = pending.find((s) => s.projectFolder?.trim())?.projectFolder?.trim() || '';
+
+      if (target === 'cursor') {
+        await invoke('open_in_cursor', { projectFolder: cwd || null });
+        await invoke('copy_to_clipboard', { text: prompt }).catch(() => {});
+      } else {
+        const cliName = target === 'codex' ? 'codex' : 'claude';
+        const escaped = prompt.replace(/'/g, "'\\''");
+        await invoke('open_command_in_terminal', {
+          cwd: cwd || process.env['HOME'] || '~',
+          command: `${cliName} '${escaped}'`,
+          title: `Debugr → ${providerLabel(target)}: ${pending.length} pending sessions`,
+        });
+      }
+
+      pending.forEach((s) => { s.status = 'sent'; s.lastTarget = target; });
+    }
+
+    persistAppState();
+    renderSession();
+  } catch (err) {
+    console.error('[Debugr] pushPendingSessions failed:', err);
+    if (btn) {
+      btn.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.innerHTML = `<span class="push-pending-icon">↗</span> Push pending to ${providerLabel(target)}`;
+      }, 3000);
+      return;
+    }
+  }
+
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = `<span class="push-pending-icon">↗</span> Push pending to ${providerLabel(target)}`;
   }
 }
 

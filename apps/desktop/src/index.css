@@ -704,6 +704,40 @@ kbd {
   padding: 4px 6px;
 }
 
+.push-pending-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1.5px solid var(--blue-hover);
+  border-radius: 10px;
+  background: var(--blue-soft);
+  color: var(--blue-hover);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  line-height: 1.3;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.push-pending-btn:hover {
+  background: #dbeafe;
+}
+
+.push-pending-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.push-pending-icon {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 .sidebar-empty {
   color: var(--muted);
   font-size: 12.5px;
