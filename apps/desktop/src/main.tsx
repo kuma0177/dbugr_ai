@@ -83,6 +83,7 @@ let codexConnectMode: ProviderConnectionMethod = 'api_key';
 let cursorInstalled = false;
 /** Verification error shown below the connect card */
 let connectVerifyError = '';
+let providerRecheckError = '';
 let authState: AuthState = {
   authenticated: false,
   profileInitialized: false,
@@ -334,6 +335,8 @@ function render() {
 function renderWelcome() {
   const recentSessions = sortedSessions().slice(0, 4);
   const canFinishSetup = authState.authenticated && connectedProviderCount() > 0;
+  const claudeReady = isProviderConnected('claude', providerConnections.claude);
+  const codexReady = isProviderConnected('codex', providerConnections.codex);
   app.innerHTML = `
     <div class="welcome-shell">
       <div class="welcome-card welcome-journey-card">
@@ -408,12 +411,12 @@ function renderWelcome() {
               <div class="wc-provider-header">
                 <div class="wc-provider-name">
                   <strong>Claude</strong>
-                  <span class="provider-pill ${claudeConnected ? 'connected' : ''}">${claudeConnected ? '● Connected' : '○ Not connected'}</span>
+                  <span class="provider-pill ${claudeReady ? 'connected' : ''}">${claudeReady ? '● Connected' : '○ Not connected'}</span>
                 </div>
-                ${claudeConnected ? `<button class="wc-disconnect-btn" id="wc-disconnect-claude">Disconnect</button>` : ''}
+                ${claudeReady ? `<button class="wc-disconnect-btn" id="wc-disconnect-claude">Disconnect</button>` : ''}
               </div>
-              ${claudeConnected ? `
-                <p class="wc-hint wc-connected-hint">${escapeHtml(providerConnectionReadyCopy('claude', claudeConnectMode))}</p>
+              ${claudeReady ? `
+                <p class="wc-hint wc-connected-hint">${escapeHtml(providerConnectionReadyCopy('claude', providerConnections.claude.method))}</p>
               ` : `
                 <div class="wc-connect-body">
                   <div class="wc-connect-mode-switch">
@@ -446,11 +449,11 @@ function renderWelcome() {
               <div class="wc-provider-header">
                 <div class="wc-provider-name">
                   <strong>Codex</strong>
-                  <span class="provider-pill ${codexApiKey ? 'connected' : ''}">${codexApiKey ? '● Connected' : '○ Not connected'}</span>
+                  <span class="provider-pill ${codexReady ? 'connected' : ''}">${codexReady ? '● Connected' : '○ Not connected'}</span>
                 </div>
-                ${codexApiKey ? `<button class="wc-disconnect-btn" id="wc-disconnect-codex">Disconnect</button>` : ''}
+                ${codexReady ? `<button class="wc-disconnect-btn" id="wc-disconnect-codex">Disconnect</button>` : ''}
               </div>
-              ${codexApiKey ? `
+              ${codexReady ? `
                 <p class="wc-hint wc-connected-hint">${escapeHtml(providerConnectionReadyCopy('codex', 'api_key'))}</p>
               ` : `
                 <div class="wc-connect-body">
@@ -483,6 +486,7 @@ function renderWelcome() {
               }
             </div>
           </section>
+          ${providerRecheckError ? `<div class="submit-gate-error" role="alert">${escapeHtml(providerRecheckError)}</div>` : ''}
         </div>
 
         <div class="welcome-grid">
@@ -600,6 +604,7 @@ function renderWelcome() {
       claudeConnecting = false;
       claudeConnectMode = 'oauth';
       providerConnections.claude = { connected: true, method: 'oauth' };
+      providerRecheckError = '';
       connectVerifyError = '';
       await saveProviderConfig();
       // Briefly show version before re-render
@@ -621,6 +626,7 @@ function renderWelcome() {
       claudeConnecting = false;
       claudeConnectMode = 'api_key';
       providerConnections.claude = { connected: true, method: 'api_key' };
+      providerRecheckError = '';
       await saveProviderConfig();
     } catch (err) {
       connectVerifyError = String(err);
@@ -634,6 +640,7 @@ function renderWelcome() {
     claudeConnecting = false;
     claudeConnectMode = 'oauth';
     providerConnections.claude = { connected: false, method: null };
+    providerRecheckError = '';
     connectVerifyError = '';
     await saveProviderConfig();
     renderWelcome();
@@ -660,6 +667,7 @@ function renderWelcome() {
       codexApiKey = key;
       codexConnecting = false;
       providerConnections.codex = { connected: true, method: 'api_key' };
+      providerRecheckError = '';
       await saveProviderConfig();
     } catch (err) {
       connectVerifyError = String(err);
@@ -671,6 +679,7 @@ function renderWelcome() {
     codexApiKey = '';
     codexConnecting = false;
     providerConnections.codex = { connected: false, method: null };
+    providerRecheckError = '';
     connectVerifyError = '';
     await saveProviderConfig();
     renderWelcome();
@@ -1265,6 +1274,7 @@ function renderWorkspacePanel() {
       claudeConnecting = false;
       claudeConnectMode = 'oauth';
       providerConnections.claude = { connected: true, method: 'oauth' };
+      providerRecheckError = '';
         connectVerifyError = '';
         await saveProviderConfig();
       } catch (err) {
@@ -1299,6 +1309,7 @@ function renderWorkspacePanel() {
       codexApiKey = key;
       codexConnecting = false;
       providerConnections.codex = { connected: true, method: 'api_key' };
+      providerRecheckError = '';
       await saveProviderConfig();
       renderSession();
     });
@@ -1309,6 +1320,7 @@ function renderWorkspacePanel() {
       claudeConnected = false;
       claudeConnectMode = 'oauth';
       providerConnections.claude = { connected: false, method: null };
+      providerRecheckError = '';
       await saveProviderConfig();
       renderSession();
     });
@@ -1316,6 +1328,7 @@ function renderWorkspacePanel() {
       codexApiKey = '';
       codexConnecting = false;
       providerConnections.codex = { connected: false, method: null };
+      providerRecheckError = '';
       await saveProviderConfig();
       renderSession();
     });
@@ -1694,6 +1707,27 @@ async function sendSession() {
   if (!session) return;
 
   submitGateError = '';
+  if (target === 'claude' || target === 'codex') {
+    const verification = await verifyProviderConnection(target);
+    if (!verification.ok) {
+      submitGateError = verification.error
+        ? `${providerLabel(target)} connection check failed: ${verification.error}`
+        : `${providerLabel(target)} is not connected.`;
+      if (!verification.transient) {
+        if (target === 'claude') {
+          claudeConnected = false;
+          providerConnections.claude = { connected: false, method: null };
+        } else {
+          codexApiKey = '';
+          providerConnections.codex = { connected: false, method: null };
+        }
+        await saveProviderConfig();
+      }
+      renderSession();
+      return;
+    }
+  }
+
   isSending = true;
   session.status = 'sent';
   session.lastTarget = target;
@@ -1893,6 +1927,73 @@ async function loadProviderConfig() {
   }
 }
 
+function isTransientConnectionError(message: string) {
+  const text = message.toLowerCase();
+  return text.includes('network check failed')
+    || text.includes('unexpected response')
+    || text.includes('timed out')
+    || text.includes('connection');
+}
+
+async function verifyProviderConnection(provider: 'claude' | 'codex') {
+  try {
+    if (provider === 'claude') {
+      if (providerConnections.claude.method === 'api_key') {
+        const key = claudeApiKey.trim();
+        if (!key) return { ok: false, error: 'Claude API key missing.' };
+        await invoke<string>('verify_claude_api_key', { apiKey: key });
+        return { ok: true };
+      }
+      await invoke<string>('verify_claude_auth');
+      return { ok: true };
+    }
+    const key = codexApiKey.trim();
+    if (!key) return { ok: false, error: 'Codex API key missing.' };
+    await invoke<string>('verify_codex_key', { apiKey: key });
+    return { ok: true };
+  } catch (err) {
+    const message = String(err);
+    return {
+      ok: false,
+      error: message,
+      transient: isTransientConnectionError(message),
+    };
+  }
+}
+
+async function revalidateStoredProviderConnections() {
+  providerRecheckError = '';
+  let changed = false;
+  const notices: string[] = [];
+
+  if (isProviderConnected('claude', providerConnections.claude)) {
+    const result = await verifyProviderConnection('claude');
+    if (!result.ok && !result.transient) {
+      claudeConnected = false;
+      providerConnections.claude = { connected: false, method: null };
+      changed = true;
+      notices.push('Claude disconnected: saved auth is no longer valid.');
+    } else if (!result.ok && result.error) {
+      notices.push(`Claude verification skipped: ${result.error}`);
+    }
+  }
+
+  if (isProviderConnected('codex', providerConnections.codex)) {
+    const result = await verifyProviderConnection('codex');
+    if (!result.ok && !result.transient) {
+      codexApiKey = '';
+      providerConnections.codex = { connected: false, method: null };
+      changed = true;
+      notices.push('Codex disconnected: saved API key is no longer valid.');
+    } else if (!result.ok && result.error) {
+      notices.push(`Codex verification skipped: ${result.error}`);
+    }
+  }
+
+  providerRecheckError = notices.join(' ');
+  if (changed) await saveProviderConfig();
+}
+
 async function saveProviderConfig() {
   await invoke('save_provider_config', {
     payload: {
@@ -1919,6 +2020,10 @@ async function init() {
     if (appMode === 'welcome') render();
   }).catch(() => {});
   render();
+  void revalidateStoredProviderConnections().then(() => {
+    persistAppState();
+    render();
+  });
   await listenForAnnotations();
   void loadSessionsFromApi();
 }
