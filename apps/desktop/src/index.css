@@ -1508,3 +1508,108 @@ kbd {
   text-align: left;
 }
 .link-btn:hover { text-decoration: underline; }
+
+/* ── Welcome screen: inline provider connect blocks ───────────────────────── */
+.wc-provider-block {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  background: var(--bg);
+}
+
+.wc-provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wc-provider-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wc-provider-name strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.wc-connect-body {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.wc-hint {
+  font-size: 12.5px;
+  color: var(--muted-strong);
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+
+.wc-connect-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: none;
+  background: var(--blue-hover, #1d4ed8);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity .15s;
+}
+.wc-connect-btn:hover { opacity: .88; }
+
+.wc-done-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1.5px solid #16a34a;
+  background: #f0fdf4;
+  color: #15803d;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  margin-top: 8px;
+  transition: opacity .15s;
+}
+.wc-done-btn:hover { opacity: .85; }
+
+.wc-waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--muted-strong);
+}
+
+.wc-key-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.wc-disconnect-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted-strong);
+  font-size: 11.5px;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background .12s, color .12s;
+}
+.wc-disconnect-btn:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}

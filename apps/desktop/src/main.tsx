@@ -375,26 +375,61 @@ function renderWelcome() {
 
           <section class="welcome-panel">
             <div class="panel-kicker">AI connection status</div>
-            <h2>Send to Claude or Codex</h2>
-            <p class="panel-copy">Connect your AI account once, then send annotation sessions directly from the workspace.</p>
-            <div class="provider-list">
-              ${([
-                { id: 'claude' as Target, label: 'Claude', connected: claudeConnected, sub: claudeConnected ? 'Connected — ready to send' : 'Connect in workspace → Submit tab' },
-                { id: 'codex' as Target, label: 'Codex', connected: codexApiKey.length > 0, sub: codexApiKey.length > 0 ? 'Connected — ready to send' : 'Connect in workspace → Submit tab' },
-                { id: 'cursor' as Target, label: 'Cursor', connected: true, sub: 'Always available — opens your project' },
-              ]).map((p) => `
-                <div class="provider-card">
-                  <div>
-                    <strong>${p.label}</strong>
-                    <span>${p.sub}</span>
-                  </div>
-                  <span class="provider-pill ${p.connected ? 'connected' : ''}">
-                    ${p.connected ? '● Ready' : '○ Not connected'}
-                  </span>
+            <h2>Connect your AI</h2>
+            <p class="panel-copy">Connect once here, then send any session straight from the workspace.</p>
+
+            ${/* ── Claude ── */ ''}
+            <div class="wc-provider-block">
+              <div class="wc-provider-header">
+                <div class="wc-provider-name">
+                  <strong>Claude</strong>
+                  <span class="provider-pill ${claudeConnected ? 'connected' : ''}">${claudeConnected ? '● Connected' : '○ Not connected'}</span>
                 </div>
-              `).join('')}
+                ${claudeConnected ? `<button class="wc-disconnect-btn" id="wc-disconnect-claude">Disconnect</button>` : ''}
+              </div>
+              ${!claudeConnected ? `
+                <div class="wc-connect-body">
+                  ${claudeConnecting ? `
+                    <div class="wc-waiting"><div class="connect-spinner"></div>A browser window opened — log in, then click below.</div>
+                    <button class="wc-done-btn" id="wc-claude-done">✓ I've logged in</button>
+                  ` : `
+                    <p class="wc-hint">A browser window will open. Log in, then come back and click <em>Done</em>.</p>
+                    <button class="wc-connect-btn" id="wc-connect-claude">Connect Claude →</button>
+                  `}
+                </div>
+              ` : ''}
             </div>
-            <p class="panel-copy panel-copy-muted" style="margin-top:8px">To connect, open the workspace and go to the <strong>Submit</strong> tab.</p>
+
+            ${/* ── Codex ── */ ''}
+            <div class="wc-provider-block">
+              <div class="wc-provider-header">
+                <div class="wc-provider-name">
+                  <strong>Codex</strong>
+                  <span class="provider-pill ${codexApiKey ? 'connected' : ''}">${codexApiKey ? '● Connected' : '○ Not connected'}</span>
+                </div>
+                ${codexApiKey ? `<button class="wc-disconnect-btn" id="wc-disconnect-codex">Disconnect</button>` : ''}
+              </div>
+              ${!codexApiKey ? `
+                <div class="wc-connect-body">
+                  <p class="wc-hint">Paste your OpenAI API key — stored locally, never sent anywhere. <button class="connect-link-btn" id="wc-openai-link">Get a key →</button></p>
+                  <div class="wc-key-row">
+                    <input class="connect-key-input" id="wc-codex-key" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" />
+                    <button class="connect-save-btn" id="wc-save-codex">Save</button>
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+
+            ${/* ── Cursor ── */ ''}
+            <div class="wc-provider-block">
+              <div class="wc-provider-header">
+                <div class="wc-provider-name">
+                  <strong>Cursor</strong>
+                  <span class="provider-pill connected">● Always ready</span>
+                </div>
+              </div>
+              <p class="wc-hint" style="margin:4px 0 0">No login needed — Debugr opens your project directly in Cursor.</p>
+            </div>
           </section>
         </div>
 
@@ -466,7 +501,60 @@ function renderWelcome() {
     void enterSessionMode('notes');
   });
 
-  // Provider connection is now handled in the Submit tab, not the welcome screen.
+  // ── Claude connect (welcome screen) ─────────────────────────────────────
+  document.getElementById('wc-connect-claude')?.addEventListener('click', async () => {
+    claudeConnecting = true;
+    renderWelcome();
+    const script = [
+      `echo "=== Connecting Debugr to Claude ==="`,
+      `echo ""`,
+      `echo "A browser window will open. Log in, then come back to Debugr."`,
+      `echo ""`,
+      `claude /login`,
+    ].join(' && ');
+    await invoke('open_command_in_terminal', {
+      cwd: process.env['HOME'] || '~',
+      command: script,
+      title: 'Connect Debugr to Claude',
+    }).catch(() => {});
+  });
+
+  document.getElementById('wc-claude-done')?.addEventListener('click', async () => {
+    claudeConnected = true;
+    claudeConnecting = false;
+    await saveProviderConfig();
+    renderWelcome();
+  });
+
+  document.getElementById('wc-disconnect-claude')?.addEventListener('click', async () => {
+    claudeConnected = false;
+    claudeConnecting = false;
+    await saveProviderConfig();
+    renderWelcome();
+  });
+
+  // ── Codex connect (welcome screen) ──────────────────────────────────────
+  document.getElementById('wc-openai-link')?.addEventListener('click', () => {
+    void invoke('open_url', { url: 'https://platform.openai.com/api-keys' });
+  });
+
+  document.getElementById('wc-save-codex')?.addEventListener('click', async () => {
+    const input = document.getElementById('wc-codex-key') as HTMLInputElement | null;
+    const key = input?.value.trim() ?? '';
+    if (!key.startsWith('sk-') || key.length < 20) {
+      if (input) { input.classList.add('input-error'); input.placeholder = 'Must start with sk-…'; }
+      return;
+    }
+    codexApiKey = key;
+    await saveProviderConfig();
+    renderWelcome();
+  });
+
+  document.getElementById('wc-disconnect-codex')?.addEventListener('click', async () => {
+    codexApiKey = '';
+    await saveProviderConfig();
+    renderWelcome();
+  });
 
   document.querySelectorAll<HTMLButtonElement>('.recent-session-tile').forEach((button) => {
     button.addEventListener('click', () => {
