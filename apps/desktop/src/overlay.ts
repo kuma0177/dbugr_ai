@@ -517,6 +517,12 @@ async function saveAll() {
   toolSaveBtn.disabled = true;
   toolSaveBtn.textContent = 'Opening…';
   try {
+    console.log('[Debugr] Emitting annotations-saved event...', {
+      annotationCount: annotations.length,
+      targetSessionId,
+      newSessionName,
+    });
+
     await emitTo(MAIN_WEBVIEW_LABEL, 'annotations-saved', {
       annotations,
       targetSessionId,
@@ -525,11 +531,19 @@ async function saveAll() {
       localFolder,
       githubRepo,
     });
+    console.log('[Debugr] Event emitted successfully');
+
+    console.log('[Debugr] Showing session window...');
     await invoke('show_session_window');
+    console.log('[Debugr] Session window shown');
+
+    console.log('[Debugr] Hiding overlay...');
     await invoke('hide_overlay');
+    console.log('[Debugr] Overlay hidden');
   } catch (err) {
-    console.error(err);
-    setToast(`Couldn't finish — ${err instanceof Error ? err.message : String(err)}`);
+    console.error('[Debugr] Error in saveAll():', err);
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    setToast(`Error: ${errorMsg}`);
     updateAnnotatingHints();
     toolSaveBtn.disabled = false;
     toolSaveBtn.textContent = prevLabel;
