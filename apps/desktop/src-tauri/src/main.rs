@@ -124,6 +124,20 @@ fn open_screen_capture_settings() -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn reveal_in_finder(path: String) -> Result<(), String> {
+    log_backend("runtime.reveal_in_finder", format!("path={path}"));
+    let status = Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .status()
+        .map_err(|e| format!("Failed to reveal path in Finder: {e}"))?;
+    if !status.success() {
+        return Err("Finder reveal command failed".into());
+    }
+    Ok(())
+}
+
 fn escape_applescript_text(value: &str) -> String {
     value.replace('\\', r"\\").replace('"', r#"\""#)
 }
@@ -752,6 +766,7 @@ fn tray_template_icon() -> Image<'static> {
 
 fn trigger_overlay(app: &AppHandle) {
     log_backend("overlay.trigger.start", "source=shortcut_or_ui");
+    macos_activate();
     // If already visible, hide it (toggle)
     if let Some(overlay) = app.get_webview_window("overlay") {
         if overlay.is_visible().unwrap_or(false) {
@@ -781,8 +796,6 @@ fn trigger_overlay(app: &AppHandle) {
     // IMPORTANT: LSUIElement=true means we're an accessory app — macOS will
     // never make us the active application on its own, so window.show() +
     // set_focus() have no visual effect unless we activate first.
-    macos_activate();
-
     if let Some(overlay) = app.get_webview_window("overlay") {
         log_backend("overlay.window.found", "label=overlay");
 
@@ -944,6 +957,7 @@ fn main() {
             get_screen_capture_diagnostics,
             request_screen_capture_permission,
             open_screen_capture_settings,
+            reveal_in_finder,
             capture_interactive_screenshot,
             open_command_in_terminal,
             open_auth_popup,

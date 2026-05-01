@@ -1701,15 +1701,26 @@ async function checkPermission() {
       note.className = 'perm-note ok';
       return;
     }
+    const executable = diagnostics.executable_path ?? '';
+    const isDevRuntime = executable.includes('/target/debug/') || executable.endsWith('/feedbackagent-desktop');
+    if (isDevRuntime) {
+      logUi('workspace_permission_runtime_mismatch', diagnostics);
+    }
     note.innerHTML = `
       <strong>Screen capture blocked</strong>
       <span>Debugr still cannot capture in this runtime. In Screen &amp; System Audio Recording, enable the exact app identity below, then relaunch Debugr.</span>
+      ${isDevRuntime ? '<span><strong>Important:</strong> You are running a dev runtime binary, so permission granted to <code>debugr.ai.app</code> may not apply to this process.</span>' : ''}
       <span><strong>ID:</strong> ${escapeHtml(diagnostics.bundle_identifier)}<br /><strong>Binary:</strong> ${escapeHtml(diagnostics.executable_path)}</span>
       <button type="button" class="perm-note-action" id="open-screen-settings-btn">Open Screen Recording settings</button>
+      <button type="button" class="perm-note-action" id="reveal-runtime-btn">Reveal current runtime in Finder</button>
     `;
     note.className = 'perm-note warn';
-    document.getElementById('open-screen-settings-btn')?.addEventListener('click', () => {
-      void invoke('open_screen_capture_settings');
+    document.getElementById('open-screen-settings-btn')?.addEventListener('click', async () => {
+      await invoke('request_screen_capture_permission').catch(() => false);
+      await invoke('open_screen_capture_settings').catch(() => {});
+    });
+    document.getElementById('reveal-runtime-btn')?.addEventListener('click', () => {
+      void invoke('reveal_in_finder', { path: diagnostics.executable_path }).catch(() => {});
     });
     return;
   } catch {
@@ -2013,6 +2024,7 @@ async function listenForAnnotations() {
     newSessionAbout?: string;
     localFolder?: string | null;
     githubRepo?: string;
+    screenshotUrl?: string;
   }>('annotations-saved', async (event) => {
     const annotations = (event.payload.annotations ?? []).slice(0, MAX_ANNOTATIONS);
     if (annotations.length === 0) return;
@@ -2021,6 +2033,7 @@ async function listenForAnnotations() {
       annotationCount: annotations.length,
       hasLocalFolder: Boolean(event.payload.localFolder),
       hasGithubRepo: Boolean(event.payload.githubRepo),
+      hasScreenshot: Boolean(event.payload.screenshotUrl),
     });
 
     const capture: CaptureCard = {
@@ -2029,6 +2042,7 @@ async function listenForAnnotations() {
       preview: annotations.map((annotation) => annotation.text).filter(Boolean).join(' · ') || 'No annotation notes yet',
       annotations,
       timestamp: new Date().toISOString(),
+      screenshotUrl: event.payload.screenshotUrl || undefined,
     };
 
     const targetSessionId = event.payload.targetSessionId ?? null;

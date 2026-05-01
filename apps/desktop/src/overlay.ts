@@ -46,6 +46,7 @@ let newSessionName = '';
 let newSessionAbout = '';
 let localFolder: string | null = null;
 let githubRepo = '';
+let currentScreenshotDataUrl = '';
 
 // region-drag state
 let dragging = false;
@@ -533,7 +534,15 @@ async function saveAll() {
       newSessionAbout,
       localFolder,
       githubRepo,
+      screenshotUrl: currentScreenshotDataUrl || '',
     };
+
+    console.info('[debugr-ui]', JSON.stringify({
+      event: 'overlay_save_all',
+      annotationCount: snapshot.annotations.length,
+      hasScreenshot: Boolean(snapshot.screenshotUrl),
+      targetSessionId: snapshot.targetSessionId ?? null,
+    }));
 
     // Clear canvas immediately so rectangles vanish the moment user clicks Finish
     resetAnnotationCanvas();
@@ -972,6 +981,12 @@ function resizeBox(b: { left: number; top: number; width: number; height: number
 // ── Screenshot from backend ───────────────────────────────────────────────────
 
 void listen<string>('set-screenshot', event => {
+  currentScreenshotDataUrl = event.payload || '';
+  console.info('[debugr-ui]', JSON.stringify({
+    event: 'overlay_set_screenshot',
+    hasScreenshot: Boolean(currentScreenshotDataUrl),
+    length: currentScreenshotDataUrl.length,
+  }));
   if (event.payload) {
     screenshotBg.style.backgroundImage = `url("${event.payload}")`;
   }
@@ -1015,6 +1030,7 @@ function resetState() {
   githubRepo = '';
   dragging = false; dragStart = null; moveState = null;
   selRectEl.style.display = 'none';
+  currentScreenshotDataUrl = '';
   screenshotBg.style.backgroundImage = '';
   notePanelEl.style.display = 'none';
   sessionBannerEl.style.display = 'none';

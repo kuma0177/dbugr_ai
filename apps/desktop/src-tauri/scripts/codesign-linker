@@ -1,0 +1,16 @@
+#!/bin/bash
+# Custom linker wrapper: link normally, then re-sign the output binary with a
+# stable identifier so macOS TCC grants persist across rebuilds.
+set -e
+cc "$@"
+OUT=""
+args=("$@")
+for ((i=0; i<${#args[@]}; i++)); do
+  if [[ "${args[$i]}" == "-o" ]]; then
+    OUT="${args[$((i+1))]}"
+    break
+  fi
+done
+if [[ -n "$OUT" && "$OUT" == *feedbackagent_desktop* ]]; then
+  codesign --sign - --identifier com.feedbackagent.desktop --force "$OUT" 2>/dev/null || true
+fi
