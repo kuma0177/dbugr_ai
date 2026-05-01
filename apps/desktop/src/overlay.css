@@ -479,6 +479,19 @@ html, body {
   background: rgba(239, 68, 68, 0.15);
   color: #fecaca;
 }
+
+/* Region button with bordered icon */
+#tool-region {
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+#tool-region:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+}
+#tool-region.active {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
 .tool-btn.save-btn {
   min-width: 72px;
   background: var(--blue);

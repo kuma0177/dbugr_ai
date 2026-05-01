@@ -37,7 +37,7 @@ type OverlayStep = 'picking' | 'setup' | 'annotating';
 
 let step: OverlayStep = 'picking';
 let annotations: Annotation[] = [];
-let activeTool: 'select' | 'pin' | 'region' = 'pin';
+let activeTool: 'select' | 'pin' | 'region' = 'region';
 let selectedId: string | null = null;
 
 // session context chosen during picking/setup
@@ -156,7 +156,7 @@ root.innerHTML = `
         ●<div class="tool-label">Pin</div>
       </button>
       <button class="tool-btn" id="tool-region" title="Region">
-        ⬚<div class="tool-label">Region</div>
+        ▢<div class="tool-label">Region</div>
       </button>
       <button class="tool-btn" id="tool-select" title="Select">
         ↖<div class="tool-label">Select</div>
