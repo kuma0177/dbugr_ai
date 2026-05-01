@@ -1900,9 +1900,12 @@ async function saveScreenshots(capturesToSave: Array<{ id: string; screenshotUrl
 function buildCliCommand(cliName: 'claude' | 'codex', prompt: string): string {
   const escaped = prompt.replace(/'/g, "'\\''");
   if (cliName === 'codex' && codexApiKey) {
-    // Prepend the stored API key so the user never has to touch env vars
     const escapedKey = codexApiKey.replace(/'/g, "'\\''");
     return `OPENAI_API_KEY='${escapedKey}' codex '${escaped}'`;
+  }
+  if (cliName === 'claude' && claudeApiKey) {
+    const escapedKey = claudeApiKey.replace(/'/g, "'\\''");
+    return `ANTHROPIC_API_KEY='${escapedKey}' claude '${escaped}'`;
   }
   return `${cliName} '${escaped}'`;
 }
