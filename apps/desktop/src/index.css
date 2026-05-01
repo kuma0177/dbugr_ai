@@ -437,6 +437,22 @@ kbd {
   font-weight: 500;
 }
 
+.sessions-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.sessions-divider::before,
+.sessions-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
 .recent-session-empty,
 .recent-session-tile,
 .launch-message,

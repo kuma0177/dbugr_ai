@@ -591,20 +591,21 @@ function renderWelcome() {
           </section>
 
           <section class="welcome-panel">
-            <div class="panel-kicker">Recent sessions</div>
-            <h2>Pick up where you left off</h2>
-            <p class="panel-copy">Session title, context, captures, and review state stay local so the next launch feels continuous.</p>
-            <div class="recent-session-list">
-              ${recentSessions.length === 0
-                ? '<div class="recent-session-empty">No saved sessions yet. Your first capture will show up here.</div>'
-                : recentSessions.map((session) => `
-                    <button class="recent-session-tile" data-session-id="${session.id}">
-                      <strong>${escapeHtml(session.title)}</strong>
-                      <span>${flowLabel(session.submissionFlow)} · ${totalAnnotations(session)} annotations · ${fmtDate(session.createdAt)}</span>
-                    </button>
-                  `).join('')}
-            </div>
-            <button class="btn-primary" id="open-workspace-btn" ${authState.profileInitialized ? '' : 'disabled'}>Open workspace</button>
+            <div class="panel-kicker">Sessions</div>
+            <h2>Start or continue a session</h2>
+            <p class="panel-copy">Open an existing session or create a new one to start capturing.</p>
+            <button class="btn-primary" id="open-workspace-btn">+ New session</button>
+            ${recentSessions.length > 0 ? `
+              <div class="sessions-divider"><span>or continue</span></div>
+              <div class="recent-session-list">
+                ${recentSessions.map((session) => `
+                  <button class="recent-session-tile" data-session-id="${session.id}">
+                    <strong>${escapeHtml(session.title)}</strong>
+                    <span>${flowLabel(session.submissionFlow)} · ${totalAnnotations(session)} annotations · ${fmtDate(session.createdAt)}</span>
+                  </button>
+                `).join('')}
+              </div>
+            ` : ''}
           </section>
         </div>
       </div>
@@ -643,6 +644,28 @@ function renderWelcome() {
   });
 
   document.getElementById('open-workspace-btn')?.addEventListener('click', () => {
+    // Always create a fresh session when clicking "New session"
+    const session: Session = {
+      id: uid('session'),
+      title: `Session ${fmtTime(new Date().toISOString())}`,
+      createdAt: new Date().toISOString(),
+      status: 'draft',
+      captures: [],
+      about: '',
+      sessionNote: '',
+      projectFolder: null,
+      githubRepo: '',
+      submissionFlow: 'direct',
+      contributions: [],
+      collaborationReady: false,
+      lastTarget: target,
+      lastExplicitSaveAt: null,
+    };
+    sessions.unshift(session);
+    activeSessionId = session.id;
+    activeCaptureId = null;
+    activeAnnotationId = null;
+    persistAppState();
     void enterSessionMode('notes');
   });
 
