@@ -185,10 +185,7 @@ fn finish_annotations(
         return Err("Main window not found".into());
     }
 
-    // Small delay to let the main window process the event
-    std::thread::sleep(std::time::Duration::from_millis(80));
-
-    // Hide overlay first
+    // Hide overlay
     if let Some(overlay) = app.get_webview_window("overlay") {
         let _ = overlay.hide();
     }

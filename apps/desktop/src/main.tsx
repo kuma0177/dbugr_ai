@@ -1591,11 +1591,8 @@ async function listenForAnnotations() {
 
     sessions = sortedSessions();
     persistAppState();
-    appMode = 'confirmation';
-    await win.setSize(new LogicalSize(460, 420));
-    await win.setResizable(false);
-    await win.center();
-    render();
+    // Go straight to the submit screen so the user can immediately send to Claude / Codex
+    await enterSessionMode('submit');
   });
 
   await listen('enter-session-mode', async () => {
