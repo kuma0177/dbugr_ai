@@ -74,6 +74,8 @@ let codexApiKey = '';
 let claudeConnected = false;
 /** true while connect-claude terminal is open and we're waiting for confirmation */
 let claudeConnecting = false;
+/** true after "Connect Codex" is clicked — shows the key-paste step */
+let codexConnecting = false;
 let authState: AuthState = {
   authenticated: false,
   profileInitialized: false,
@@ -390,10 +392,10 @@ function renderWelcome() {
               ${!claudeConnected ? `
                 <div class="wc-connect-body">
                   ${claudeConnecting ? `
-                    <div class="wc-waiting"><div class="connect-spinner"></div>A browser window opened — log in, then click below.</div>
-                    <button class="wc-done-btn" id="wc-claude-done">✓ I've logged in</button>
+                    <p class="wc-hint">A browser window opened — complete the login, then click below.</p>
+                    <div class="wc-waiting"><div class="connect-spinner"></div>Waiting for login…</div>
+                    <button class="wc-done-btn" id="wc-claude-done">✓ Done — I'm logged in</button>
                   ` : `
-                    <p class="wc-hint">A browser window will open. Log in, then come back and click <em>Done</em>.</p>
                     <button class="wc-connect-btn" id="wc-connect-claude">Connect Claude →</button>
                   `}
                 </div>
@@ -411,11 +413,15 @@ function renderWelcome() {
               </div>
               ${!codexApiKey ? `
                 <div class="wc-connect-body">
-                  <p class="wc-hint">Paste your OpenAI API key — stored locally, never sent anywhere. <button class="connect-link-btn" id="wc-openai-link">Get a key →</button></p>
-                  <div class="wc-key-row">
-                    <input class="connect-key-input" id="wc-codex-key" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" />
-                    <button class="connect-save-btn" id="wc-save-codex">Save</button>
-                  </div>
+                  ${codexConnecting ? `
+                    <p class="wc-hint">Copy your API key from the page that opened and paste it below.</p>
+                    <div class="wc-key-row">
+                      <input class="connect-key-input" id="wc-codex-key" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" autofocus />
+                      <button class="connect-save-btn" id="wc-save-codex">Save</button>
+                    </div>
+                  ` : `
+                    <button class="wc-connect-btn" id="wc-connect-codex">Connect Codex →</button>
+                  `}
                 </div>
               ` : ''}
             </div>
@@ -534,8 +540,11 @@ function renderWelcome() {
   });
 
   // ── Codex connect (welcome screen) ──────────────────────────────────────
-  document.getElementById('wc-openai-link')?.addEventListener('click', () => {
-    void invoke('open_url', { url: 'https://platform.openai.com/api-keys' });
+  document.getElementById('wc-connect-codex')?.addEventListener('click', async () => {
+    codexConnecting = true;
+    renderWelcome();
+    // Open the API keys page so they can copy a key
+    await invoke('open_url', { url: 'https://platform.openai.com/api-keys' }).catch(() => {});
   });
 
   document.getElementById('wc-save-codex')?.addEventListener('click', async () => {
@@ -546,12 +555,14 @@ function renderWelcome() {
       return;
     }
     codexApiKey = key;
+    codexConnecting = false;
     await saveProviderConfig();
     renderWelcome();
   });
 
   document.getElementById('wc-disconnect-codex')?.addEventListener('click', async () => {
     codexApiKey = '';
+    codexConnecting = false;
     await saveProviderConfig();
     renderWelcome();
   });
@@ -1008,20 +1019,14 @@ function renderWorkspacePanel() {
     // ── Connect card for Claude ─────────────────────────────────────────────
     const claudeConnectCard = isClaudeReady ? '' : `
       <div class="connect-card">
-        <div class="connect-card-icon">🔵</div>
         <div class="connect-card-title">Connect Claude</div>
-        <div class="connect-card-body">
-          Log in to your Claude account to send sessions directly from Debugr.
-          Takes about 30 seconds — no technical setup required.
-        </div>
         ${claudeConnecting ? `
-          <div class="connect-waiting">
-            <div class="connect-spinner"></div>
-            Waiting for login…
-          </div>
-          <button class="connect-done-btn" id="claude-done-btn">✓ I've logged in</button>
+          <div class="connect-card-body">A browser window opened — complete the login, then click below.</div>
+          <div class="connect-waiting"><div class="connect-spinner"></div>Waiting for login…</div>
+          <button class="connect-done-btn" id="claude-done-btn">✓ Done — I'm logged in</button>
         ` : `
-          <button class="connect-primary-btn" id="connect-claude-btn">Connect Claude Account →</button>
+          <div class="connect-card-body">A browser window will open. Log in, then come back and click Done.</div>
+          <button class="connect-primary-btn" id="connect-claude-btn">Connect Claude →</button>
         `}
       </div>
     `;
@@ -1029,24 +1034,18 @@ function renderWorkspacePanel() {
     // ── Connect card for Codex ──────────────────────────────────────────────
     const codexConnectCard = isCodexReady ? '' : `
       <div class="connect-card">
-        <div class="connect-card-icon">🟢</div>
         <div class="connect-card-title">Connect Codex</div>
-        <div class="connect-card-body">
-          Paste your OpenAI API key below. You can get one for free at
-          <button class="connect-link-btn" id="open-openai-btn">platform.openai.com</button>
-        </div>
-        <div class="connect-key-row">
-          <input
-            class="connect-key-input"
-            id="codex-key-input"
-            type="password"
-            placeholder="sk-…"
-            autocomplete="off"
-            spellcheck="false"
-          />
-          <button class="connect-save-btn" id="save-codex-key-btn">Save &amp; Connect</button>
-        </div>
-        <div class="connect-key-hint">Your key is stored locally on this Mac only.</div>
+        ${codexConnecting ? `
+          <div class="connect-card-body">Copy your API key from the page that opened and paste it below.</div>
+          <div class="connect-key-row">
+            <input class="connect-key-input" id="codex-key-input" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" autofocus />
+            <button class="connect-save-btn" id="save-codex-key-btn">Save</button>
+          </div>
+          <div class="connect-key-hint">Stored locally on this Mac only.</div>
+        ` : `
+          <div class="connect-card-body">A browser window will open. Copy your API key, then come back and paste it.</div>
+          <button class="connect-primary-btn" id="connect-codex-btn">Connect Codex →</button>
+        `}
       </div>
     `;
 
@@ -1095,6 +1094,7 @@ function renderWorkspacePanel() {
         if (!newTarget) return;
         target = newTarget;
         claudeConnecting = false;
+        codexConnecting = false;
         persistAppState();
         renderSession();
       });
@@ -1137,8 +1137,10 @@ function renderWorkspacePanel() {
     });
 
     // ── Codex connect ───────────────────────────────────────────────────────
-    document.getElementById('open-openai-btn')?.addEventListener('click', () => {
-      void invoke('open_url', { url: 'https://platform.openai.com/api-keys' });
+    document.getElementById('connect-codex-btn')?.addEventListener('click', async () => {
+      codexConnecting = true;
+      renderSession();
+      await invoke('open_url', { url: 'https://platform.openai.com/api-keys' }).catch(() => {});
     });
 
     document.getElementById('save-codex-key-btn')?.addEventListener('click', async () => {
@@ -1149,6 +1151,7 @@ function renderWorkspacePanel() {
         return;
       }
       codexApiKey = key;
+      codexConnecting = false;
       await saveProviderConfig();
       renderSession();
     });
@@ -1161,6 +1164,7 @@ function renderWorkspacePanel() {
     });
     document.getElementById('disconnect-codex-btn')?.addEventListener('click', async () => {
       codexApiKey = '';
+      codexConnecting = false;
       await saveProviderConfig();
       renderSession();
     });
@@ -1644,6 +1648,8 @@ async function listenForAnnotations() {
 
   await listen('go-home', () => {
     appMode = 'welcome';
+    claudeConnecting = false;
+    codexConnecting = false;
     render();
   });
 }
