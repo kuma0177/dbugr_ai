@@ -532,7 +532,7 @@ function updateSetupState() {
 window.addEventListener('blur', () => {
   // If the user switches apps before placing any annotations, step out of the
   // overlay so it behaves like a background utility instead of a modal wall.
-  if (captureInProgress) return;
+  if (dragging || captureInProgress) return;
   if (step !== 'annotating' || annotations.length > 0) return;
   void invoke('suspend_overlay').catch(() => {});
 });
@@ -1114,7 +1114,6 @@ window.addEventListener('pointerup', e => {
     moveState = null;
   }
   if (!dragging || !dragStart) return;
-  if (e.button !== 0 && e.button !== 2) return;
   const endX = e.clientX, endY = e.clientY;
   const w = Math.abs(endX - dragStart.x);
   const h = Math.abs(endY - dragStart.y);
