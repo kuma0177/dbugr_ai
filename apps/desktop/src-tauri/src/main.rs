@@ -478,32 +478,57 @@ fn encode_png_bytes_to_data_url(bytes: &[u8]) -> String {
 }
 
 fn capture_native_png_bytes() -> Result<Vec<u8>, String> {
+    capture_native_png_bytes_cropped(0, 0, None, None)
+}
+
+fn capture_native_png_bytes_cropped(
+    crop_x: u32,
+    crop_y: u32,
+    crop_width: Option<u32>,
+    crop_height: Option<u32>,
+) -> Result<Vec<u8>, String> {
     let image = CGDisplay::main()
         .image()
         .ok_or_else(|| "CoreGraphics did not return a display image".to_string())?;
-    let width = image.width();
-    let height = image.height();
+    let full_width = image.width();
+    let full_height = image.height();
     let bytes_per_row = image.bytes_per_row();
     let bits_per_pixel = image.bits_per_pixel();
     let data = image.data();
     let raw = data.bytes();
 
-    if width == 0 || height == 0 {
+    if full_width == 0 || full_height == 0 {
         return Err("Captured image had zero size".into());
     }
     if bits_per_pixel < 32 {
         return Err(format!("Unsupported bits per pixel for display capture: {bits_per_pixel}"));
     }
 
+    // Determine crop dimensions
+    let crop_x_usize = crop_x as usize;
+    let crop_y_usize = crop_y as usize;
+    let width = std::cmp::min(
+        crop_width.unwrap_or(full_width as u32) as usize,
+        full_width - crop_x_usize,
+    );
+    let height = std::cmp::min(
+        crop_height.unwrap_or(full_height as u32) as usize,
+        full_height - crop_y_usize,
+    );
+
+    if width == 0 || height == 0 {
+        return Err("Crop region is empty".into());
+    }
+
     let pixel_stride = bits_per_pixel / 8;
-    let mut rgba = vec![0u8; width * height * 4];
+    let mut rgba = vec![0u8; width as usize * height as usize * 4];
 
     for y in 0..height {
-        let src_row = y * bytes_per_row;
+        let src_row = (y + crop_y_usize) * bytes_per_row;
         let dst_row = y * width * 4;
         for x in 0..width {
-            let src = src_row + x * pixel_stride;
-            let dst = dst_row + x * 4;
+            let src = src_row + (x + crop_x_usize) * pixel_stride;
+            let dst = dst_row + x as usize * 4;
             if src + 3 >= raw.len() || dst + 3 >= rgba.len() {
                 return Err("Captured image buffer was shorter than expected".into());
             }
@@ -549,9 +574,29 @@ fn can_capture_screen_now() -> bool {
 
 /// Silent full-screen screenshot — used internally before showing overlay.
 fn take_silent_screenshot() -> Result<String, String> {
-    log_backend("screenshot.silent.start", "mode=native");
-    let png_bytes = capture_native_png_bytes()?;
-    log_backend("screenshot.silent.success", format!("mode=native bytes={}", png_bytes.len()));
+    take_silent_screenshot_cropped(None, None, None, None)
+}
+
+fn take_silent_screenshot_cropped(
+    crop_x: Option<u32>,
+    crop_y: Option<u32>,
+    crop_width: Option<u32>,
+    crop_height: Option<u32>,
+) -> Result<String, String> {
+    let x = crop_x.unwrap_or(0);
+    let y = crop_y.unwrap_or(0);
+    log_backend(
+        "screenshot.silent.start",
+        format!(
+            "mode=native crop_x={} crop_y={} crop_w={:?} crop_h={:?}",
+            x, y, crop_width, crop_height
+        ),
+    );
+    let png_bytes = capture_native_png_bytes_cropped(x, y, crop_width, crop_height)?;
+    log_backend(
+        "screenshot.silent.success",
+        format!("mode=native bytes={}", png_bytes.len()),
+    );
     Ok(encode_png_bytes_to_data_url(&png_bytes))
 }
 
@@ -642,12 +687,18 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn capture_screenshot_for_annotation(app: AppHandle) -> Result<(), String> {
+fn capture_screenshot_for_annotation(
+    app: AppHandle,
+    crop_x: Option<u32>,
+    crop_y: Option<u32>,
+    crop_width: Option<u32>,
+    crop_height: Option<u32>,
+) -> Result<(), String> {
     log_backend("overlay.capture.user_ready", "capturing_on_demand");
 
     let app_clone = app.clone();
     std::thread::spawn(move || {
-        match take_silent_screenshot() {
+        match take_silent_screenshot_cropped(crop_x, crop_y, crop_width, crop_height) {
             Ok(data_url) => {
                 log_backend(
                     "overlay.capture.success",
