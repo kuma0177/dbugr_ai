@@ -48,6 +48,7 @@ let step: OverlayStep = 'picking';
 let annotations: Annotation[] = [];
 let activeTool: 'select' | 'pin' | 'region' = 'region';
 let selectedId: string | null = null;
+let screenshotCaptured = false;
 
 // session context chosen during picking/setup
 let targetSessionId: string | null = null;   // null → create new
@@ -504,26 +505,16 @@ window.addEventListener('blur', () => {
   void invoke('suspend_overlay').catch(() => {});
 });
 
-async function enterAnnotating() {
+function enterAnnotating() {
   if (targetSessionId) {
     newSessionAbout = '';
   }
 
-  // Capture screenshot now that user has selected a session
-  setToast('Capturing screen...');
-  try {
-    await invoke('capture_screenshot_for_annotation');
-    // Wait a moment for the screenshot to be processed
-    await new Promise(resolve => setTimeout(resolve, 100));
-  } catch (err) {
-    setToast(`Screenshot failed: ${err}`);
-    return;
-  }
-
+  // Show blank overlay - user will draw a region first
   showStep('annotating');
   setTool('region', false);
-  updateSessionModeChrome();
   updateCounter();
+  setToast('Draw a region or point on the screen to start. The screenshot will appear once you make a selection.');
 }
 
 // ── Tool selection ────────────────────────────────────────────────────────────
@@ -616,11 +607,26 @@ document.getElementById('tool-save')?.addEventListener('click', e => {
 
 // ── Place annotation ──────────────────────────────────────────────────────────
 
-function placePin(x: number, y: number) {
+async function placePin(x: number, y: number) {
   if (annotations.length >= MAX_ANNOTATIONS) {
     setToast(`Maximum ${MAX_ANNOTATIONS} annotations per session.`);
     return;
   }
+
+  // Capture screenshot on first annotation
+  if (!screenshotCaptured) {
+    screenshotCaptured = true;
+    setToast('Capturing screen...');
+    try {
+      await invoke('capture_screenshot_for_annotation');
+      await new Promise(resolve => setTimeout(resolve, 200));
+    } catch (err) {
+      setToast(`Screenshot failed: ${err}`);
+      screenshotCaptured = false;
+      return;
+    }
+  }
+
   const ann: Annotation = {
     id: `ann_${Date.now()}`,
     number: annotations.length + 1,
@@ -634,11 +640,26 @@ function placePin(x: number, y: number) {
   updateCounter();
 }
 
-function placeRegion(x: number, y: number, w: number, h: number) {
+async function placeRegion(x: number, y: number, w: number, h: number) {
   if (annotations.length >= MAX_ANNOTATIONS) {
     setToast(`Maximum ${MAX_ANNOTATIONS} annotations per session.`);
     return;
   }
+
+  // Capture screenshot on first annotation
+  if (!screenshotCaptured) {
+    screenshotCaptured = true;
+    setToast('Capturing screen...');
+    try {
+      await invoke('capture_screenshot_for_annotation');
+      await new Promise(resolve => setTimeout(resolve, 200));
+    } catch (err) {
+      setToast(`Screenshot failed: ${err}`);
+      screenshotCaptured = false;
+      return;
+    }
+  }
+
   const box = clampBox({ left: x, top: y, width: w, height: h });
   const ann: Annotation = {
     id: `ann_${Date.now()}`,
@@ -945,7 +966,7 @@ root.addEventListener('pointerdown', e => {
 
   if (e.button === 0) {
     if (activeTool === 'pin') {
-      placePin(e.clientX, e.clientY);
+      void placePin(e.clientX, e.clientY);
     } else if (activeTool === 'select') {
       deselectAnnotation();
     } else if (activeTool === 'region') {
@@ -1005,7 +1026,7 @@ window.addEventListener('pointerup', e => {
   const y = Math.min(dragStart.y, endY);
   selRectEl.style.display = 'none';
   dragging = false; dragStart = null;
-  if (w > 12 && h > 12) placeRegion(x, y, w, h);
+  if (w > 12 && h > 12) void placeRegion(x, y, w, h);
 });
 
 function updateSelRect(x1: number, y1: number, x2: number, y2: number) {
@@ -1091,6 +1112,7 @@ function resetState() {
   connectorsEl.innerHTML = '';
   annotations = [];
   selectedId = null;
+  screenshotCaptured = false;
   targetSessionId = null;
   newSessionName = '';
   newSessionAbout = '';
