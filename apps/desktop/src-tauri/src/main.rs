@@ -1,6 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}, io::Write as _};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::{
+    fs::{self, OpenOptions},
+    io::Write as _,
+    path::PathBuf,
+    process::Command,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use core_graphics::display::CGDisplay;
 use tauri::{AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri::image::Image;
@@ -25,6 +33,26 @@ fn macos_activate() {
 
 #[cfg(not(target_os = "macos"))]
 fn macos_activate() {}
+
+/// While true, the overlay window was hidden only so `screencapture` sees the desktop.
+/// During this window `trigger_overlay` must not run its "show fresh overlay" path:
+/// that emits `overlay-will-show` and resets annotation UI (picker), which races ⌃⌘Z /
+/// tray clicks while the capture pipeline briefly hides the overlay.
+static OVERLAY_HIDDEN_FOR_SCREENSHOT: AtomicBool = AtomicBool::new(false);
+
+/// WKWebView `window.screenX/Y` does not match macOS `screencapture -R` global space.
+/// We snapshot `inner_position` + scale **before** hiding the overlay for capture.
+#[derive(Clone)]
+struct OverlayCaptureLayout {
+    inner_phys_x: i32,
+    inner_phys_y: i32,
+    scale_factor: f64,
+}
+
+fn overlay_capture_layout_cell() -> &'static Mutex<Option<OverlayCaptureLayout>> {
+    static CELL: OnceLock<Mutex<Option<OverlayCaptureLayout>>> = OnceLock::new();
+    CELL.get_or_init(|| Mutex::new(None))
+}
 
 #[derive(Clone, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,12 +81,66 @@ fn temp_capture_path() -> PathBuf {
     std::env::temp_dir().join(format!("debugr-capture-{stamp}.png"))
 }
 
+/// Same base folder as sessions/screenshots (`save_sessions_to_disk`, `save_screenshot`).
+fn debugr_root_dir() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        dirs_next::config_dir()
+            .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"))
+            .join("debugr")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        dirs_next::data_dir()
+            .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()))
+            .join("debugr")
+    }
+}
+
+fn overlay_session_log_path() -> PathBuf {
+    debugr_root_dir().join("logs").join("overlay-session.log")
+}
+
+fn sanitize_log_line(s: &str) -> String {
+    s.replace('\n', "\\n").replace('\r', "\\r")
+}
+
+const SESSION_LOG_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Append-only session log for debugging overlay/capture races (shared with stderr via `log_backend`).
+fn append_session_log(category: &str, detail: &str) {
+    let path = overlay_session_log_path();
+    if let Some(parent) = path.parent() {
+        if fs::create_dir_all(parent).is_err() {
+            return;
+        }
+    }
+    if let Ok(meta) = fs::metadata(&path) {
+        if meta.len() > SESSION_LOG_MAX_BYTES {
+            let backup = path.with_extension("log.prev");
+            let _ = fs::rename(&path, &backup);
+        }
+    }
+    let ts_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let cat = sanitize_log_line(category);
+    let detail = sanitize_log_line(detail);
+    let line = format!("[{ts_ms}] [{cat}] {detail}\n");
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
 fn log_backend(event: &str, details: impl AsRef<str>) {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    eprintln!("[debugr-core][{ts}] {event} {}", details.as_ref());
+    let detail = details.as_ref();
+    eprintln!("[debugr-core][{ts}] {event} {}", detail);
+    append_session_log("core", &format!("{event} {}", detail));
 }
 
 // ── Permission commands ───────────────────────────────────────────────────────
@@ -573,6 +655,7 @@ fn can_capture_screen_now() -> bool {
 }
 
 /// Silent full-screen screenshot — used internally before showing overlay.
+#[allow(dead_code)]
 fn take_silent_screenshot() -> Result<String, String> {
     take_silent_screenshot_cropped(None, None, None, None)
 }
@@ -612,13 +695,19 @@ fn take_silent_screenshot_cropped(
     if let Some((x, y, width, height)) = crop_region {
         cmd.arg("-R").arg(format!("{x},{y},{width},{height}"));
     }
-    let status = cmd
+    let output = cmd
         .arg(&temp_path)
-        .status()
+        .output()
         .map_err(|e| format!("screencapture command failed: {e}"))?;
 
-    if !status.success() {
-        return Err("screencapture returned non-zero status".into());
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("exit_code={:?}", output.status.code())
+        } else {
+            stderr
+        };
+        return Err(format!("screencapture failed: {detail}"));
     }
 
     if !temp_path.exists() {
@@ -679,9 +768,22 @@ fn finish_annotations(
     app: AppHandle,
     payload: serde_json::Value,
 ) -> Result<(), String> {
+    let ann_n = payload
+        .get("annotations")
+        .and_then(|a| a.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let shot_chars = payload
+        .get("screenshotUrl")
+        .and_then(|u| u.as_str())
+        .map(|s| s.len())
+        .unwrap_or(0);
     log_backend(
         "workspace.annotations.finish",
-        format!("payload_keys={}", payload.as_object().map(|o| o.len()).unwrap_or(0)),
+        format!(
+            "annotations={ann_n} screenshot_url_chars={shot_chars} payload_keys={}",
+            payload.as_object().map(|o| o.len()).unwrap_or(0)
+        ),
     );
     // Emit event to main window
     if let Some(main) = app.get_webview_window("main") {
@@ -715,6 +817,14 @@ fn show_overlay(app: AppHandle, launch: Option<OverlayLaunchPayload>) -> Result<
 
 #[tauri::command]
 fn hide_overlay(app: AppHandle) -> Result<(), String> {
+    log_backend(
+        "overlay.hide.requested",
+        format!(
+            "overlay_visible_before={:?}",
+            app.get_webview_window("overlay")
+                .and_then(|w| w.is_visible().ok())
+        ),
+    );
     if let Some(win) = app.get_webview_window("overlay") {
         let _ = win.hide();
     }
@@ -728,13 +838,52 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn capture_screenshot_for_annotation(
-    crop_x: Option<u32>,
-    crop_y: Option<u32>,
-    crop_width: Option<u32>,
-    crop_height: Option<u32>,
+    _app: AppHandle,
+    viewport_left: f64,
+    viewport_top: f64,
+    width: f64,
+    height: f64,
 ) -> Result<String, String> {
+    let layout = overlay_capture_layout_cell()
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| {
+            log_backend(
+                "overlay.capture.no_layout",
+                "call suspend_overlay_for_capture before capture (cached inner_position missing)",
+            );
+            "Overlay capture layout missing — internal ordering bug".to_string()
+        })?;
+
+    let origin_logical_x = layout.inner_phys_x as f64 / layout.scale_factor;
+    let origin_logical_y = layout.inner_phys_y as f64 / layout.scale_factor;
+
+    let crop_x = (origin_logical_x + viewport_left).floor().max(0.0) as u32;
+    let crop_y = (origin_logical_y + viewport_top).floor().max(0.0) as u32;
+    let crop_width = width.floor().max(1.0) as u32;
+    let crop_height = height.floor().max(1.0) as u32;
+
+    log_backend(
+        "overlay.capture.params",
+        format!(
+            "viewport_left={viewport_left} viewport_top={viewport_top} width={width} height={height} inner_phys=({}, {}) sf={} global_logical_xy=({}, {}) wh=({}, {})",
+            layout.inner_phys_x,
+            layout.inner_phys_y,
+            layout.scale_factor,
+            crop_x,
+            crop_y,
+            crop_width,
+            crop_height,
+        ),
+    );
     log_backend("overlay.capture.user_ready", "capturing_on_demand");
-    let data_url = take_silent_screenshot_cropped(crop_x, crop_y, crop_width, crop_height)?;
+    let data_url = take_silent_screenshot_cropped(
+        Some(crop_x),
+        Some(crop_y),
+        Some(crop_width),
+        Some(crop_height),
+    )?;
     log_backend(
         "overlay.capture.success",
         format!("data_url_len={}", data_url.len()),
@@ -744,7 +893,7 @@ fn capture_screenshot_for_annotation(
 
 #[tauri::command]
 fn suspend_overlay(app: AppHandle) -> Result<(), String> {
-    log_backend("overlay.suspend.start", "");
+    log_backend("overlay.suspend.start", "reason=idle_or_blur");
     if let Some(win) = app.get_webview_window("overlay") {
         win.hide().map_err(|e| {
             log_backend("overlay.suspend.failed", e.to_string());
@@ -754,17 +903,122 @@ fn suspend_overlay(app: AppHandle) -> Result<(), String> {
     } else {
         log_backend("overlay.suspend.not_found", "overlay window not found");
     }
-    // Give macOS compositing a brief moment to remove the overlay before capture.
-    std::thread::sleep(std::time::Duration::from_millis(120));
+    std::thread::sleep(Duration::from_millis(120));
+    Ok(())
+}
+
+#[tauri::command]
+fn suspend_overlay_for_capture(app: AppHandle) -> Result<(), String> {
+    let visible_before = app
+        .get_webview_window("overlay")
+        .and_then(|w| w.is_visible().ok());
+    log_backend(
+        "overlay.suspend.start",
+        format!("reason=capture overlay_visible_before_hide={visible_before:?}"),
+    );
+
+    *overlay_capture_layout_cell().lock().unwrap() = None;
+
+    let hide_result = if let Some(win) = app.get_webview_window("overlay") {
+        let inner = win.inner_position().map_err(|e| {
+            log_backend("overlay.suspend.inner_position_failed", e.to_string());
+            e.to_string()
+        })?;
+        let sf = win.scale_factor().unwrap_or(1.0);
+        *overlay_capture_layout_cell().lock().unwrap() = Some(OverlayCaptureLayout {
+            inner_phys_x: inner.x,
+            inner_phys_y: inner.y,
+            scale_factor: sf,
+        });
+        log_backend(
+            "overlay.suspend.capture_layout",
+            format!(
+                "inner_phys=({}, {}) scale_factor={sf}",
+                inner.x, inner.y
+            ),
+        );
+
+        // Only block overlay triggers once layout is known and we're about to hide.
+        OVERLAY_HIDDEN_FOR_SCREENSHOT.store(true, Ordering::SeqCst);
+
+        win.hide().map_err(|e| {
+            log_backend("overlay.suspend.failed", e.to_string());
+            *overlay_capture_layout_cell().lock().unwrap() = None;
+            OVERLAY_HIDDEN_FOR_SCREENSHOT.store(false, Ordering::SeqCst);
+            e.to_string()
+        })
+    } else {
+        OVERLAY_HIDDEN_FOR_SCREENSHOT.store(false, Ordering::SeqCst);
+        log_backend("overlay.suspend.not_found", "overlay window not found");
+        Err("overlay window not found".into())
+    };
+
+    if hide_result.is_err() {
+        return hide_result;
+    }
+
+    log_backend("overlay.suspend.success", "window hidden for capture");
+    std::thread::sleep(Duration::from_millis(120));
     Ok(())
 }
 
 #[tauri::command]
 fn resume_overlay(app: AppHandle) -> Result<(), String> {
+    let visible_before = app
+        .get_webview_window("overlay")
+        .and_then(|w| w.is_visible().ok());
+    log_backend(
+        "overlay.resume.start",
+        format!(
+            "overlay_visible_before_show={visible_before:?} capture_guard={}",
+            OVERLAY_HIDDEN_FOR_SCREENSHOT.load(Ordering::SeqCst)
+        ),
+    );
     if let Some(win) = app.get_webview_window("overlay") {
-        let _ = win.show();
+        win.show().map_err(|e| {
+            log_backend("overlay.resume.show_failed", e.to_string());
+            e.to_string()
+        })?;
+        std::thread::sleep(Duration::from_millis(48));
+        log_backend(
+            "overlay.resume.success",
+            format!(
+                "overlay_visible_after_show={:?}",
+                win.is_visible().unwrap_or(false)
+            ),
+        );
+    } else {
+        log_backend("overlay.resume.skip", "overlay window not found");
     }
     Ok(())
+}
+
+/// Clears the overlay screenshot guard after JS finishes restoring note UI (see suspend_overlay_for_capture).
+#[tauri::command]
+fn clear_annotation_capture_overlay() -> Result<(), String> {
+    *overlay_capture_layout_cell().lock().unwrap() = None;
+    log_backend(
+        "overlay.capture_guard.clear",
+        format!(
+            "setting_OVERLAY_HIDDEN_FOR_SCREENSHOT=false (was {})",
+            OVERLAY_HIDDEN_FOR_SCREENSHOT.load(Ordering::SeqCst)
+        ),
+    );
+    OVERLAY_HIDDEN_FOR_SCREENSHOT.store(false, Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+fn append_overlay_debug_log(scope: String, message: String) -> Result<(), String> {
+    let scope: String = scope.trim().chars().take(48).collect();
+    let msg: String = message.chars().take(8000).collect();
+    append_session_log("overlay_ts", &format!("scope={scope} {msg}"));
+    Ok(())
+}
+
+#[tauri::command]
+fn get_overlay_session_log_path() -> String {
+    overlay_session_log_path().to_string_lossy().into_owned()
 }
 
 #[tauri::command]
@@ -784,6 +1038,86 @@ fn hide_main_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn debugr_screenshots_dir() -> PathBuf {
+    dirs_next::data_dir()
+        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()))
+        .join("debugr")
+        .join("screenshots")
+}
+
+fn decode_png_or_jpeg_data_url(data_url: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine as _;
+
+    let base64_data = data_url
+        .strip_prefix("data:image/png;base64,")
+        .or_else(|| data_url.strip_prefix("data:image/jpeg;base64,"))
+        .ok_or_else(|| "Invalid data URL — expected data:image/png or jpeg base64".to_string())?;
+
+    base64::engine::general_purpose::STANDARD
+        .decode(base64_data)
+        .map_err(|e| format!("Failed to decode screenshot: {e}"))
+}
+
+/// Write overlay screenshot bytes to disk before `finish_annotations` so the IPC payload stays tiny.
+#[tauri::command]
+fn persist_annotation_screenshot(data_url: String) -> Result<String, String> {
+    let bytes = decode_png_or_jpeg_data_url(&data_url)?;
+    let dir = debugr_screenshots_dir();
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create screenshots dir: {e}"))?;
+
+    let name = format!(
+        "pending_{}_{}.png",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_micros(),
+        std::process::id()
+    );
+    let path = dir.join(name);
+    fs::write(&path, bytes).map_err(|e| format!("Failed to write screenshot: {e}"))?;
+    log_backend(
+        "workspace.screenshot.persist_pending",
+        format!("path={}", path.display()),
+    );
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// Rename a pending overlay screenshot to `{capture_id}.png` for stable CLI / persistence references.
+#[tauri::command]
+fn finalize_capture_screenshot(capture_id: String, pending_path: String) -> Result<String, String> {
+    let base = debugr_screenshots_dir();
+    fs::create_dir_all(&base).map_err(|e| format!("Failed to create screenshots dir: {e}"))?;
+
+    let base_canon = base
+        .canonicalize()
+        .map_err(|e| format!("Screenshots directory unavailable: {e}"))?;
+
+    let incoming = PathBuf::from(pending_path.trim());
+    let incoming_canon = incoming
+        .canonicalize()
+        .map_err(|e| format!("Pending screenshot not found: {e}"))?;
+
+    if !incoming_canon.starts_with(&base_canon) {
+        return Err("Screenshot path is outside the Debugr screenshots folder".into());
+    }
+
+    let dest = base_canon.join(format!("{}.png", capture_id.trim()));
+    let _ = fs::remove_file(&dest);
+
+    fs::rename(&incoming_canon, &dest).or_else(|_| {
+        fs::copy(&incoming_canon, &dest)?;
+        let _ = fs::remove_file(&incoming_canon);
+        Ok::<(), std::io::Error>(())
+    })
+    .map_err(|e| format!("finalize_capture_screenshot: {e}"))?;
+
+    log_backend(
+        "workspace.screenshot.finalized",
+        format!("capture_id={capture_id} path={}", dest.display()),
+    );
+    Ok(dest.to_string_lossy().to_string())
+}
+
 /// Decode a base64 PNG data URL and save it as a file on disk.
 /// Returns the absolute path of the saved PNG so the prompt builder can
 /// reference it and the Claude / Codex CLI can view the image.
@@ -791,27 +1125,13 @@ fn hide_main_window(app: AppHandle) -> Result<(), String> {
 /// Saves to: ~/Library/Application Support/debugr/screenshots/<capture_id>.png
 #[tauri::command]
 fn save_screenshot(capture_id: String, data_url: String) -> Result<String, String> {
-    use base64::Engine as _;
-
-    // Strip the data URL prefix — accept png or jpeg
-    let base64_data = data_url
-        .strip_prefix("data:image/png;base64,")
-        .or_else(|| data_url.strip_prefix("data:image/jpeg;base64,"))
-        .ok_or_else(|| "Invalid data URL — expected data:image/png;base64,...".to_string())?;
-
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(base64_data)
-        .map_err(|e| format!("Failed to decode screenshot: {e}"))?;
+    let bytes = decode_png_or_jpeg_data_url(&data_url)?;
     log_backend(
         "workspace.screenshot.decode",
         format!("capture_id={} decoded_bytes={}", capture_id, bytes.len()),
     );
 
-    let dir = dirs_next::data_dir()
-        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()))
-        .join("debugr")
-        .join("screenshots");
-
+    let dir = debugr_screenshots_dir();
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create screenshots dir: {e}"))?;
 
     let path = dir.join(format!("{capture_id}.png"));
@@ -1000,7 +1320,23 @@ fn show_overlay_window(app: &AppHandle) {
 }
 
 fn trigger_overlay(app: &AppHandle, source: &str, launch: Option<OverlayLaunchPayload>) {
-    log_backend("overlay.trigger.start", format!("source={source}"));
+    let ov_vis = app
+        .get_webview_window("overlay")
+        .and_then(|w| w.is_visible().ok());
+    log_backend(
+        "overlay.trigger.start",
+        format!(
+            "source={source} overlay_visible={ov_vis:?} capture_guard={}",
+            OVERLAY_HIDDEN_FOR_SCREENSHOT.load(Ordering::SeqCst)
+        ),
+    );
+    if OVERLAY_HIDDEN_FOR_SCREENSHOT.load(Ordering::SeqCst) {
+        log_backend(
+            "overlay.trigger.ignored",
+            "overlay_hidden_for_screenshot=true",
+        );
+        return;
+    }
     // If already visible, hide it (toggle)
     if let Some(overlay) = app.get_webview_window("overlay") {
         if overlay.is_visible().unwrap_or(false) {
@@ -1046,6 +1382,10 @@ fn main() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_screenshots::init())
         .setup(|app| {
+            log_backend(
+                "session_log.ready",
+                format!("path={}", overlay_session_log_path().display()),
+            );
             // ── Tray menu ──────────────────────────────────────────────────
             let home = MenuItemBuilder::new("Open Debugr")
                 .id("home").build(app)?;
@@ -1137,13 +1477,19 @@ fn main() {
             hide_overlay,
             capture_screenshot_for_annotation,
             suspend_overlay,
+            suspend_overlay_for_capture,
             resume_overlay,
+            clear_annotation_capture_overlay,
+            append_overlay_debug_log,
+            get_overlay_session_log_path,
             show_session_window,
             hide_main_window,
             pick_folder,
             open_in_cursor,
             copy_to_clipboard,
             save_sessions_to_disk,
+            persist_annotation_screenshot,
+            finalize_capture_screenshot,
             save_screenshot,
             open_url,
             save_provider_config,

@@ -57,6 +57,7 @@ function addDebugLog(msg: string) {
   debugLog.push(entry);
   console.info(entry);
   localStorage.setItem('debugr-overlay-debug', JSON.stringify(debugLog.slice(-50)));
+  void invoke('append_overlay_debug_log', { scope: 'overlay', message: entry }).catch(() => {});
 }
 
 // session context chosen during picking/setup
@@ -155,20 +156,6 @@ root.innerHTML = `
     <!-- SVG connectors -->
     <svg class="ann-connector" id="connectors" xmlns="http://www.w3.org/2000/svg"></svg>
 
-    <!-- Note inspector -->
-    <div class="note-panel" id="note-panel" style="display:none;">
-      <div class="note-panel-header">
-        <div class="note-panel-title">
-          <strong id="note-title">Annotation</strong>
-          <span id="note-subtitle">Add notes and tags</span>
-        </div>
-        <button class="note-panel-close" id="note-close" title="Close">×</button>
-      </div>
-      <div class="note-panel-body" id="note-body">
-        <div class="note-panel-empty">Select an annotation to edit it.</div>
-      </div>
-    </div>
-
     <!-- Drag-select rubber band -->
     <div class="selection-rect" id="sel-rect" style="display:none;"></div>
 
@@ -186,6 +173,20 @@ root.innerHTML = `
       <div class="toolbar-divider"></div>
       <button class="tool-btn cancel" id="tool-cancel">Esc</button>
       <button class="tool-btn save-btn" id="tool-save">${FINISH_TOOL_LABEL}</button>
+    </div>
+  </div>
+
+  <!-- Note inspector: direct child of overlay-root so fixed stacking isn't trapped inside #annotation-ui -->
+  <div class="note-panel" id="note-panel" style="display:none;">
+    <div class="note-panel-header">
+      <div class="note-panel-title">
+        <strong id="note-title">Annotation</strong>
+        <span id="note-subtitle">Add notes and tags</span>
+      </div>
+      <button class="note-panel-close" id="note-close" title="Close">×</button>
+    </div>
+    <div class="note-panel-body" id="note-body">
+      <div class="note-panel-empty">Select an annotation to edit it.</div>
     </div>
   </div>
 
@@ -223,6 +224,7 @@ function applyScreenshotDataUrl(dataUrl: string) {
     ? `url("${currentScreenshotDataUrl}")`
     : '';
 }
+
 const setupFolderBtn = document.getElementById('setup-folder-btn') as HTMLButtonElement;
 const setupFolderPath = document.getElementById('setup-folder-path')!;
 const setupStartBtn = document.getElementById('setup-start') as HTMLButtonElement;
@@ -252,6 +254,12 @@ function showStep(s: OverlayStep) {
   } else if (s === 'annotating') {
     // During annotation, capture all mouse events for drawing
     root.style.pointerEvents = 'auto';
+    // Picker/setup left pointer-events:auto on many buttons; strip those so subtree inherits clean state.
+    [hudPickerEl, hudSetupEl].forEach(container => {
+      container.querySelectorAll<HTMLElement>('button, input, select, textarea').forEach(el => {
+        el.style.removeProperty('pointer-events');
+      });
+    });
   }
 }
 
@@ -529,9 +537,9 @@ function updateSetupState() {
   setupStartBtn.disabled = !newSessionName || !newSessionAbout;
 }
 
+// If the user switches apps before placing any annotations, step out of the
+// overlay so it behaves like a background utility instead of a modal wall.
 window.addEventListener('blur', () => {
-  // If the user switches apps before placing any annotations, step out of the
-  // overlay so it behaves like a background utility instead of a modal wall.
   if (dragging || captureInProgress) return;
   if (step !== 'annotating' || annotations.length > 0) return;
   void invoke('suspend_overlay').catch(() => {});
@@ -604,6 +612,18 @@ async function saveAll() {
   toolSaveBtn.disabled = true;
   toolSaveBtn.textContent = 'Opening…';
   try {
+    let screenshotForPayload = '';
+    if (currentScreenshotDataUrl.startsWith('data:image/')) {
+      try {
+        screenshotForPayload = await invoke<string>('persist_annotation_screenshot', {
+          dataUrl: currentScreenshotDataUrl,
+        });
+      } catch (persistErr) {
+        console.warn('[Debugr] persist_annotation_screenshot failed; falling back to inline payload', persistErr);
+        screenshotForPayload = currentScreenshotDataUrl;
+      }
+    }
+
     // Snapshot data BEFORE clearing the canvas (resetAnnotationCanvas sets annotations = [])
     const snapshot = {
       annotations: annotations.slice(),
@@ -612,7 +632,7 @@ async function saveAll() {
       newSessionAbout,
       localFolder,
       githubRepo,
-      screenshotUrl: currentScreenshotDataUrl || '',
+      screenshotUrl: screenshotForPayload,
     };
 
     console.info('[debugr-ui]', JSON.stringify({
@@ -643,6 +663,35 @@ document.getElementById('tool-save')?.addEventListener('click', e => {
   e.stopPropagation(); void saveAll();
 });
 
+async function resumeOverlayVisible(): Promise<void> {
+  await invoke('resume_overlay');
+  // WKWebView often skips layout while the window is hidden; wait until visible before UI that must paint.
+  if (document.visibilityState !== 'visible') {
+    await new Promise<void>(resolve => {
+      const finish = () => resolve();
+      const onVis = () => {
+        if (document.visibilityState === 'visible') {
+          document.removeEventListener('visibilitychange', onVis);
+          finish();
+        }
+      };
+      document.addEventListener('visibilitychange', onVis);
+      setTimeout(() => {
+        document.removeEventListener('visibilitychange', onVis);
+        finish();
+      }, 300);
+    });
+  }
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        void document.documentElement.offsetHeight;
+        resolve();
+      });
+    });
+  });
+}
+
 // ── Place annotation ──────────────────────────────────────────────────────────
 
 async function placePin(x: number, y: number) {
@@ -661,41 +710,36 @@ async function placePin(x: number, y: number) {
 
   // Capture screenshot on first annotation (cropped to area around pin)
   if (!screenshotCaptured) {
-    screenshotCaptured = true;
     captureInProgress = true;
     setToast('Capturing screen...');
+    let dataUrl: string | null = null;
     try {
-      // Hide the overlay briefly so the native capture sees the underlying app.
-      await invoke('suspend_overlay');
-
-      // Define crop region: 120x60 box centered on pin
+      await invoke('suspend_overlay_for_capture');
       const cropBox = clampBox({ left: x - 60, top: y - 30, width: 120, height: 60 });
-      addDebugLog(`placePin: requesting screenshot crop(${Math.floor(cropBox.left)}, ${Math.floor(cropBox.top)}, ${Math.floor(cropBox.width)}, ${Math.floor(cropBox.height)})`);
-      const dataUrl = await invoke<string>('capture_screenshot_for_annotation', {
-        cropX: Math.floor(cropBox.left),
-        cropY: Math.floor(cropBox.top),
-        cropWidth: Math.floor(cropBox.width),
-        cropHeight: Math.floor(cropBox.height),
+      addDebugLog(`placePin: requesting screenshot viewport(${cropBox.left}, ${cropBox.top}, ${cropBox.width}, ${cropBox.height})`);
+      dataUrl = await invoke<string>('capture_screenshot_for_annotation', {
+        viewportLeft: cropBox.left,
+        viewportTop: cropBox.top,
+        width: cropBox.width,
+        height: cropBox.height,
       });
       addDebugLog(`placePin: screenshot captured len=${dataUrl.length}`);
-      applyScreenshotDataUrl(dataUrl);
-
-      annotations.push(ann);
-      renderPin(ann);
-      selectAnnotation(ann);
-      updateCounter();
-
-      // Restore overlay after screenshot is captured
-      await invoke('resume_overlay');
     } catch (err) {
-      setToast(`Screenshot failed: ${err}`);
-      screenshotCaptured = false;
-      // Make sure to restore overlay on error
-      await invoke('resume_overlay').catch(() => {});
-      return;
+      addDebugLog(`placePin capture failed: ${err}`);
+      setToast(`Screenshot unavailable — you can still add your note. (${err})`);
     } finally {
+      await invoke('clear_annotation_capture_overlay').catch(() => {});
       captureInProgress = false;
     }
+    if (dataUrl) {
+      applyScreenshotDataUrl(dataUrl);
+      screenshotCaptured = true;
+    }
+    annotations.push(ann);
+    renderPin(ann);
+    await resumeOverlayVisible();
+    selectAnnotation(ann);
+    updateCounter();
     return;
   }
 
@@ -724,41 +768,37 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
 
   // Capture screenshot on first annotation (cropped to region)
   if (!screenshotCaptured) {
-    screenshotCaptured = true;
     captureInProgress = true;
     setToast('Capturing screen...');
+    let dataUrl: string | null = null;
     try {
       addDebugLog('placeRegion: suspending overlay');
-      // Hide the overlay briefly so the native capture sees the underlying app.
-      await invoke('suspend_overlay');
+      await invoke('suspend_overlay_for_capture');
 
-      addDebugLog(`placeRegion: requesting screenshot crop(${Math.floor(box.left)}, ${Math.floor(box.top)}, ${Math.floor(box.width)}, ${Math.floor(box.height)})`);
-      const dataUrl = await invoke<string>('capture_screenshot_for_annotation', {
-        cropX: Math.floor(box.left),
-        cropY: Math.floor(box.top),
-        cropWidth: Math.floor(box.width),
-        cropHeight: Math.floor(box.height),
+      addDebugLog(`placeRegion: requesting screenshot viewport(${box.left}, ${box.top}, ${box.width}, ${box.height})`);
+      dataUrl = await invoke<string>('capture_screenshot_for_annotation', {
+        viewportLeft: box.left,
+        viewportTop: box.top,
+        width: box.width,
+        height: box.height,
       });
       addDebugLog(`placeRegion: screenshot captured len=${dataUrl.length}`);
-      applyScreenshotDataUrl(dataUrl);
-
-      annotations.push(ann);
-      renderRegion(ann);
-      selectAnnotation(ann);
-      updateCounter();
-
-      // Restore overlay after screenshot is captured
-      await invoke('resume_overlay');
     } catch (err) {
       addDebugLog(`placeRegion capture failed: ${err}`);
-      setToast(`Screenshot failed: ${err}`);
-      screenshotCaptured = false;
-      // Make sure to restore overlay on error
-      await invoke('resume_overlay').catch(() => {});
-      return;
+      setToast(`Screenshot unavailable — you can still add your note. (${err})`);
     } finally {
+      await invoke('clear_annotation_capture_overlay').catch(() => {});
       captureInProgress = false;
     }
+    if (dataUrl) {
+      applyScreenshotDataUrl(dataUrl);
+      screenshotCaptured = true;
+    }
+    annotations.push(ann);
+    renderRegion(ann);
+    await resumeOverlayVisible();
+    selectAnnotation(ann);
+    updateCounter();
     return;
   }
 
@@ -972,11 +1012,12 @@ function deselectAnnotation() {
 // ── Note panel ────────────────────────────────────────────────────────────────
 
 function showNotePanel(ann: Annotation) {
-  noteTitleEl.textContent = `Annotation ${ann.number}`;
-  noteSubtitleEl.textContent = ann.kind === 'region'
-    ? 'Drag handles to resize. Save note closes this panel — Finish opens Debugr.'
-    : 'Save note closes this panel — Finish opens Debugr.';
-  noteBodyEl.innerHTML = `
+  try {
+    noteTitleEl.textContent = `Annotation ${ann.number}`;
+    noteSubtitleEl.textContent = ann.kind === 'region'
+      ? 'Drag handles to resize. Save note closes this panel — Finish opens Debugr.'
+      : 'Save note closes this panel — Finish opens Debugr.';
+    noteBodyEl.innerHTML = `
     <div class="note-label">Notes</div>
     <textarea id="note-ta" placeholder="What should Claude know about this area?">${ann.text}</textarea>
     <div class="note-label">Tags</div>
@@ -986,30 +1027,44 @@ function showNotePanel(ann: Annotation) {
     <button class="save-ann-btn" id="save-ann">Save note  ⌘↵</button>
   `;
 
-  const ta = noteBodyEl.querySelector<HTMLTextAreaElement>('#note-ta')!;
-  ta.addEventListener('input', () => { ann.text = ta.value; });
-  ta.addEventListener('click', e => e.stopPropagation());
-  ta.addEventListener('keydown', e => {
-    e.stopPropagation();
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') saveAnnotation(ann);
-  });
-
-  noteBodyEl.querySelectorAll<HTMLButtonElement>('.chip').forEach(btn => {
-    btn.addEventListener('click', e => {
+    const ta = noteBodyEl.querySelector<HTMLTextAreaElement>('#note-ta');
+    if (!ta) {
+      console.error('[Debugr] showNotePanel: #note-ta missing after innerHTML');
+      return;
+    }
+    ta.addEventListener('input', () => { ann.text = ta.value; });
+    ta.addEventListener('click', e => e.stopPropagation());
+    ta.addEventListener('keydown', e => {
       e.stopPropagation();
-      const tag = btn.dataset.tag!;
-      if (ann.tags.includes(tag)) { ann.tags = ann.tags.filter(t => t !== tag); btn.classList.remove('active'); }
-      else { ann.tags.push(tag); btn.classList.add('active'); }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') saveAnnotation(ann);
     });
-  });
 
-  noteBodyEl.querySelector('#save-ann')?.addEventListener('click', e => {
-    e.stopPropagation(); saveAnnotation(ann);
-  });
+    noteBodyEl.querySelectorAll<HTMLButtonElement>('.chip').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const tag = btn.dataset.tag!;
+        if (ann.tags.includes(tag)) { ann.tags = ann.tags.filter(t => t !== tag); btn.classList.remove('active'); }
+        else { ann.tags.push(tag); btn.classList.add('active'); }
+      });
+    });
 
-  notePanelEl.style.display = 'block';
-  requestAnimationFrame(() => drawConnector(ann));
-  ta.focus();
+    noteBodyEl.querySelector('#save-ann')?.addEventListener('click', e => {
+      e.stopPropagation(); saveAnnotation(ann);
+    });
+
+    notePanelEl.style.display = 'block';
+    void notePanelEl.offsetHeight;
+    requestAnimationFrame(() => {
+      drawConnector(ann);
+      try {
+        ta.focus({ preventScroll: true });
+      } catch {
+        ta.focus();
+      }
+    });
+  } catch (err) {
+    console.error('[Debugr] showNotePanel failed:', err);
+  }
 }
 
 function saveAnnotation(ann: Annotation) {
@@ -1169,6 +1224,10 @@ async function initializeEventListeners() {
 
   // Reset on each new invocation
   await listen<OverlayLaunchPayload>('overlay-will-show', event => {
+    if (captureInProgress) {
+      addDebugLog('overlay-will-show ignored: annotation capture pipeline still active');
+      return;
+    }
     applyDockOffset();
     resetState();
     if (event.payload?.skipPicker && event.payload.targetSessionId) {

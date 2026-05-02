@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import { listen, emit } from '@tauri-apps/api/event';
 import './index.css';
@@ -29,6 +29,22 @@ import {
   buildSessionPrompt,
   buildCombinedPrompt,
 } from './core';
+
+/** True when `screenshotUrl` was persisted by Rust under screenshots/ (absolute path), not an inline data URL. */
+function isAbsoluteFilesystemScreenshotRef(ref: string): boolean {
+  const trimmed = ref.trim();
+  if (!trimmed || trimmed.startsWith('data:')) return false;
+  return trimmed.startsWith('/') || /^[A-Za-z]:[\\/]/.test(trimmed);
+}
+
+/** Image URL suitable for `<img src>` — Tauri cannot load raw POSIX paths without conversion. */
+function screenshotImgSrc(ref?: string): string | undefined {
+  const trimmed = ref?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith('data:image/')) return trimmed;
+  if (isAbsoluteFilesystemScreenshotRef(trimmed)) return convertFileSrc(trimmed);
+  return trimmed;
+}
 
 const brandIconUrl = new URL('./assets/brand-icon.png', import.meta.url).href;
 const logoClaudeUrl = new URL('./assets/logo-claude.png', import.meta.url).href;
@@ -1105,13 +1121,14 @@ function renderCaptureList(session: Session) {
   list.innerHTML = '';
   session.captures.forEach((capture) => {
     const showLegacyLabel = captureNeedsLegacyScreenshotLabel(capture);
+    const thumbSrc = screenshotImgSrc(capture.screenshotUrl);
     const card = document.createElement('div');
     card.className = `capture-card ${capture.id === activeCaptureId ? 'active' : ''}`;
     card.setAttribute('role', 'button');
     card.tabIndex = 0;
     card.innerHTML = `
       <button type="button" class="capture-thumb capture-thumb-preview" data-open-capture-preview="${capture.id}" aria-label="Preview screenshot">
-        ${capture.screenshotUrl ? `<img src="${capture.screenshotUrl}" alt="" />` : '📷'}
+        ${thumbSrc ? `<img src="${thumbSrc}" alt="" />` : '📷'}
       </button>
       <div class="capture-body">
         <div class="capture-title-row">
@@ -1174,7 +1191,7 @@ function renderCapturePayload(session: Session) {
   }
 
   const selected = activeAnnotation() ?? capture.annotations[0];
-  const hasScreenshot = Boolean(capture.screenshotUrl);
+  const hasScreenshot = Boolean(screenshotImgSrc(capture.screenshotUrl));
   const showLegacyLabel = captureNeedsLegacyScreenshotLabel(capture);
   const annotationRows = capture.annotations.map((annotation) => `
     <div class="annotation-row ${selected?.id === annotation.id ? 'active' : ''}" data-annotation-id="${annotation.id}" role="button" tabindex="0">
@@ -1186,7 +1203,8 @@ function renderCapturePayload(session: Session) {
   `).join('');
 
   const previewCapture = activePreviewCapture();
-  const isPreviewOpen = previewCapture?.id === capture.id && Boolean(previewCapture.screenshotUrl);
+  const isPreviewOpen =
+    previewCapture?.id === capture.id && Boolean(screenshotImgSrc(previewCapture?.screenshotUrl));
 
   root.innerHTML = `
     <div class="capture-payload-head">
@@ -1204,7 +1222,7 @@ function renderCapturePayload(session: Session) {
               : 'This capture was saved without a screenshot. Pick a different capture or take a fresh one to send visual context.'}</span>
         </div>
         ${hasScreenshot
-          ? `<button type="button" class="capture-payload-image-button" id="capture-payload-image-button" aria-label="Open full resolution screenshot preview"><img class="capture-payload-image" src="${capture.screenshotUrl}" alt="Selected screenshot payload" /></button>`
+          ? `<button type="button" class="capture-payload-image-button" id="capture-payload-image-button" aria-label="Open full resolution screenshot preview"><img class="capture-payload-image" src="${screenshotImgSrc(capture.screenshotUrl)}" alt="Selected screenshot payload" /></button>`
           : `<div class="capture-payload-empty">${showLegacyLabel ? 'Legacy capture: saved before screenshot support.' : 'No screenshot was saved with this capture.'}</div>`}
       </div>
       <div class="capture-payload-meta">
@@ -1233,7 +1251,7 @@ function renderCapturePayload(session: Session) {
             <button type="button" class="capture-preview-close" id="close-capture-preview-x">Close</button>
           </div>
           <div class="capture-preview-panel-copy">This is the full image that will be saved with the session and referenced in the AI handoff.</div>
-          <img class="capture-preview-modal-image" id="capture-preview-modal-image" src="${previewCapture?.screenshotUrl}" alt="Full resolution screenshot preview" />
+          <img class="capture-preview-modal-image" id="capture-preview-modal-image" src="${screenshotImgSrc(previewCapture?.screenshotUrl)}" alt="Full resolution screenshot preview" />
           <div class="capture-preview-meta" id="capture-preview-meta">Loading resolution…</div>
         </div>
       </div>
@@ -2150,19 +2168,25 @@ async function pushPendingSessions() {
 async function saveScreenshots(capturesToSave: Array<{ id: string; screenshotUrl?: string }>): Promise<Map<string, string>> {
   const paths = new Map<string, string>();
   await Promise.all(
-    capturesToSave
-      .filter((c) => c.screenshotUrl?.startsWith('data:image/'))
-      .map(async (c) => {
-        try {
+    capturesToSave.map(async (c) => {
+      try {
+        const url = c.screenshotUrl?.trim();
+        if (!url) return;
+        if (url.startsWith('data:image/')) {
           const path = await invoke<string>('save_screenshot', {
             captureId: c.id,
-            dataUrl: c.screenshotUrl,
+            dataUrl: url,
           });
           paths.set(c.id, path);
-        } catch {
-          // screenshot save failed — prompt will just omit the path
+          return;
         }
-      }),
+        if (isAbsoluteFilesystemScreenshotRef(url)) {
+          paths.set(c.id, url);
+        }
+      } catch {
+        // screenshot save failed — omit path
+      }
+    }),
   );
   return paths;
 }
@@ -2305,21 +2329,41 @@ async function listenForAnnotations() {
     const payloadTitle = event.payload.newSessionName?.trim() || '';
     const payloadAbout = event.payload.newSessionAbout?.trim() || '';
     const payloadGithubRepo = event.payload.githubRepo?.trim() || '';
+    const rawShot = event.payload.screenshotUrl?.trim();
+
     logUi('workspace_annotations_saved_event', {
       targetSessionId: event.payload.targetSessionId ?? null,
       annotationCount: annotations.length,
       hasLocalFolder: Boolean(event.payload.localFolder),
       hasGithubRepo: Boolean(event.payload.githubRepo),
-      hasScreenshot: Boolean(event.payload.screenshotUrl),
+      hasScreenshot: Boolean(rawShot),
     });
 
+    const captureId = uid('capture');
+    let screenshotStored: string | undefined;
+    if (rawShot?.startsWith('data:image/')) {
+      screenshotStored = rawShot;
+    } else if (rawShot && isAbsoluteFilesystemScreenshotRef(rawShot)) {
+      try {
+        screenshotStored = await invoke<string>('finalize_capture_screenshot', {
+          captureId,
+          pendingPath: rawShot,
+        });
+      } catch (err) {
+        console.warn('[Debugr] finalize_capture_screenshot failed:', err);
+        screenshotStored = rawShot;
+      }
+    } else if (rawShot) {
+      screenshotStored = rawShot;
+    }
+
     const capture: CaptureCard = {
-      id: uid('capture'),
+      id: captureId,
       title: annotations[0]?.text?.slice(0, 40) || `Capture ${fmtTime(new Date().toISOString())}`,
       preview: annotations.map((annotation) => annotation.text).filter(Boolean).join(' · ') || 'No annotation notes yet',
       annotations,
       timestamp: new Date().toISOString(),
-      screenshotUrl: event.payload.screenshotUrl || undefined,
+      screenshotUrl: screenshotStored,
     };
 
     const targetSessionId = event.payload.targetSessionId ?? null;
