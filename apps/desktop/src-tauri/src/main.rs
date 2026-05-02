@@ -1,12 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}, io::Write as _};
-use core_graphics::display::CGDisplay;
 use tauri::{AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_screenshots::ScreenshotExt;
 
 // ── macOS: force-activate the app so overlay windows actually appear ──────────
 // LSUIElement=true (accessory/menu-bar mode) means macOS never makes us the
@@ -487,62 +487,50 @@ fn capture_native_png_bytes_cropped(
     crop_width: Option<u32>,
     crop_height: Option<u32>,
 ) -> Result<Vec<u8>, String> {
-    let image = CGDisplay::main()
-        .image()
-        .ok_or_else(|| "CoreGraphics did not return a display image".to_string())?;
-    let full_width = image.width();
-    let full_height = image.height();
-    let bytes_per_row = image.bytes_per_row();
-    let bits_per_pixel = image.bits_per_pixel();
-    let data = image.data();
-    let raw = data.bytes();
+    // Use tauri-plugin-screenshots to capture the primary display
+    let screenshot = tauri_plugin_screenshots::Screenshot::primary()
+        .map_err(|e| format!("Screenshot capture failed: {e}"))?;
+
+    // Convert to DynamicImage for cropping
+    let rgba = screenshot.rgba();
+    let full_width = screenshot.width() as usize;
+    let full_height = screenshot.height() as usize;
 
     if full_width == 0 || full_height == 0 {
         return Err("Captured image had zero size".into());
-    }
-    if bits_per_pixel < 32 {
-        return Err(format!("Unsupported bits per pixel for display capture: {bits_per_pixel}"));
     }
 
     // Determine crop dimensions
     let crop_x_usize = crop_x as usize;
     let crop_y_usize = crop_y as usize;
     let width = std::cmp::min(
-        crop_width.unwrap_or(full_width as u32) as usize,
-        full_width - crop_x_usize,
+        crop_width.unwrap_or(crop_x + (full_width as u32)) as usize,
+        full_width.saturating_sub(crop_x_usize),
     );
     let height = std::cmp::min(
-        crop_height.unwrap_or(full_height as u32) as usize,
-        full_height - crop_y_usize,
+        crop_height.unwrap_or(crop_y + (full_height as u32)) as usize,
+        full_height.saturating_sub(crop_y_usize),
     );
 
     if width == 0 || height == 0 {
         return Err("Crop region is empty".into());
     }
 
-    let pixel_stride = bits_per_pixel / 8;
-    let mut rgba = vec![0u8; width as usize * height as usize * 4];
-
+    // Crop the image data
+    let mut cropped_rgba = vec![0u8; width * height * 4];
     for y in 0..height {
-        let src_row = (y + crop_y_usize) * bytes_per_row;
+        let src_row = (y + crop_y_usize) * full_width * 4;
         let dst_row = y * width * 4;
         for x in 0..width {
-            let src = src_row + (x + crop_x_usize) * pixel_stride;
-            let dst = dst_row + x as usize * 4;
-            if src + 3 >= raw.len() || dst + 3 >= rgba.len() {
-                return Err("Captured image buffer was shorter than expected".into());
+            let src = src_row + (x + crop_x_usize) * 4;
+            let dst = dst_row + x * 4;
+            if src + 3 < rgba.len() && dst + 3 < cropped_rgba.len() {
+                cropped_rgba[dst..dst + 4].copy_from_slice(&rgba[src..src + 4]);
             }
-            let b = raw[src];
-            let g = raw[src + 1];
-            let r = raw[src + 2];
-            let a = raw[src + 3];
-            rgba[dst] = r;
-            rgba[dst + 1] = g;
-            rgba[dst + 2] = b;
-            rgba[dst + 3] = a;
         }
     }
 
+    // Encode to PNG
     let mut png_bytes = Vec::new();
     let mut encoder = png::Encoder::new(&mut png_bytes, width as u32, height as u32);
     encoder.set_color(png::ColorType::Rgba);
@@ -551,7 +539,7 @@ fn capture_native_png_bytes_cropped(
         .write_header()
         .map_err(|e| format!("PNG header encode failed: {e}"))?;
     writer
-        .write_image_data(&rgba)
+        .write_image_data(&cropped_rgba)
         .map_err(|e| format!("PNG image encode failed: {e}"))?;
     drop(writer);
     Ok(png_bytes)
@@ -1022,6 +1010,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_screenshots::init())
         .setup(|app| {
             // ── Tray menu ──────────────────────────────────────────────────
             let home = MenuItemBuilder::new("Open Debugr")
