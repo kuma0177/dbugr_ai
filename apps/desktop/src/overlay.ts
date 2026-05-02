@@ -52,13 +52,22 @@ let screenshotCaptured = false;
 
 // Promise that resolves when screenshot is ready (set by set-screenshot event listener)
 let screenshotReadyResolve: (() => void) | null = null;
+const debugLog: string[] = [];
+
+function addDebugLog(msg: string) {
+  const entry = `[${new Date().toISOString()}] ${msg}`;
+  debugLog.push(entry);
+  console.info(entry);
+  localStorage.setItem('debugr-overlay-debug', JSON.stringify(debugLog.slice(-50)));
+}
+
 function waitForScreenshot(): Promise<void> {
   return new Promise((resolve) => {
     screenshotReadyResolve = resolve;
     // Timeout after 5 seconds in case event never arrives
     setTimeout(() => {
       if (screenshotReadyResolve) {
-        console.warn('[debugr-ui] waitForScreenshot timeout - proceeding without screenshot');
+        addDebugLog('waitForScreenshot timeout - proceeding without screenshot');
         screenshotReadyResolve();
         screenshotReadyResolve = null;
       }
@@ -650,11 +659,12 @@ async function placePin(x: number, y: number) {
     setToast('Capturing screen...');
     try {
       // Temporarily hide overlay to capture actual screen content
+      // suspend_overlay waits 200ms internally to ensure window is fully hidden
       await invoke('suspend_overlay');
-      await new Promise(resolve => setTimeout(resolve, 100));
 
       // Define crop region: 120x60 box centered on pin
       const cropBox = clampBox({ left: x - 60, top: y - 30, width: 120, height: 60 });
+      addDebugLog(`placePin: requesting screenshot crop(${Math.floor(cropBox.left)}, ${Math.floor(cropBox.top)}, ${Math.floor(cropBox.width)}, ${Math.floor(cropBox.height)})`);
       await invoke('capture_screenshot_for_annotation', {
         cropX: Math.floor(cropBox.left),
         cropY: Math.floor(cropBox.top),
@@ -663,7 +673,9 @@ async function placePin(x: number, y: number) {
       });
 
       // Wait for screenshot to be ready before resuming overlay
+      addDebugLog('placePin: waiting for screenshot event');
       await waitForScreenshot();
+      addDebugLog('placePin: screenshot ready, resuming overlay');
 
       // Restore overlay after screenshot is captured
       await invoke('resume_overlay');
@@ -702,14 +714,12 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
     screenshotCaptured = true;
     setToast('Capturing screen...');
     try {
-      console.info('[debugr-ui] placeRegion: suspending overlay');
+      addDebugLog('placeRegion: suspending overlay');
       // Temporarily hide overlay to capture actual screen content
+      // suspend_overlay waits 200ms internally to ensure window is fully hidden
       await invoke('suspend_overlay');
-      await new Promise(resolve => setTimeout(resolve, 100));
 
-      console.info('[debugr-ui] placeRegion: requesting screenshot', {
-        cropX: box.left, cropY: box.top, cropWidth: box.width, cropHeight: box.height
-      });
+      addDebugLog(`placeRegion: requesting screenshot crop(${Math.floor(box.left)}, ${Math.floor(box.top)}, ${Math.floor(box.width)}, ${Math.floor(box.height)})`);
       await invoke('capture_screenshot_for_annotation', {
         cropX: Math.floor(box.left),
         cropY: Math.floor(box.top),
@@ -718,14 +728,14 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
       });
 
       // Wait for screenshot to be ready before resuming overlay
-      console.info('[debugr-ui] placeRegion: waiting for screenshot event');
+      addDebugLog('placeRegion: waiting for screenshot event');
       await waitForScreenshot();
-      console.info('[debugr-ui] placeRegion: screenshot ready, resuming overlay');
+      addDebugLog('placeRegion: screenshot ready, resuming overlay');
 
       // Restore overlay after screenshot is captured
       await invoke('resume_overlay');
     } catch (err) {
-      console.error('[debugr-ui] placeRegion capture failed:', err);
+      addDebugLog(`placeRegion capture failed: ${err}`);
       setToast(`Screenshot failed: ${err}`);
       screenshotCaptured = false;
       // Make sure to restore overlay on error
@@ -1121,68 +1131,65 @@ function resizeBox(b: { left: number; top: number; width: number; height: number
   return clampBox({ left, top, width, height });
 }
 
-// ── Screenshot from backend ───────────────────────────────────────────────────
+// ── Event listeners initialization ────────────────────────────────────────────
 
-void listen<string>('set-screenshot', event => {
-  currentScreenshotDataUrl = event.payload || '';
-  console.info('[debugr-ui] SET-SCREENSHOT EVENT RECEIVED', {
-    hasScreenshot: Boolean(currentScreenshotDataUrl),
-    length: currentScreenshotDataUrl.length,
-    hasResolver: Boolean(screenshotReadyResolve),
+async function initializeEventListeners() {
+  // Screenshot from backend - MUST be registered before screenshot capture starts
+  await listen<string>('set-screenshot', event => {
+    currentScreenshotDataUrl = event.payload || '';
+    addDebugLog(`SET-SCREENSHOT EVENT: payload=${Boolean(event.payload)}, len=${currentScreenshotDataUrl.length}`);
+    if (event.payload) {
+      addDebugLog('Setting backgroundImage on #screenshot-bg');
+      screenshotBg.style.backgroundImage = `url("${event.payload}")`;
+    } else {
+      addDebugLog('ERROR: set-screenshot event has no payload!');
+    }
+    // Resolve any pending screenshot wait
+    if (screenshotReadyResolve) {
+      addDebugLog('Resolving waitForScreenshot promise');
+      screenshotReadyResolve();
+      screenshotReadyResolve = null;
+    }
   });
-  if (event.payload) {
-    console.info('[debugr-ui] Setting backgroundImage on #screenshot-bg');
-    screenshotBg.style.backgroundImage = `url("${event.payload}")`;
-  } else {
-    console.warn('[debugr-ui] set-screenshot event has no payload!');
-  }
-  // Resolve any pending screenshot wait
-  if (screenshotReadyResolve) {
-    console.info('[debugr-ui] Resolving waitForScreenshot promise');
-    screenshotReadyResolve();
-    screenshotReadyResolve = null;
-  }
-});
 
-// ── Sessions list from main window ────────────────────────────────────────────
+  // Sessions list from main window
+  await listen<Array<PickerSession>>('sessions-list', event => {
+    try {
+      localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(event.payload));
+    } catch {
+      // Ignore cache write failures.
+    }
+    renderPickerSessions(event.payload);
+  });
 
-void listen<Array<PickerSession>>('sessions-list', event => {
-  try {
-    localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(event.payload));
-  } catch {
-    // Ignore cache write failures.
-  }
-  renderPickerSessions(event.payload);
-});
-
-// ── Reset on each new invocation ──────────────────────────────────────────────
-
-void listen<OverlayLaunchPayload>('overlay-will-show', event => {
-  applyDockOffset();
-  resetState();
-  if (event.payload?.skipPicker && event.payload.targetSessionId) {
-    startPreparedSession(event.payload);
-    return;
-  }
-  targetSessionId = event.payload?.targetSessionId ?? null;
-  newSessionName = event.payload?.newSessionName ?? '';
-  newSessionAbout = event.payload?.newSessionAbout ?? '';
-  localFolder = event.payload?.localFolder ?? null;
-  githubRepo = event.payload?.githubRepo ?? '';
-  setupNameEl.value = newSessionName;
-  setupAboutEl.value = newSessionAbout;
-  setupGithubEl.value = githubRepo;
-  if (localFolder) {
-    setupFolderPath.textContent = '📁 ' + localFolder.replace(/\/$/, '').split('/').slice(-2).join('/');
-    setupFolderPath.style.display = 'block';
-    setupFolderBtn.textContent = 'Change folder…';
-  }
-  updateSetupState();
-  // Don't capture screenshot yet - wait for user to select session
-  showStep('picking');
-  setPickerLoading();
-  void emit('request-sessions');
-});
+  // Reset on each new invocation
+  await listen<OverlayLaunchPayload>('overlay-will-show', event => {
+    applyDockOffset();
+    resetState();
+    if (event.payload?.skipPicker && event.payload.targetSessionId) {
+      startPreparedSession(event.payload);
+      return;
+    }
+    targetSessionId = event.payload?.targetSessionId ?? null;
+    newSessionName = event.payload?.newSessionName ?? '';
+    newSessionAbout = event.payload?.newSessionAbout ?? '';
+    localFolder = event.payload?.localFolder ?? null;
+    githubRepo = event.payload?.githubRepo ?? '';
+    setupNameEl.value = newSessionName;
+    setupAboutEl.value = newSessionAbout;
+    setupGithubEl.value = githubRepo;
+    if (localFolder) {
+      setupFolderPath.textContent = '📁 ' + localFolder.replace(/\/$/, '').split('/').slice(-2).join('/');
+      setupFolderPath.style.display = 'block';
+      setupFolderBtn.textContent = 'Change folder…';
+    }
+    updateSetupState();
+    // Don't capture screenshot yet - wait for user to select session
+    showStep('picking');
+    setPickerLoading();
+    void emit('request-sessions');
+  });
+}
 
 function applyDockOffset() {
   const dockH = Math.max(0, window.screen.height - window.screen.availHeight);
@@ -1228,3 +1235,11 @@ showStep('annotating');
 setPickerLoading();
 updateSetupState();
 window.addEventListener('resize', applyDockOffset);
+
+// Initialize event listeners (must be done before overlay is shown)
+addDebugLog('Initializing event listeners');
+initializeEventListeners().then(() => {
+  addDebugLog('Event listeners ready');
+}).catch(err => {
+  addDebugLog(`Error initializing listeners: ${err}`);
+});

@@ -722,9 +722,18 @@ fn capture_screenshot_for_annotation(
 
 #[tauri::command]
 fn suspend_overlay(app: AppHandle) -> Result<(), String> {
+    log_backend("overlay.suspend.start", "");
     if let Some(win) = app.get_webview_window("overlay") {
-        let _ = win.hide();
+        win.hide().map_err(|e| {
+            log_backend("overlay.suspend.failed", e.to_string());
+            e.to_string()
+        })?;
+        log_backend("overlay.suspend.success", "window hidden");
+    } else {
+        log_backend("overlay.suspend.not_found", "overlay window not found");
     }
+    // Wait 200ms to ensure the window has fully hidden and display is updated
+    std::thread::sleep(std::time::Duration::from_millis(200));
     Ok(())
 }
 
