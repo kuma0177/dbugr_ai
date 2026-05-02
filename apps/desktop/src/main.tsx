@@ -2278,11 +2278,17 @@ async function sendSession() {
 
 async function listenForAnnotations() {
   await listen('request-sessions', async () => {
-    await emit('sessions-list', sortedSessions().map((session) => ({
-      id: session.id,
-      title: session.title,
-      createdAt: session.createdAt,
-    })));
+    const emitPickerSessions = async () => {
+      await emit('sessions-list', sortedSessions().map((session) => ({
+        id: session.id,
+        title: session.title,
+        createdAt: session.createdAt,
+      })));
+    };
+
+    await emitPickerSessions();
+    await loadSessionsFromApi();
+    await emitPickerSessions();
   });
 
   await listen<{
@@ -2296,6 +2302,9 @@ async function listenForAnnotations() {
   }>('annotations-saved', async (event) => {
     const annotations = (event.payload.annotations ?? []).slice(0, MAX_ANNOTATIONS);
     if (annotations.length === 0) return;
+    const payloadTitle = event.payload.newSessionName?.trim() || '';
+    const payloadAbout = event.payload.newSessionAbout?.trim() || '';
+    const payloadGithubRepo = event.payload.githubRepo?.trim() || '';
     logUi('workspace_annotations_saved_event', {
       targetSessionId: event.payload.targetSessionId ?? null,
       annotationCount: annotations.length,
@@ -2317,9 +2326,9 @@ async function listenForAnnotations() {
     if (targetSessionId && sessions.find((session) => session.id === targetSessionId)) {
       const session = sessions.find((item) => item.id === targetSessionId)!;
       session.captures.unshift(capture);
-      session.about = event.payload.newSessionAbout ?? session.about ?? '';
+      session.about = payloadAbout || (session.about ?? '');
       session.projectFolder = event.payload.localFolder ?? session.projectFolder ?? null;
-      session.githubRepo = event.payload.githubRepo ?? session.githubRepo ?? '';
+      session.githubRepo = payloadGithubRepo || (session.githubRepo ?? '');
       activeSessionId = session.id;
       activeCaptureId = capture.id;
       activeAnnotationId = capture.annotations[0]?.id ?? null;
@@ -2330,14 +2339,14 @@ async function listenForAnnotations() {
     } else {
       const session: Session = {
         id: uid('session'),
-        title: event.payload.newSessionName || `Session ${fmtTime(new Date().toISOString())}`,
+        title: payloadTitle || `Session ${fmtTime(new Date().toISOString())}`,
         createdAt: new Date().toISOString(),
         status: 'draft',
         captures: [capture],
-        about: event.payload.newSessionAbout ?? '',
+        about: payloadAbout,
         sessionNote: '',
         projectFolder: event.payload.localFolder ?? null,
-        githubRepo: event.payload.githubRepo ?? '',
+        githubRepo: payloadGithubRepo,
         submissionFlow: 'direct',
         contributions: [],
         collaborationReady: false,
@@ -2356,8 +2365,9 @@ async function listenForAnnotations() {
 
     sessions = sortedSessions();
     persistAppState();
-    // Go straight to the submit screen so the user can immediately send to Claude / Codex
-    await enterSessionMode('submit');
+    // Land on the session notes/capture view so the user can immediately verify
+    // the screenshot and annotation text that were just saved.
+    await enterSessionMode('notes');
   });
 
   await listen('enter-session-mode', async () => {

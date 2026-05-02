@@ -49,6 +49,7 @@ let annotations: Annotation[] = [];
 let activeTool: 'select' | 'pin' | 'region' = 'region';
 let selectedId: string | null = null;
 let screenshotCaptured = false;
+let captureInProgress = false;
 const debugLog: string[] = [];
 
 function addDebugLog(msg: string) {
@@ -531,6 +532,7 @@ function updateSetupState() {
 window.addEventListener('blur', () => {
   // If the user switches apps before placing any annotations, step out of the
   // overlay so it behaves like a background utility instead of a modal wall.
+  if (captureInProgress) return;
   if (step !== 'annotating' || annotations.length > 0) return;
   void invoke('suspend_overlay').catch(() => {});
 });
@@ -583,8 +585,14 @@ document.addEventListener('keydown', e => {
 
 async function saveAll() {
   if (annotations.length === 0) { void cancelOverlay(); return; }
+  updateSetupState();
+  const firstMissingNote = annotations.find((annotation) => !annotation.text.trim());
+  if (firstMissingNote) {
+    selectAnnotation(firstMissingNote);
+    setToast(`Add a text note for annotation ${firstMissingNote.number} before finishing.`);
+    return;
+  }
   if (!targetSessionId) {
-    updateSetupState();
     if (!newSessionName || !newSessionAbout) {
       setToast('Choose a session target before finishing.');
       showStep('setup');
@@ -643,9 +651,18 @@ async function placePin(x: number, y: number) {
     return;
   }
 
+  const ann: Annotation = {
+    id: `ann_${Date.now()}`,
+    number: annotations.length + 1,
+    x, y, kind: 'pin',
+    text: '', tags: [],
+    timestamp: new Date().toISOString(),
+  };
+
   // Capture screenshot on first annotation (cropped to area around pin)
   if (!screenshotCaptured) {
     screenshotCaptured = true;
+    captureInProgress = true;
     setToast('Capturing screen...');
     try {
       // Hide the overlay briefly so the native capture sees the underlying app.
@@ -663,6 +680,11 @@ async function placePin(x: number, y: number) {
       addDebugLog(`placePin: screenshot captured len=${dataUrl.length}`);
       applyScreenshotDataUrl(dataUrl);
 
+      annotations.push(ann);
+      renderPin(ann);
+      selectAnnotation(ann);
+      updateCounter();
+
       // Restore overlay after screenshot is captured
       await invoke('resume_overlay');
     } catch (err) {
@@ -671,16 +693,12 @@ async function placePin(x: number, y: number) {
       // Make sure to restore overlay on error
       await invoke('resume_overlay').catch(() => {});
       return;
+    } finally {
+      captureInProgress = false;
     }
+    return;
   }
 
-  const ann: Annotation = {
-    id: `ann_${Date.now()}`,
-    number: annotations.length + 1,
-    x, y, kind: 'pin',
-    text: '', tags: [],
-    timestamp: new Date().toISOString(),
-  };
   annotations.push(ann);
   renderPin(ann);
   selectAnnotation(ann);
@@ -694,10 +712,20 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
   }
 
   const box = clampBox({ left: x, top: y, width: w, height: h });
+  const ann: Annotation = {
+    id: `ann_${Date.now()}`,
+    number: annotations.length + 1,
+    x: box.left + box.width / 2,
+    y: box.top  + box.height / 2,
+    width: box.width, height: box.height,
+    kind: 'region', text: '', tags: [],
+    timestamp: new Date().toISOString(),
+  };
 
   // Capture screenshot on first annotation (cropped to region)
   if (!screenshotCaptured) {
     screenshotCaptured = true;
+    captureInProgress = true;
     setToast('Capturing screen...');
     try {
       addDebugLog('placeRegion: suspending overlay');
@@ -714,6 +742,11 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
       addDebugLog(`placeRegion: screenshot captured len=${dataUrl.length}`);
       applyScreenshotDataUrl(dataUrl);
 
+      annotations.push(ann);
+      renderRegion(ann);
+      selectAnnotation(ann);
+      updateCounter();
+
       // Restore overlay after screenshot is captured
       await invoke('resume_overlay');
     } catch (err) {
@@ -723,18 +756,12 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
       // Make sure to restore overlay on error
       await invoke('resume_overlay').catch(() => {});
       return;
+    } finally {
+      captureInProgress = false;
     }
+    return;
   }
 
-  const ann: Annotation = {
-    id: `ann_${Date.now()}`,
-    number: annotations.length + 1,
-    x: box.left + box.width / 2,
-    y: box.top  + box.height / 2,
-    width: box.width, height: box.height,
-    kind: 'region', text: '', tags: [],
-    timestamp: new Date().toISOString(),
-  };
   annotations.push(ann);
   renderRegion(ann);
   selectAnnotation(ann);
@@ -986,6 +1013,10 @@ function showNotePanel(ann: Annotation) {
 }
 
 function saveAnnotation(ann: Annotation) {
+  if (!ann.text.trim()) {
+    setToast(`Add a note for annotation ${ann.number} before saving.`);
+    return;
+  }
   const btn = noteBodyEl.querySelector<HTMLButtonElement>('#save-ann')!;
   const defaultLabel = 'Save note  ⌘↵';
   btn.textContent = '✓ Saved';
@@ -1177,6 +1208,7 @@ function resetState() {
   annotations = [];
   selectedId = null;
   screenshotCaptured = false;
+  captureInProgress = false;
   targetSessionId = null;
   newSessionName = '';
   newSessionAbout = '';
