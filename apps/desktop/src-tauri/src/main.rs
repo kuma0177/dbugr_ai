@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{fs, path::PathBuf, process::Command, time::{Duration, SystemTime, UNIX_EPOCH}, io::Write as _};
+use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}, io::Write as _};
 use core_graphics::display::CGDisplay;
 use tauri::{AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri::image::Image;
@@ -642,6 +642,13 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn show_overlay_for_annotation(app: AppHandle) -> Result<(), String> {
+    log_backend("overlay.show_for_annotation.requested", "user_entering_annotating_phase");
+    show_overlay_window(&app);
+    Ok(())
+}
+
+#[tauri::command]
 fn capture_screenshot_for_annotation(app: AppHandle) -> Result<(), String> {
     log_backend("overlay.capture.user_ready", "capturing_on_demand");
 
@@ -927,12 +934,12 @@ fn trigger_overlay(app: &AppHandle, source: &str, launch: Option<OverlayLaunchPa
         let _ = main.hide();
     }
 
-    // Show overlay immediately (without screenshot) so user can pick session.
-    // Screenshot will be captured only after user confirms session selection.
+    // Emit event to show picker UI (without showing the window yet).
+    // The window will only be shown when user enters annotating step.
+    // This keeps other apps visible during session selection phase.
     if let Some(overlay) = app.get_webview_window("overlay") {
         let _ = overlay.emit("overlay-will-show", launch.unwrap_or_default());
-        show_overlay_window(&app);
-        log_backend("overlay.shown", "awaiting_session_selection");
+        log_backend("overlay.event_emitted", "awaiting_session_selection");
     }
 }
 
@@ -1044,6 +1051,7 @@ fn main() {
             finish_annotations,
             show_overlay,
             hide_overlay,
+            show_overlay_for_annotation,
             capture_screenshot_for_annotation,
             suspend_overlay,
             show_session_window,

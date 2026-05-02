@@ -22,7 +22,7 @@
         "height": 880,
         "resizable": true,
         "center": true,
-        "visible": true
+        "visible": false
       },
       {
         "label": "overlay",

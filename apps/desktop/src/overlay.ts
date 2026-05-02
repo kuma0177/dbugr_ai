@@ -38,7 +38,7 @@ const MIN_REGION = 36;
 const TAGS = ['Bug', 'UX', 'Blocking', 'Question'];
 const SESSION_CACHE_KEY = 'debugr-session-cache';
 const MAIN_WEBVIEW_LABEL = 'main';
-const FINISH_TOOL_LABEL = 'Finish → workspace';
+const FINISH_TOOL_LABEL = 'Add to session';
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -515,6 +515,9 @@ function enterAnnotating() {
   setTool('region', false);
   updateCounter();
   setToast('Draw a region or point on the screen to start. The screenshot will appear once you make a selection.');
+
+  // Show the overlay window now that user is entering annotation phase
+  void invoke('show_overlay_for_annotation');
 }
 
 // ── Tool selection ────────────────────────────────────────────────────────────
