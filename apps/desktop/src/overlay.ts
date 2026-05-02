@@ -628,12 +628,24 @@ async function placePin(x: number, y: number) {
     return;
   }
 
-  // Capture screenshot on first annotation (full screen)
+  // Capture screenshot on first annotation (cropped to area around pin)
   if (!screenshotCaptured) {
     screenshotCaptured = true;
     setToast('Capturing screen...');
     try {
-      await invoke('capture_screenshot_for_annotation');
+      // Temporarily hide overlay to capture actual screen content
+      await invoke('suspend_overlay');
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Define crop region: 120x60 box centered on pin
+      const cropBox = clampBox({ left: x - 60, top: y - 30, width: 120, height: 60 });
+      await invoke('capture_screenshot_for_annotation', {
+        cropX: Math.floor(cropBox.left),
+        cropY: Math.floor(cropBox.top),
+        cropWidth: Math.floor(cropBox.width),
+        cropHeight: Math.floor(cropBox.height),
+      });
+
       await new Promise(resolve => setTimeout(resolve, 200));
     } catch (err) {
       setToast(`Screenshot failed: ${err}`);
@@ -661,12 +673,24 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
     return;
   }
 
-  // Capture screenshot on first annotation (full screen, not cropped)
+  const box = clampBox({ left: x, top: y, width: w, height: h });
+
+  // Capture screenshot on first annotation (cropped to region)
   if (!screenshotCaptured) {
     screenshotCaptured = true;
     setToast('Capturing screen...');
     try {
-      await invoke('capture_screenshot_for_annotation');
+      // Temporarily hide overlay to capture actual screen content
+      await invoke('suspend_overlay');
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      await invoke('capture_screenshot_for_annotation', {
+        cropX: Math.floor(box.left),
+        cropY: Math.floor(box.top),
+        cropWidth: Math.floor(box.width),
+        cropHeight: Math.floor(box.height),
+      });
+
       await new Promise(resolve => setTimeout(resolve, 200));
     } catch (err) {
       setToast(`Screenshot failed: ${err}`);
@@ -675,7 +699,6 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
     }
   }
 
-  const box = clampBox({ left: x, top: y, width: w, height: h });
   const ann: Annotation = {
     id: `ann_${Date.now()}`,
     number: annotations.length + 1,
