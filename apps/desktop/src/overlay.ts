@@ -222,6 +222,21 @@ function showStep(s: OverlayStep) {
   stepPickerEl.style.display = s === 'picking' ? 'flex' : 'none';
   stepSetupEl.style.display = s === 'setup' ? 'flex' : 'none';
   root.classList.toggle('cursor-annotating', true);
+
+  // During picker/setup phases, allow clicks to pass through to apps behind overlay.
+  // During annotation phase, capture mouse events for drawing annotations.
+  if (s === 'picking' || s === 'setup') {
+    // Make overlay transparent to mouse events (clicks pass through to apps)
+    root.style.pointerEvents = 'none';
+    // But allow interaction with picker/setup UI by setting pointer-events on interactive elements
+    const interactiveEls = root.querySelectorAll('button, input, select, .step-picker, .step-setup');
+    interactiveEls.forEach(el => {
+      (el as HTMLElement).style.pointerEvents = 'auto';
+    });
+  } else if (s === 'annotating') {
+    // During annotation, capture all mouse events for drawing
+    root.style.pointerEvents = 'auto';
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
