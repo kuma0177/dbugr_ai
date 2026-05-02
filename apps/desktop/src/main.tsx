@@ -1778,7 +1778,18 @@ function bindSessionActions() {
   });
   document.getElementById('new-ann-btn')?.addEventListener('click', async () => {
     logUi('workspace_new_capture_click', { sessionId: session?.id ?? null });
-    await invoke('show_overlay');
+    await invoke('show_overlay', {
+      launch: session
+        ? {
+            targetSessionId: session.id,
+            newSessionName: session.title,
+            newSessionAbout: session.about ?? '',
+            localFolder: session.projectFolder ?? null,
+            githubRepo: session.githubRepo ?? '',
+            skipPicker: true,
+          }
+        : null,
+    });
   });
   document.getElementById('view-all-sessions-btn')?.addEventListener('click', () => {
     logUi('workspace_refresh_sessions_click');
@@ -2272,12 +2283,6 @@ async function listenForAnnotations() {
       title: session.title,
       createdAt: session.createdAt,
     })));
-    await loadSessionsFromApi();
-    await emit('sessions-list', sortedSessions().map((session) => ({
-      id: session.id,
-      title: session.title,
-      createdAt: session.createdAt,
-    })));
   });
 
   await listen<{
@@ -2381,10 +2386,10 @@ async function listenForAnnotations() {
     await checkPermission();
   });
 
-  await listen<string>('screen-capture-failed', async () => {
+  await listen<string>('screen-capture-failed', async (event) => {
     await checkPermission();
     window.alert(
-      'Debugr could not capture your screen. Use the permission card on the left to inspect which runtime is blocked, then try a new capture again.',
+      event.payload || 'Debugr could not capture your screen. Use the permission card on the left to inspect which runtime is blocked, then try a new capture again.',
     );
   });
 }

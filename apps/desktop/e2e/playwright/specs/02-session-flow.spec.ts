@@ -221,6 +221,36 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
     expect(state.sessions[0].captures[1].screenshotUrl).toMatch(/^data:image\/png;base64,/);
   });
 
+  test('new capture from a session launches overlay with direct-append context', async ({ page }) => {
+    await simulateAnnotationSave(page, {
+      ...ANNOTATION_PAYLOAD,
+      newSessionName: 'Direct append session',
+      newSessionAbout: 'This session should bypass the picker when adding a new capture.',
+      localFolder: '/Users/kumar/direct-append',
+      githubRepo: 'kuma0177/debgr_ai',
+    });
+
+    await page.locator('#new-ann-btn').click();
+    await page.waitForTimeout(150);
+
+    const calls = await page.evaluate(() => (
+      window as unknown as {
+        __TAURI_MOCK_CALLS__?: Array<{ cmd: string; args: { launch?: Record<string, unknown> | null } }>;
+      }
+    ).__TAURI_MOCK_CALLS__ ?? []);
+    const showOverlayCall = [...calls].reverse().find((call) => call.cmd === 'show_overlay');
+
+    expect(showOverlayCall).toBeTruthy();
+    expect(showOverlayCall?.args.launch).toMatchObject({
+      targetSessionId: expect.any(String),
+      newSessionName: 'Direct append session',
+      newSessionAbout: 'This session should bypass the picker when adding a new capture.',
+      localFolder: '/Users/kumar/direct-append',
+      githubRepo: 'kuma0177/debgr_ai',
+      skipPicker: true,
+    });
+  });
+
   test('full resolution preview opens for a saved screenshot payload', async ({ page }) => {
     await simulateAnnotationSave(page);
 

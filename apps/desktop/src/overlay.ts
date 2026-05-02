@@ -22,6 +22,15 @@ interface PickerSession {
   createdAt: string;
 }
 
+interface OverlayLaunchPayload {
+  targetSessionId?: string | null;
+  newSessionName?: string;
+  newSessionAbout?: string;
+  localFolder?: string | null;
+  githubRepo?: string;
+  skipPicker?: boolean;
+}
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_ANNOTATIONS = 5;
@@ -291,6 +300,18 @@ function setPickerLoading() {
   } else {
     pickerListEl.innerHTML = '<div class="picker-loading">Loading sessions…</div>';
   }
+}
+
+function startPreparedSession(payload: OverlayLaunchPayload) {
+  targetSessionId = payload.targetSessionId ?? null;
+  newSessionName = payload.newSessionName ?? '';
+  newSessionAbout = payload.newSessionAbout ?? '';
+  localFolder = payload.localFolder ?? null;
+  githubRepo = payload.githubRepo ?? '';
+  showStep('annotating');
+  setTool('region', false);
+  updateSessionModeChrome();
+  updateCounter();
 }
 
 function clearAnnotationDOM() {
@@ -1012,14 +1033,14 @@ void listen<Array<PickerSession>>('sessions-list', event => {
 
 // ── Reset on each new invocation ──────────────────────────────────────────────
 
-void listen('overlay-will-show', () => {
+void listen<OverlayLaunchPayload>('overlay-will-show', event => {
   applyDockOffset();
-  if (step !== 'annotating') {
-    resetState();
+  resetState();
+  if (event.payload?.skipPicker && event.payload.targetSessionId) {
+    startPreparedSession(event.payload);
+    return;
   }
-  // Request sessions for picker
   void emit('request-sessions');
-  window.setTimeout(() => void emit('request-sessions'), 300);
 });
 
 function applyDockOffset() {
@@ -1064,5 +1085,4 @@ applyDockOffset();
 showStep('picking');
 setPickerLoading();
 updateSetupState();
-void emit('request-sessions');
 window.addEventListener('resize', applyDockOffset);
