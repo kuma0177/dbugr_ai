@@ -515,9 +515,6 @@ function enterAnnotating() {
   setTool('region', false);
   updateCounter();
   setToast('Draw a region or point on the screen to start. The screenshot will appear once you make a selection.');
-
-  // Show the overlay window now that user is entering annotation phase
-  void invoke('show_overlay_for_annotation');
 }
 
 // ── Tool selection ────────────────────────────────────────────────────────────

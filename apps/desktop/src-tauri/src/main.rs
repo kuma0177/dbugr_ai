@@ -642,13 +642,6 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn show_overlay_for_annotation(app: AppHandle) -> Result<(), String> {
-    log_backend("overlay.show_for_annotation.requested", "user_entering_annotating_phase");
-    show_overlay_window(&app);
-    Ok(())
-}
-
-#[tauri::command]
 fn capture_screenshot_for_annotation(app: AppHandle) -> Result<(), String> {
     log_backend("overlay.capture.user_ready", "capturing_on_demand");
 
@@ -934,12 +927,12 @@ fn trigger_overlay(app: &AppHandle, source: &str, launch: Option<OverlayLaunchPa
         let _ = main.hide();
     }
 
-    // Emit event to show picker UI (without showing the window yet).
-    // The window will only be shown when user enters annotating step.
-    // This keeps other apps visible during session selection phase.
+    // Show overlay window for picker UI
+    // NOTE: This is transparent and doesn't call set_focus to keep other apps interactive
     if let Some(overlay) = app.get_webview_window("overlay") {
         let _ = overlay.emit("overlay-will-show", launch.unwrap_or_default());
-        log_backend("overlay.event_emitted", "awaiting_session_selection");
+        show_overlay_window(&app);
+        log_backend("overlay.shown", "awaiting_session_selection");
     }
 }
 
@@ -1051,7 +1044,6 @@ fn main() {
             finish_annotations,
             show_overlay,
             hide_overlay,
-            show_overlay_for_annotation,
             capture_screenshot_for_annotation,
             suspend_overlay,
             show_session_window,
