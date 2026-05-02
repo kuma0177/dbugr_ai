@@ -50,6 +50,14 @@ let activeTool: 'select' | 'pin' | 'region' = 'region';
 let selectedId: string | null = null;
 let screenshotCaptured = false;
 
+// Promise that resolves when screenshot is ready (set by set-screenshot event listener)
+let screenshotReadyResolve: (() => void) | null = null;
+function waitForScreenshot(): Promise<void> {
+  return new Promise(resolve => {
+    screenshotReadyResolve = resolve;
+  });
+}
+
 // session context chosen during picking/setup
 let targetSessionId: string | null = null;   // null → create new
 let newSessionName = '';
@@ -646,7 +654,8 @@ async function placePin(x: number, y: number) {
         cropHeight: Math.floor(cropBox.height),
       });
 
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Wait for screenshot to be ready before resuming overlay
+      await waitForScreenshot();
 
       // Restore overlay after screenshot is captured
       await invoke('resume_overlay');
@@ -696,7 +705,8 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
         cropHeight: Math.floor(box.height),
       });
 
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Wait for screenshot to be ready before resuming overlay
+      await waitForScreenshot();
 
       // Restore overlay after screenshot is captured
       await invoke('resume_overlay');
@@ -1107,6 +1117,11 @@ void listen<string>('set-screenshot', event => {
   }));
   if (event.payload) {
     screenshotBg.style.backgroundImage = `url("${event.payload}")`;
+  }
+  // Resolve any pending screenshot wait
+  if (screenshotReadyResolve) {
+    screenshotReadyResolve();
+    screenshotReadyResolve = null;
   }
 });
 
