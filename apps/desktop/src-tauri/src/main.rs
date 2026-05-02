@@ -577,79 +577,63 @@ fn take_silent_screenshot() -> Result<String, String> {
     take_silent_screenshot_cropped(None, None, None, None)
 }
 
-async fn take_silent_screenshot_cropped(
-    _app: AppHandle,
+fn take_silent_screenshot_cropped(
     crop_x: Option<u32>,
     crop_y: Option<u32>,
     crop_width: Option<u32>,
     crop_height: Option<u32>,
 ) -> Result<String, String> {
-    let x = crop_x.unwrap_or(0) as i32;
-    let y = crop_y.unwrap_or(0) as i32;
+    let x = crop_x.unwrap_or(0);
+    let y = crop_y.unwrap_or(0);
     log_backend(
         "screenshot.silent.start",
         format!(
-            "mode=plugin crop_x={} crop_y={} crop_w={:?} crop_h={:?}",
+            "mode=screencapture crop_x={} crop_y={} crop_w={:?} crop_h={:?}",
             x, y, crop_width, crop_height
         ),
     );
 
-    // Use tauri-plugin-screenshots to capture primary display
-    let screenshot = _app.screenshot()
-        .map_err(|e| format!("Plugin screenshot failed: {}", e))?;
+    // Use macOS screencapture command to bypass overlay rendering issues
+    let temp_path = PathBuf::from(format!("/tmp/debugr_screenshot_{}.png", SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis()));
 
-    log_backend(
-        "screenshot.plugin.captured",
-        format!("width={} height={}", screenshot.width(), screenshot.height()),
-    );
+    let crop_rect = if let (Some(w), Some(h)) = (crop_width, crop_height) {
+        format!("{},{},{},{}", x, y, w, h)
+    } else {
+        // Full screen
+        "0,0,10000,10000".to_string()
+    };
 
-    // Crop if needed
-    let rgba = screenshot.rgba();
-    let full_width = screenshot.width() as i32;
-    let full_height = screenshot.height() as i32;
+    let status = Command::new("screencapture")
+        .arg("-x")  // Don't play sound
+        .arg("-R")  // Capture region specified by rect (x,y,width,height)
+        .arg(&crop_rect)
+        .arg(&temp_path)
+        .status()
+        .map_err(|e| format!("screencapture command failed: {e}"))?;
 
-    let crop_x_i32 = x.max(0);
-    let crop_y_i32 = y.max(0);
-    let width = crop_width
-        .map(|w| (w as i32).min(full_width - crop_x_i32) as usize)
-        .unwrap_or((full_width - crop_x_i32) as usize);
-    let height = crop_height
-        .map(|h| (h as i32).min(full_height - crop_y_i32) as usize)
-        .unwrap_or((full_height - crop_y_i32) as usize);
-
-    if width == 0 || height == 0 {
-        return Err("Crop region is empty".to_string());
+    if !status.success() {
+        return Err("screencapture returned non-zero status".into());
     }
 
-    // Crop the RGBA data
-    let mut cropped_rgba = vec![0u8; width * height * 4];
-    let full_width_usize = full_width as usize;
-    for y_idx in 0..height {
-        let src_row = ((crop_y_i32 as usize + y_idx) * full_width_usize + crop_x_i32 as usize) * 4;
-        let dst_row = y_idx * width * 4;
-        if src_row + width * 4 <= rgba.len() && dst_row + width * 4 <= cropped_rgba.len() {
-            cropped_rgba[dst_row..dst_row + width * 4]
-                .copy_from_slice(&rgba[src_row..src_row + width * 4]);
-        }
+    if !temp_path.exists() {
+        return Err("screencapture did not create output file".into());
     }
 
-    // Encode to PNG
-    let mut png_bytes = Vec::new();
-    let mut encoder = png::Encoder::new(&mut png_bytes, width as u32, height as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder
-        .write_header()
-        .map_err(|e| format!("PNG header encode failed: {e}"))?;
-    writer
-        .write_image_data(&cropped_rgba)
-        .map_err(|e| format!("PNG image encode failed: {e}"))?;
-    drop(writer);
+    // Read and encode to data URL
+    let png_bytes = fs::read(&temp_path)
+        .map_err(|e| format!("Failed to read screenshot: {e}"))?;
+
+    // Clean up temp file
+    let _ = fs::remove_file(&temp_path);
 
     log_backend(
         "screenshot.silent.success",
-        format!("mode=plugin bytes={}", png_bytes.len()),
+        format!("mode=screencapture bytes={}", png_bytes.len()),
     );
+
     Ok(encode_png_bytes_to_data_url(&png_bytes))
 }
 
@@ -740,7 +724,7 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn capture_screenshot_for_annotation(
+fn capture_screenshot_for_annotation(
     app: AppHandle,
     crop_x: Option<u32>,
     crop_y: Option<u32>,
@@ -750,23 +734,26 @@ async fn capture_screenshot_for_annotation(
     log_backend("overlay.capture.user_ready", "capturing_on_demand");
 
     let app_clone = app.clone();
-    match take_silent_screenshot_cropped(app_clone.clone(), crop_x, crop_y, crop_width, crop_height).await {
-        Ok(data_url) => {
-            log_backend(
-                "overlay.capture.success",
-                format!("data_url_len={}", data_url.len()),
-            );
-            if let Some(overlay) = app_clone.get_webview_window("overlay") {
-                let _ = overlay.emit("set-screenshot", data_url);
+    std::thread::spawn(move || {
+        match take_silent_screenshot_cropped(crop_x, crop_y, crop_width, crop_height) {
+            Ok(data_url) => {
+                log_backend(
+                    "overlay.capture.success",
+                    format!("data_url_len={}", data_url.len()),
+                );
+                if let Some(overlay) = app_clone.get_webview_window("overlay") {
+                    let _ = overlay.emit("set-screenshot", data_url);
+                }
+            }
+            Err(e) => {
+                log_backend("overlay.capture.failed", e.clone());
+                if let Some(overlay) = app_clone.get_webview_window("overlay") {
+                    let _ = overlay.emit("capture-screenshot-failed", e);
+                }
             }
         }
-        Err(e) => {
-            log_backend("overlay.capture.failed", e.clone());
-            if let Some(overlay) = app_clone.get_webview_window("overlay") {
-                let _ = overlay.emit("capture-screenshot-failed", e);
-            }
-        }
-    }
+    });
+
     Ok(())
 }
 
