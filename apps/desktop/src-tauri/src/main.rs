@@ -732,8 +732,9 @@ fn suspend_overlay(app: AppHandle) -> Result<(), String> {
     } else {
         log_backend("overlay.suspend.not_found", "overlay window not found");
     }
-    // Wait 200ms to ensure the window has fully hidden and display is updated
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    // Wait longer to ensure the window has fully hidden and display is completely updated on macOS
+    // macOS compositing can be asynchronous, so we need a substantial wait
+    std::thread::sleep(std::time::Duration::from_millis(500));
     Ok(())
 }
 
