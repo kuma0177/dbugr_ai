@@ -647,9 +647,14 @@ async function placePin(x: number, y: number) {
       });
 
       await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Restore overlay after screenshot is captured
+      await invoke('resume_overlay');
     } catch (err) {
       setToast(`Screenshot failed: ${err}`);
       screenshotCaptured = false;
+      // Make sure to restore overlay on error
+      await invoke('resume_overlay').catch(() => {});
       return;
     }
   }
@@ -692,9 +697,14 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
       });
 
       await new Promise(resolve => setTimeout(resolve, 200));
+
+      // Restore overlay after screenshot is captured
+      await invoke('resume_overlay');
     } catch (err) {
       setToast(`Screenshot failed: ${err}`);
       screenshotCaptured = false;
+      // Make sure to restore overlay on error
+      await invoke('resume_overlay').catch(() => {});
       return;
     }
   }

@@ -729,6 +729,14 @@ fn suspend_overlay(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn resume_overlay(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("overlay") {
+        let _ = win.show();
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn show_session_window(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
         win.show().map_err(|e| e.to_string())?;
@@ -1097,6 +1105,7 @@ fn main() {
             hide_overlay,
             capture_screenshot_for_annotation,
             suspend_overlay,
+            resume_overlay,
             show_session_window,
             hide_main_window,
             pick_folder,
