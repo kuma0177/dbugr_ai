@@ -132,6 +132,13 @@ function logUi(event: string, details: Record<string, unknown> = {}) {
   } catch {
     console.info(`${UI_LOG_PREFIX} ${stamp} ${event}`);
   }
+  const serialized = Object.entries(details)
+    .map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`)
+    .join(' ');
+  void invoke('append_overlay_debug_log', {
+    scope: 'workspace',
+    message: `[${stamp}] ${event}${serialized ? ` ${serialized}` : ''}`,
+  }).catch(() => {});
 }
 
 function activeSession() {
@@ -1122,6 +1129,24 @@ function renderCaptureList(session: Session) {
   session.captures.forEach((capture) => {
     const showLegacyLabel = captureNeedsLegacyScreenshotLabel(capture);
     const thumbSrc = screenshotImgSrc(capture.screenshotUrl);
+    logUi('workspace_render_capture_card', {
+      sessionId: session.id,
+      captureId: capture.id,
+      screenshotKind: capture.screenshotUrl
+        ? isAbsoluteFilesystemScreenshotRef(capture.screenshotUrl)
+          ? 'abs_path'
+          : capture.screenshotUrl.startsWith('data:image/')
+            ? 'data_url'
+            : 'other'
+        : 'none',
+      screenshotChars: capture.screenshotUrl?.length ?? 0,
+      thumbSrcKind: thumbSrc
+        ? thumbSrc.startsWith('data:image/')
+          ? 'data_url'
+          : 'file_src'
+        : 'none',
+      thumbSrcChars: thumbSrc?.length ?? 0,
+    });
     const card = document.createElement('div');
     card.className = `capture-card ${capture.id === activeCaptureId ? 'active' : ''}`;
     card.setAttribute('role', 'button');
@@ -1177,6 +1202,23 @@ function renderCaptureList(session: Session) {
       activePreviewCaptureId = capture.id;
       renderSession();
     });
+    const thumbImg = card.querySelector<HTMLImageElement>('img');
+    if (thumbImg) {
+      thumbImg.addEventListener('load', () => {
+        logUi('workspace_capture_thumb_loaded', {
+          captureId: capture.id,
+          naturalWidth: thumbImg.naturalWidth,
+          naturalHeight: thumbImg.naturalHeight,
+        });
+      }, { once: true });
+      thumbImg.addEventListener('error', () => {
+        logUi('workspace_capture_thumb_failed', {
+          captureId: capture.id,
+          thumbSrc: thumbSrc ?? '',
+          screenshotUrl: capture.screenshotUrl ?? '',
+        });
+      }, { once: true });
+    }
     list.appendChild(card);
   });
 }
@@ -1191,7 +1233,8 @@ function renderCapturePayload(session: Session) {
   }
 
   const selected = activeAnnotation() ?? capture.annotations[0];
-  const hasScreenshot = Boolean(screenshotImgSrc(capture.screenshotUrl));
+  const payloadImgSrc = screenshotImgSrc(capture.screenshotUrl);
+  const hasScreenshot = Boolean(payloadImgSrc);
   const showLegacyLabel = captureNeedsLegacyScreenshotLabel(capture);
   const annotationRows = capture.annotations.map((annotation) => `
     <div class="annotation-row ${selected?.id === annotation.id ? 'active' : ''}" data-annotation-id="${annotation.id}" role="button" tabindex="0">
@@ -1203,8 +1246,30 @@ function renderCapturePayload(session: Session) {
   `).join('');
 
   const previewCapture = activePreviewCapture();
+  const previewImgSrc = screenshotImgSrc(previewCapture?.screenshotUrl);
   const isPreviewOpen =
-    previewCapture?.id === capture.id && Boolean(screenshotImgSrc(previewCapture?.screenshotUrl));
+    previewCapture?.id === capture.id && Boolean(previewImgSrc);
+
+  logUi('workspace_render_capture_payload', {
+    sessionId: session.id,
+    captureId: capture.id,
+    annotationCount: capture.annotations.length,
+    screenshotKind: capture.screenshotUrl
+      ? isAbsoluteFilesystemScreenshotRef(capture.screenshotUrl)
+        ? 'abs_path'
+        : capture.screenshotUrl.startsWith('data:image/')
+          ? 'data_url'
+          : 'other'
+      : 'none',
+    screenshotChars: capture.screenshotUrl?.length ?? 0,
+    payloadImgSrcKind: payloadImgSrc
+      ? payloadImgSrc.startsWith('data:image/')
+        ? 'data_url'
+        : 'file_src'
+      : 'none',
+    payloadImgSrcChars: payloadImgSrc?.length ?? 0,
+    previewOpen: isPreviewOpen,
+  });
 
   root.innerHTML = `
     <div class="capture-payload-head">
@@ -1222,7 +1287,7 @@ function renderCapturePayload(session: Session) {
               : 'This capture was saved without a screenshot. Pick a different capture or take a fresh one to send visual context.'}</span>
         </div>
         ${hasScreenshot
-          ? `<button type="button" class="capture-payload-image-button" id="capture-payload-image-button" aria-label="Open full resolution screenshot preview"><img class="capture-payload-image" src="${screenshotImgSrc(capture.screenshotUrl)}" alt="Selected screenshot payload" /></button>`
+          ? `<button type="button" class="capture-payload-image-button" id="capture-payload-image-button" aria-label="Open full resolution screenshot preview"><img class="capture-payload-image" src="${payloadImgSrc}" alt="Selected screenshot payload" /></button>`
           : `<div class="capture-payload-empty">${showLegacyLabel ? 'Legacy capture: saved before screenshot support.' : 'No screenshot was saved with this capture.'}</div>`}
       </div>
       <div class="capture-payload-meta">
@@ -1251,7 +1316,7 @@ function renderCapturePayload(session: Session) {
             <button type="button" class="capture-preview-close" id="close-capture-preview-x">Close</button>
           </div>
           <div class="capture-preview-panel-copy">This is the full image that will be saved with the session and referenced in the AI handoff.</div>
-          <img class="capture-preview-modal-image" id="capture-preview-modal-image" src="${screenshotImgSrc(previewCapture?.screenshotUrl)}" alt="Full resolution screenshot preview" />
+          <img class="capture-preview-modal-image" id="capture-preview-modal-image" src="${previewImgSrc}" alt="Full resolution screenshot preview" />
           <div class="capture-preview-meta" id="capture-preview-meta">Loading resolution…</div>
         </div>
       </div>
@@ -1298,11 +1363,19 @@ function renderCapturePayload(session: Session) {
 
   document.getElementById('open-capture-preview')?.addEventListener('click', () => {
     if (!capture.screenshotUrl) return;
+    logUi('workspace_open_capture_preview_click', {
+      captureId: capture.id,
+      screenshotChars: capture.screenshotUrl.length,
+    });
     activePreviewCaptureId = capture.id;
     renderCapturePayload(session);
   });
   document.getElementById('capture-payload-image-button')?.addEventListener('click', () => {
     if (!capture.screenshotUrl) return;
+    logUi('workspace_payload_image_click', {
+      captureId: capture.id,
+      screenshotChars: capture.screenshotUrl.length,
+    });
     activePreviewCaptureId = capture.id;
     renderCapturePayload(session);
   });
@@ -1320,12 +1393,40 @@ function renderCapturePayload(session: Session) {
   if (previewImage && previewMeta) {
     const updateMeta = () => {
       previewMeta.textContent = `Resolution: ${previewImage.naturalWidth} × ${previewImage.naturalHeight}`;
+      logUi('workspace_preview_modal_loaded', {
+        captureId: previewCapture?.id ?? capture.id,
+        naturalWidth: previewImage.naturalWidth,
+        naturalHeight: previewImage.naturalHeight,
+      });
     };
     if (previewImage.complete) {
       updateMeta();
     } else {
       previewImage.addEventListener('load', updateMeta, { once: true });
     }
+    previewImage.addEventListener('error', () => {
+      logUi('workspace_preview_modal_failed', {
+        captureId: previewCapture?.id ?? capture.id,
+        src: previewImage.currentSrc || previewImage.src,
+      });
+    }, { once: true });
+  }
+
+  const payloadImage = document.querySelector<HTMLImageElement>('.capture-payload-image');
+  if (payloadImage) {
+    payloadImage.addEventListener('load', () => {
+      logUi('workspace_payload_image_loaded', {
+        captureId: capture.id,
+        naturalWidth: payloadImage.naturalWidth,
+        naturalHeight: payloadImage.naturalHeight,
+      });
+    }, { once: true });
+    payloadImage.addEventListener('error', () => {
+      logUi('workspace_payload_image_failed', {
+        captureId: capture.id,
+        src: payloadImage.currentSrc || payloadImage.src,
+      });
+    }, { once: true });
   }
 }
 

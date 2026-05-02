@@ -884,18 +884,19 @@ fn capture_screenshot_for_annotation(
             "Overlay capture layout missing — internal ordering bug".to_string()
         })?;
 
-    let origin_logical_x = layout.inner_phys_x as f64 / layout.scale_factor;
-    let origin_logical_y = layout.inner_phys_y as f64 / layout.scale_factor;
-
-    let crop_x = (origin_logical_x + viewport_left).floor().max(0.0) as u32;
-    let crop_y = (origin_logical_y + viewport_top).floor().max(0.0) as u32;
-    let crop_width = width.floor().max(1.0) as u32;
-    let crop_height = height.floor().max(1.0) as u32;
+    let crop_x = (layout.inner_phys_x as f64 + viewport_left * layout.scale_factor)
+        .floor()
+        .max(0.0) as u32;
+    let crop_y = (layout.inner_phys_y as f64 + viewport_top * layout.scale_factor)
+        .floor()
+        .max(0.0) as u32;
+    let crop_width = (width * layout.scale_factor).floor().max(1.0) as u32;
+    let crop_height = (height * layout.scale_factor).floor().max(1.0) as u32;
 
     log_backend(
         "overlay.capture.params",
         format!(
-            "viewport_left={viewport_left} viewport_top={viewport_top} width={width} height={height} inner_phys=({}, {}) sf={} global_logical_xy=({}, {}) wh=({}, {})",
+            "viewport_left={viewport_left} viewport_top={viewport_top} width={width} height={height} inner_phys=({}, {}) sf={} global_phys_xy=({}, {}) wh_phys=({}, {})",
             layout.inner_phys_x,
             layout.inner_phys_y,
             layout.scale_factor,
@@ -1129,10 +1130,11 @@ fn persist_annotation_screenshot(data_url: String) -> Result<String, String> {
     let decoded_len = bytes.len();
     fs::write(&path, bytes).map_err(|e| format!("Failed to write screenshot: {e}"))?;
     let written = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    let exists = path.exists();
     log_backend(
         "workspace.screenshot.persist_pending",
         format!(
-            "path={} written_bytes={written} decoded_input_bytes={decoded_len}",
+            "path={} written_bytes={written} decoded_input_bytes={decoded_len} exists={exists}",
             path.display(),
         ),
     );
@@ -1153,8 +1155,17 @@ fn finalize_capture_screenshot(capture_id: String, pending_path: String) -> Resu
     let incoming_canon = incoming
         .canonicalize()
         .map_err(|e| format!("Pending screenshot not found: {e}"))?;
+    let incoming_bytes = fs::metadata(&incoming_canon).map(|m| m.len()).unwrap_or(0);
 
     if !incoming_canon.starts_with(&base_canon) {
+        log_backend(
+            "workspace.screenshot.finalize_outside_root",
+            format!(
+                "capture_id={capture_id} incoming={} base={}",
+                incoming_canon.display(),
+                base_canon.display(),
+            ),
+        );
         return Err("Screenshot path is outside the Debugr screenshots folder".into());
     }
 
@@ -1167,10 +1178,15 @@ fn finalize_capture_screenshot(capture_id: String, pending_path: String) -> Resu
         Ok::<(), std::io::Error>(())
     })
     .map_err(|e| format!("finalize_capture_screenshot: {e}"))?;
+    let dest_bytes = fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
 
     log_backend(
         "workspace.screenshot.finalized",
-        format!("capture_id={capture_id} path={}", dest.display()),
+        format!(
+            "capture_id={capture_id} incoming={} incoming_bytes={incoming_bytes} path={} dest_bytes={dest_bytes}",
+            incoming_canon.display(),
+            dest.display(),
+        ),
     );
     Ok(dest.to_string_lossy().to_string())
 }
@@ -1193,9 +1209,10 @@ fn save_screenshot(capture_id: String, data_url: String) -> Result<String, Strin
 
     let path = dir.join(format!("{capture_id}.png"));
     fs::write(&path, bytes).map_err(|e| format!("Failed to write screenshot: {e}"))?;
+    let saved_bytes = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     log_backend(
         "workspace.screenshot.saved",
-        format!("capture_id={} path={}", capture_id, path.display()),
+        format!("capture_id={} path={} saved_bytes={saved_bytes}", capture_id, path.display()),
     );
 
     Ok(path.to_string_lossy().to_string())

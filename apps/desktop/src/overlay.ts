@@ -827,6 +827,13 @@ async function placePin(x: number, y: number) {
       applyScreenshotDataUrl(dataUrl);
       screenshotCaptured = true;
     }
+    logAnnotationPipeline('annotation_created', {
+      ann_id: ann.id,
+      ann_number: ann.number,
+      kind: ann.kind,
+      screenshotCaptured,
+      screenshot_kind: describeScreenshotRef(currentScreenshotDataUrl).kind,
+    });
     annotations.push(ann);
     renderPin(ann);
     await resumeOverlayVisible();
@@ -905,6 +912,13 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
       applyScreenshotDataUrl(dataUrl);
       screenshotCaptured = true;
     }
+    logAnnotationPipeline('annotation_created', {
+      ann_id: ann.id,
+      ann_number: ann.number,
+      kind: ann.kind,
+      screenshotCaptured,
+      screenshot_kind: describeScreenshotRef(currentScreenshotDataUrl).kind,
+    });
     annotations.push(ann);
     renderRegion(ann);
     await resumeOverlayVisible();
@@ -1108,6 +1122,13 @@ function syncSel() {
 }
 
 function selectAnnotation(ann: Annotation) {
+  logAnnotationPipeline('annotation_selected', {
+    ann_id: ann.id,
+    ann_number: ann.number,
+    kind: ann.kind,
+    text_len: ann.text.length,
+    tag_count: ann.tags.length,
+  });
   selectedId = ann.id;
   syncSel();
   showNotePanel(ann);
@@ -1124,6 +1145,13 @@ function deselectAnnotation() {
 
 function showNotePanel(ann: Annotation) {
   try {
+    logAnnotationPipeline('note_panel_open', {
+      ann_id: ann.id,
+      ann_number: ann.number,
+      kind: ann.kind,
+      text_len: ann.text.length,
+      tag_count: ann.tags.length,
+    });
     noteTitleEl.textContent = `Annotation ${ann.number}`;
     noteSubtitleEl.textContent = ann.kind === 'region'
       ? 'Drag handles to resize. Save note closes this panel — Finish opens Debugr.'
@@ -1183,6 +1211,12 @@ function saveAnnotation(ann: Annotation) {
     setToast(`Add a note for annotation ${ann.number} before saving.`);
     return;
   }
+  logAnnotationPipeline('note_saved', {
+    ann_id: ann.id,
+    ann_number: ann.number,
+    text_len: ann.text.trim().length,
+    tag_count: ann.tags.length,
+  });
   const btn = noteBodyEl.querySelector<HTMLButtonElement>('#save-ann')!;
   const defaultLabel = 'Save note  ⌘↵';
   btn.textContent = '✓ Saved';
