@@ -53,8 +53,16 @@ let screenshotCaptured = false;
 // Promise that resolves when screenshot is ready (set by set-screenshot event listener)
 let screenshotReadyResolve: (() => void) | null = null;
 function waitForScreenshot(): Promise<void> {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     screenshotReadyResolve = resolve;
+    // Timeout after 5 seconds in case event never arrives
+    setTimeout(() => {
+      if (screenshotReadyResolve) {
+        console.warn('[debugr-ui] waitForScreenshot timeout - proceeding without screenshot');
+        screenshotReadyResolve();
+        screenshotReadyResolve = null;
+      }
+    }, 5000);
   });
 }
 
@@ -694,10 +702,14 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
     screenshotCaptured = true;
     setToast('Capturing screen...');
     try {
+      console.info('[debugr-ui] placeRegion: suspending overlay');
       // Temporarily hide overlay to capture actual screen content
       await invoke('suspend_overlay');
       await new Promise(resolve => setTimeout(resolve, 100));
 
+      console.info('[debugr-ui] placeRegion: requesting screenshot', {
+        cropX: box.left, cropY: box.top, cropWidth: box.width, cropHeight: box.height
+      });
       await invoke('capture_screenshot_for_annotation', {
         cropX: Math.floor(box.left),
         cropY: Math.floor(box.top),
@@ -706,11 +718,14 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
       });
 
       // Wait for screenshot to be ready before resuming overlay
+      console.info('[debugr-ui] placeRegion: waiting for screenshot event');
       await waitForScreenshot();
+      console.info('[debugr-ui] placeRegion: screenshot ready, resuming overlay');
 
       // Restore overlay after screenshot is captured
       await invoke('resume_overlay');
     } catch (err) {
+      console.error('[debugr-ui] placeRegion capture failed:', err);
       setToast(`Screenshot failed: ${err}`);
       screenshotCaptured = false;
       // Make sure to restore overlay on error
@@ -1110,16 +1125,20 @@ function resizeBox(b: { left: number; top: number; width: number; height: number
 
 void listen<string>('set-screenshot', event => {
   currentScreenshotDataUrl = event.payload || '';
-  console.info('[debugr-ui]', JSON.stringify({
-    event: 'overlay_set_screenshot',
+  console.info('[debugr-ui] SET-SCREENSHOT EVENT RECEIVED', {
     hasScreenshot: Boolean(currentScreenshotDataUrl),
     length: currentScreenshotDataUrl.length,
-  }));
+    hasResolver: Boolean(screenshotReadyResolve),
+  });
   if (event.payload) {
+    console.info('[debugr-ui] Setting backgroundImage on #screenshot-bg');
     screenshotBg.style.backgroundImage = `url("${event.payload}")`;
+  } else {
+    console.warn('[debugr-ui] set-screenshot event has no payload!');
   }
   // Resolve any pending screenshot wait
   if (screenshotReadyResolve) {
+    console.info('[debugr-ui] Resolving waitForScreenshot promise');
     screenshotReadyResolve();
     screenshotReadyResolve = null;
   }
