@@ -622,10 +622,11 @@ fn take_silent_screenshot_cropped(
     let png_bytes = if let (Some(w), Some(h)) = (crop_width, crop_height) {
         // Decode the PNG
         let decoder = png::Decoder::new(&full_png_bytes[..]);
-        let (info, mut reader) = decoder
+        let mut reader = decoder
             .read_info()
             .map_err(|e| format!("PNG decode failed: {e}"))?;
 
+        let info = reader.info();
         let mut img_data = vec![0; info.raw_bytes() as usize];
         reader.next_frame(&mut img_data)
             .map_err(|e| format!("PNG frame read failed: {e}"))?;
