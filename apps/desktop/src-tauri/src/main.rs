@@ -599,17 +599,9 @@ fn take_silent_screenshot_cropped(
         .unwrap()
         .as_millis()));
 
-    let crop_rect = if let (Some(w), Some(h)) = (crop_width, crop_height) {
-        format!("{},{},{},{}", x, y, w, h)
-    } else {
-        // Full screen
-        "0,0,10000,10000".to_string()
-    };
-
+    // Capture full screen to /tmp
     let status = Command::new("screencapture")
         .arg("-x")  // Don't play sound
-        .arg("-R")  // Capture region specified by rect (x,y,width,height)
-        .arg(&crop_rect)
         .arg(&temp_path)
         .status()
         .map_err(|e| format!("screencapture command failed: {e}"))?;
@@ -622,9 +614,53 @@ fn take_silent_screenshot_cropped(
         return Err("screencapture did not create output file".into());
     }
 
-    // Read and encode to data URL
-    let png_bytes = fs::read(&temp_path)
+    // Read the PNG
+    let full_png_bytes = fs::read(&temp_path)
         .map_err(|e| format!("Failed to read screenshot: {e}"))?;
+
+    // Decode PNG, crop if needed, and re-encode
+    let png_bytes = if let (Some(w), Some(h)) = (crop_width, crop_height) {
+        // Decode the PNG
+        let decoder = png::Decoder::new(&full_png_bytes[..]);
+        let (info, mut reader) = decoder
+            .read_info()
+            .map_err(|e| format!("PNG decode failed: {e}"))?;
+
+        let mut img_data = vec![0; info.raw_bytes() as usize];
+        reader.next_frame(&mut img_data)
+            .map_err(|e| format!("PNG frame read failed: {e}"))?;
+
+        let full_width = info.width as usize;
+        let crop_x_usize = x as usize;
+        let crop_y_usize = y as usize;
+        let crop_w = (w as usize).min(full_width.saturating_sub(crop_x_usize));
+        let crop_h = h as usize;
+
+        // Crop the RGBA data
+        let bytes_per_pixel = 4; // RGBA
+        let mut cropped = vec![0u8; crop_w * crop_h * bytes_per_pixel];
+        for row in 0..crop_h {
+            let src_offset = ((crop_y_usize + row) * full_width + crop_x_usize) * bytes_per_pixel;
+            let dst_offset = row * crop_w * bytes_per_pixel;
+            if src_offset + crop_w * bytes_per_pixel <= img_data.len() {
+                cropped[dst_offset..dst_offset + crop_w * bytes_per_pixel]
+                    .copy_from_slice(&img_data[src_offset..src_offset + crop_w * bytes_per_pixel]);
+            }
+        }
+
+        // Re-encode to PNG
+        let mut out = Vec::new();
+        let mut enc = png::Encoder::new(&mut out, crop_w as u32, crop_h as u32);
+        enc.set_color(info.color_type);
+        enc.set_depth(info.bit_depth);
+        let mut writer = enc.write_header()
+            .map_err(|e| format!("PNG encode header failed: {e}"))?;
+        writer.write_image_data(&cropped)
+            .map_err(|e| format!("PNG encode data failed: {e}"))?;
+        out
+    } else {
+        full_png_bytes
+    };
 
     // Clean up temp file
     let _ = fs::remove_file(&temp_path);
