@@ -687,18 +687,12 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn capture_screenshot_for_annotation(
-    app: AppHandle,
-    crop_x: Option<u32>,
-    crop_y: Option<u32>,
-    crop_width: Option<u32>,
-    crop_height: Option<u32>,
-) -> Result<(), String> {
+fn capture_screenshot_for_annotation(app: AppHandle) -> Result<(), String> {
     log_backend("overlay.capture.user_ready", "capturing_on_demand");
 
     let app_clone = app.clone();
     std::thread::spawn(move || {
-        match take_silent_screenshot_cropped(crop_x, crop_y, crop_width, crop_height) {
+        match take_silent_screenshot() {
             Ok(data_url) => {
                 log_backend(
                     "overlay.capture.success",

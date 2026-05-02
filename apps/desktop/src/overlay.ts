@@ -628,19 +628,12 @@ async function placePin(x: number, y: number) {
     return;
   }
 
-  // Capture screenshot on first annotation, cropped to area around pin
+  // Capture screenshot on first annotation (full screen)
   if (!screenshotCaptured) {
     screenshotCaptured = true;
     setToast('Capturing screen...');
     try {
-      // Define crop region: 120x60 box centered on pin
-      const cropBox = clampBox({ left: x - 60, top: y - 30, width: 120, height: 60 });
-      await invoke('capture_screenshot_for_annotation', {
-        cropX: Math.floor(cropBox.left),
-        cropY: Math.floor(cropBox.top),
-        cropWidth: Math.floor(cropBox.width),
-        cropHeight: Math.floor(cropBox.height),
-      });
+      await invoke('capture_screenshot_for_annotation');
       await new Promise(resolve => setTimeout(resolve, 200));
     } catch (err) {
       setToast(`Screenshot failed: ${err}`);
@@ -668,19 +661,12 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
     return;
   }
 
-  const box = clampBox({ left: x, top: y, width: w, height: h });
-
-  // Capture screenshot on first annotation, cropped to region
+  // Capture screenshot on first annotation (full screen, not cropped)
   if (!screenshotCaptured) {
     screenshotCaptured = true;
     setToast('Capturing screen...');
     try {
-      await invoke('capture_screenshot_for_annotation', {
-        cropX: Math.floor(box.left),
-        cropY: Math.floor(box.top),
-        cropWidth: Math.floor(box.width),
-        cropHeight: Math.floor(box.height),
-      });
+      await invoke('capture_screenshot_for_annotation');
       await new Promise(resolve => setTimeout(resolve, 200));
     } catch (err) {
       setToast(`Screenshot failed: ${err}`);
@@ -689,6 +675,7 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
     }
   }
 
+  const box = clampBox({ left: x, top: y, width: w, height: h });
   const ann: Annotation = {
     id: `ann_${Date.now()}`,
     number: annotations.length + 1,
