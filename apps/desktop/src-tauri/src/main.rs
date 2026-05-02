@@ -626,12 +626,16 @@ fn take_silent_screenshot_cropped(
             .read_info()
             .map_err(|e| format!("PNG decode failed: {e}"))?;
 
-        let info = reader.info();
-        let mut img_data = vec![0; info.raw_bytes() as usize];
+        // Extract info fields before using reader mutably
+        let raw_bytes = reader.info().raw_bytes();
+        let color_type = reader.info().color_type;
+        let bit_depth = reader.info().bit_depth;
+        let full_width = reader.info().width as usize;
+
+        let mut img_data = vec![0; raw_bytes as usize];
         reader.next_frame(&mut img_data)
             .map_err(|e| format!("PNG frame read failed: {e}"))?;
 
-        let full_width = info.width as usize;
         let crop_x_usize = x as usize;
         let crop_y_usize = y as usize;
         let crop_w = (w as usize).min(full_width.saturating_sub(crop_x_usize));
@@ -650,14 +654,19 @@ fn take_silent_screenshot_cropped(
         }
 
         // Re-encode to PNG
-        let mut out = Vec::new();
-        let mut enc = png::Encoder::new(&mut out, crop_w as u32, crop_h as u32);
-        enc.set_color(info.color_type);
-        enc.set_depth(info.bit_depth);
-        let mut writer = enc.write_header()
-            .map_err(|e| format!("PNG encode header failed: {e}"))?;
-        writer.write_image_data(&cropped)
-            .map_err(|e| format!("PNG encode data failed: {e}"))?;
+        let out = {
+            let mut out = Vec::new();
+            {
+                let mut enc = png::Encoder::new(&mut out, crop_w as u32, crop_h as u32);
+                enc.set_color(color_type);
+                enc.set_depth(bit_depth);
+                let mut writer = enc.write_header()
+                    .map_err(|e| format!("PNG encode header failed: {e}"))?;
+                writer.write_image_data(&cropped)
+                    .map_err(|e| format!("PNG encode data failed: {e}"))?;
+            }
+            out
+        };
         out
     } else {
         full_png_bytes
