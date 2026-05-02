@@ -280,6 +280,27 @@ html, body {
   box-shadow: var(--shadow-float);
   z-index: 800;
 }
+
+.hud-popover {
+  position: fixed;
+  top: max(102px, calc(58px + env(safe-area-inset-top, 0px)));
+  right: calc(14px + env(safe-area-inset-right, 0px));
+  z-index: 760;
+  pointer-events: none;
+}
+
+.step-card-hud {
+  position: relative;
+  top: auto;
+  left: auto;
+  transform: none;
+  width: min(360px, calc(100vw - 28px));
+  pointer-events: auto;
+}
+
+.step-card-setup {
+  width: min(420px, calc(100vw - 28px));
+}
 .step-card-title {
   font-size: 18px; font-weight: 600; color: var(--text);
   margin-bottom: 4px;
@@ -300,7 +321,7 @@ html, body {
 /* Picker session list */
 .picker-list {
   display: flex; flex-direction: column; gap: 4px;
-  max-height: 240px; overflow-y: auto;
+  max-height: min(240px, 42vh); overflow-y: auto;
   margin-bottom: 16px;
   padding-right: 4px;
   position: relative;
@@ -469,6 +490,18 @@ html, body {
 }
 .folder-pick-btn:hover {
   border-color: var(--blue2); color: var(--blue2); background: var(--blue-soft);
+}
+
+@media (max-width: 560px) {
+  .hud-popover {
+    left: 10px;
+    right: 10px;
+  }
+
+  .step-card-hud,
+  .step-card-setup {
+    width: 100%;
+  }
 }
 .folder-path {
   padding: 6px 10px;

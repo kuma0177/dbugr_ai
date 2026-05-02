@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{ffi::CStr, fs, path::PathBuf, process::Command, sync::{Mutex, OnceLock}, time::{Duration, SystemTime, UNIX_EPOCH}, io::Write as _};
+use std::{fs, path::PathBuf, process::Command, time::{Duration, SystemTime, UNIX_EPOCH}, io::Write as _};
 use core_graphics::display::CGDisplay;
 use tauri::{AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri::image::Image;
@@ -26,142 +26,6 @@ fn macos_activate() {
 #[cfg(not(target_os = "macos"))]
 fn macos_activate() {}
 
-#[cfg(target_os = "macos")]
-fn macos_frontmost_bundle_identifier() -> Option<String> {
-    use objc::runtime::Object;
-    use objc::{class, msg_send, sel, sel_impl};
-
-    unsafe {
-        let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
-        if workspace.is_null() {
-            return None;
-        }
-        let app: *mut Object = msg_send![workspace, frontmostApplication];
-        if app.is_null() {
-            return None;
-        }
-        let bundle_id: *mut Object = msg_send![app, bundleIdentifier];
-        if bundle_id.is_null() {
-            return None;
-        }
-        let utf8: *const std::os::raw::c_char = msg_send![bundle_id, UTF8String];
-        if utf8.is_null() {
-            return None;
-        }
-        Some(CStr::from_ptr(utf8).to_string_lossy().into_owned())
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn macos_frontmost_bundle_identifier() -> Option<String> {
-    None
-}
-
-static LAST_EXTERNAL_CAPTURE_BUNDLE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-
-fn last_external_capture_bundle_store() -> &'static Mutex<Option<String>> {
-    LAST_EXTERNAL_CAPTURE_BUNDLE.get_or_init(|| Mutex::new(None))
-}
-
-fn ignored_capture_bundle(bundle_id: &str, own_bundle_id: &str) -> bool {
-    bundle_id.is_empty()
-        || bundle_id == own_bundle_id
-        || bundle_id == "com.apple.finder"
-        || bundle_id == "com.openai.codex"
-}
-
-fn remember_external_capture_bundle(bundle_id: &str, own_bundle_id: &str) {
-    if ignored_capture_bundle(bundle_id, own_bundle_id) {
-        return;
-    }
-    if let Ok(mut slot) = last_external_capture_bundle_store().lock() {
-        *slot = Some(bundle_id.to_string());
-    }
-}
-
-fn last_external_capture_bundle() -> Option<String> {
-    last_external_capture_bundle_store()
-        .lock()
-        .ok()
-        .and_then(|slot| slot.clone())
-}
-
-fn start_frontmost_bundle_tracker(own_bundle_id: String) {
-    std::thread::spawn(move || loop {
-        if let Some(bundle_id) = macos_frontmost_bundle_identifier() {
-            remember_external_capture_bundle(&bundle_id, &own_bundle_id);
-        }
-        std::thread::sleep(Duration::from_millis(120));
-    });
-}
-
-fn restore_frontmost_bundle(bundle_id: &str, own_bundle_id: &str) {
-    if ignored_capture_bundle(bundle_id, own_bundle_id) {
-        return;
-    }
-
-    log_backend(
-        "overlay.restore_frontmost.start",
-        format!("bundle_id={bundle_id}"),
-    );
-
-    match Command::new("open").args(["-b", bundle_id]).status() {
-        Ok(status) if status.success() => {
-            log_backend(
-                "overlay.restore_frontmost.success",
-                format!("bundle_id={bundle_id}"),
-            );
-        }
-        Ok(status) => {
-            log_backend(
-                "overlay.restore_frontmost.failed",
-                format!("bundle_id={bundle_id} status={status}"),
-            );
-        }
-        Err(error) => {
-            log_backend(
-                "overlay.restore_frontmost.error",
-                format!("bundle_id={bundle_id} error={error}"),
-            );
-        }
-    }
-}
-
-fn bundle_has_visible_window(bundle_id: &str) -> bool {
-    let script = format!(
-        r#"tell application id "{}" to count (every window whose visible is true)"#,
-        escape_applescript_text(bundle_id),
-    );
-    match Command::new("osascript").arg("-e").arg(script).output() {
-        Ok(output) if output.status.success() => {
-            let count = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .parse::<usize>()
-                .unwrap_or(0);
-            log_backend(
-                "overlay.visible_windows.result",
-                format!("bundle_id={bundle_id} count={count}"),
-            );
-            count > 0
-        }
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            log_backend(
-                "overlay.visible_windows.failed",
-                format!("bundle_id={bundle_id} stderr={stderr}"),
-            );
-            false
-        }
-        Err(error) => {
-            log_backend(
-                "overlay.visible_windows.error",
-                format!("bundle_id={bundle_id} error={error}"),
-            );
-            false
-        }
-    }
-}
-
 #[derive(Clone, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OverlayLaunchPayload {
@@ -171,81 +35,6 @@ struct OverlayLaunchPayload {
     local_folder: Option<String>,
     github_repo: Option<String>,
     skip_picker: Option<bool>,
-}
-
-fn resolve_capture_target_bundle(
-    own_bundle_id: &str,
-    source: &str,
-    initial_frontmost_bundle: Option<String>,
-) -> Option<String> {
-    let remembered_bundle = last_external_capture_bundle();
-    log_backend(
-        "overlay.capture.target_context",
-        format!(
-            "source={source} initial_bundle={} remembered_bundle={}",
-            initial_frontmost_bundle.as_deref().unwrap_or("none"),
-            remembered_bundle.as_deref().unwrap_or("none"),
-        ),
-    );
-
-    if let Some(bundle) = initial_frontmost_bundle.as_deref() {
-        if !ignored_capture_bundle(bundle, own_bundle_id) && bundle_has_visible_window(bundle) {
-            return Some(bundle.to_string());
-        }
-    }
-
-    if source == "frontend" {
-        if let Some(bundle) = remembered_bundle.as_deref() {
-            if !ignored_capture_bundle(bundle, own_bundle_id) && bundle_has_visible_window(bundle) {
-                log_backend(
-                    "overlay.capture.target_context.reuse_last_external",
-                    format!("bundle_id={bundle}"),
-                );
-                return Some(bundle.to_string());
-            }
-        }
-    }
-
-    let should_wait_for_external_target = source == "frontend"
-        && initial_frontmost_bundle
-            .as_deref()
-            .map(|bundle| ignored_capture_bundle(bundle, own_bundle_id))
-            .unwrap_or(true);
-
-    if should_wait_for_external_target {
-        log_backend(
-            "overlay.capture.wait_for_target.start",
-            format!("source={source} timeout_ms=4000"),
-        );
-        let started = std::time::Instant::now();
-        while started.elapsed() < Duration::from_millis(4000) {
-            if let Some(bundle) = macos_frontmost_bundle_identifier() {
-                if !ignored_capture_bundle(&bundle, own_bundle_id) && bundle_has_visible_window(&bundle) {
-                    log_backend(
-                        "overlay.capture.wait_for_target.success",
-                        format!("bundle_id={bundle} elapsed_ms={}", started.elapsed().as_millis()),
-                    );
-                    return Some(bundle);
-                }
-            }
-            std::thread::sleep(Duration::from_millis(80));
-        }
-        log_backend(
-            "overlay.capture.wait_for_target.timeout",
-            format!("source={source}"),
-        );
-        if let Some(bundle) = macos_frontmost_bundle_identifier()
-            .or_else(last_external_capture_bundle)
-            .or(initial_frontmost_bundle)
-        {
-            if !ignored_capture_bundle(&bundle, own_bundle_id) && bundle_has_visible_window(&bundle) {
-                return Some(bundle);
-            }
-        }
-        return None;
-    }
-
-    initial_frontmost_bundle
 }
 
 // ── CoreGraphics for screen-capture permissions ───────────────────────────────
@@ -853,6 +642,34 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn capture_screenshot_for_annotation(app: AppHandle) -> Result<(), String> {
+    log_backend("overlay.capture.user_ready", "capturing_on_demand");
+
+    let app_clone = app.clone();
+    std::thread::spawn(move || {
+        match take_silent_screenshot() {
+            Ok(data_url) => {
+                log_backend(
+                    "overlay.capture.success",
+                    format!("data_url_len={}", data_url.len()),
+                );
+                if let Some(overlay) = app_clone.get_webview_window("overlay") {
+                    let _ = overlay.emit("set-screenshot", data_url);
+                }
+            }
+            Err(e) => {
+                log_backend("overlay.capture.failed", e.clone());
+                if let Some(overlay) = app_clone.get_webview_window("overlay") {
+                    let _ = overlay.emit("capture-screenshot-failed", e);
+                }
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
 fn suspend_overlay(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("overlay") {
         let _ = win.hide();
@@ -1056,31 +873,25 @@ fn tray_template_icon() -> Image<'static> {
 fn show_overlay_window(app: &AppHandle) {
     if let Some(overlay) = app.get_webview_window("overlay") {
         log_backend("overlay.window.found", "label=overlay");
-
-        // Compute bounds on this thread (read-only monitor queries are safe anywhere).
-        let bounds = overlay
-            .current_monitor()
+        let bounds = overlay.current_monitor()
             .ok()
             .flatten()
             .or_else(|| overlay.primary_monitor().ok().flatten())
             .map(|mon| {
-                let phys  = mon.size();
-                let pos   = mon.position();
+                let phys = mon.size();
+                let pos = mon.position();
                 let scale = mon.scale_factor();
-                let lw = (phys.width  as f64 / scale).round() as u32;
+                let lw = (phys.width as f64 / scale).round() as u32;
                 let lh = (phys.height as f64 / scale).round() as u32;
                 let lx = (pos.x as f64 / scale).round();
                 let ly = (pos.y as f64 / scale).round();
-                log_backend("overlay.window.bounds",
-                    format!("logical_w={lw} logical_h={lh} x={lx} y={ly} scale={scale}"));
+                log_backend(
+                    "overlay.window.bounds",
+                    format!("logical_w={lw} logical_h={lh} x={lx} y={ly} scale={scale}"),
+                );
                 (lw, lh, lx, ly)
             });
 
-        // ALL AppKit window operations must run on the main thread.
-        // We previously called orderFrontRegardless directly from the background
-        // screenshot thread, which triggered NSWMWindowCoordinator's
-        // "Must only be used from the main thread" assertion and crashed.
-        // run_on_main_thread dispatches the block to the Cocoa main queue.
         let app2 = app.clone();
         let _ = app.run_on_main_thread(move || {
             let Some(ov) = app2.get_webview_window("overlay") else { return };
@@ -1088,23 +899,12 @@ fn show_overlay_window(app: &AppHandle) {
                 let _ = ov.set_size(tauri::LogicalSize::new(lw, lh));
                 let _ = ov.set_position(tauri::LogicalPosition::new(lx, ly));
             }
-            // orderFrontRegardless shows the window without activating the app,
-            // so the dock (level 20) stays above the overlay (level 3) and usable.
-            #[cfg(target_os = "macos")]
-            {
-                use objc::runtime::Object;
-                use objc::{msg_send, sel, sel_impl};
-                if let Ok(ptr) = ov.ns_window() {
-                    unsafe {
-                        let ns_window = ptr as *mut Object;
-                        let _: () = msg_send![ns_window, orderFrontRegardless];
-                    }
-                } else {
-                    let _ = ov.show();
-                }
+            if let Err(e) = ov.show() {
+                log_backend("overlay.window.show_failed", e.to_string());
             }
-            #[cfg(not(target_os = "macos"))]
-            { let _ = ov.show(); }
+            // Deliberately avoid set_focus / app activation here. This matches
+            // the older overlay behavior that left other apps interactive until
+            // the user intentionally clicks into Debugr's controls.
         });
     }
 }
@@ -1122,77 +922,18 @@ fn trigger_overlay(app: &AppHandle, source: &str, launch: Option<OverlayLaunchPa
         log_backend("overlay.window.missing", "label=overlay");
     }
 
-    if !get_screen_capture_permission() {
-        log_backend("overlay.permission.missing", "requesting=true");
-        let _ = request_screen_capture_permission();
-        if !get_screen_capture_permission() {
-            log_backend("overlay.permission.still_missing", "emit_main_warning=true");
-            if let Some(main) = app.get_webview_window("main") {
-                let _ = main.emit("screen-capture-permission-needed", ());
-            }
-        }
-    }
-
-    let frontmost_bundle = macos_frontmost_bundle_identifier();
-    let own_bundle_id = app.config().identifier.clone();
-
-    // Hide main window before capturing so it never appears in the screenshot
-    // and doesn't block the user from selecting regions on the target app.
+    // Hide main window so user sees their desktop/apps in background
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.hide();
     }
 
-    // Capture the screen before showing the overlay so session-picker chrome
-    // never ends up inside the saved image.
-    let app = app.clone();
-    let source = source.to_string();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(80));
-
-        log_backend("overlay.capture.thread_start", "delay_ms=80");
-        let target_bundle = resolve_capture_target_bundle(&own_bundle_id, &source, frontmost_bundle);
-        if let Some(bundle_id) = target_bundle.as_deref() {
-            restore_frontmost_bundle(bundle_id, &own_bundle_id);
-            std::thread::sleep(Duration::from_millis(80));
-        } else if source == "frontend" {
-            log_backend("overlay.capture.aborted", "reason=no_visible_target_window");
-            if let Some(main) = app.get_webview_window("main") {
-                let _ = main.emit(
-                    "screen-capture-failed",
-                    "Open the app window you want to annotate, bring it to the front, then start a new capture again.".to_string(),
-                );
-                let _ = main.show();
-                let _ = main.set_focus();
-            }
-            return;
-        }
-
-        match take_silent_screenshot() {
-            Ok(data_url) => {
-                if let Some(overlay) = app.get_webview_window("overlay") {
-                    let _ = overlay.emit("overlay-will-show", launch.clone().unwrap_or_default());
-                    let _ = overlay.emit("set-screenshot", data_url.clone());
-                }
-                std::thread::sleep(Duration::from_millis(16));
-                show_overlay_window(&app);
-                log_backend(
-                    "overlay.capture.success",
-                    format!("data_url_len={}", data_url.len()),
-                );
-            }
-            Err(e) => {
-                log_backend("overlay.capture.failed", e.clone());
-                if let Some(overlay) = app.get_webview_window("overlay") {
-                    let _ = overlay.hide();
-                }
-                if let Some(main) = app.get_webview_window("main") {
-                    let _ = main.emit("screen-capture-failed", e.clone());
-                    let _ = main.show();
-                    let _ = main.set_focus();
-                }
-            }
-        }
-    });
+    // Show overlay immediately (without screenshot) so user can pick session.
+    // Screenshot will be captured only after user confirms session selection.
+    if let Some(overlay) = app.get_webview_window("overlay") {
+        let _ = overlay.emit("overlay-will-show", launch.unwrap_or_default());
+        show_overlay_window(&app);
+        log_backend("overlay.shown", "awaiting_session_selection");
+    }
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -1214,8 +955,6 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
-            start_frontmost_bundle_tracker(app.config().identifier.clone());
-
             // ── Tray menu ──────────────────────────────────────────────────
             let home = MenuItemBuilder::new("Open Debugr")
                 .id("home").build(app)?;
@@ -1305,6 +1044,7 @@ fn main() {
             finish_annotations,
             show_overlay,
             hide_overlay,
+            capture_screenshot_for_annotation,
             suspend_overlay,
             show_session_window,
             hide_main_window,

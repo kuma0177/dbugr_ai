@@ -76,50 +76,6 @@ root.innerHTML = `
   <div id="screenshot-bg"></div>
   <div id="dim-layer"></div>
 
-  <!-- Step 1: session picker -->
-  <div class="step-card" id="step-picker">
-    <div class="step-card-title">Where should this go?</div>
-    <div class="step-card-sub">Choose an existing session or start a new one.</div>
-    <div class="picker-hint">Click a session row to continue. Scroll for more.</div>
-    <div class="picker-list" id="picker-list">
-      <div class="picker-loading">Loading sessions…</div>
-    </div>
-    <div class="picker-actions">
-      <button class="picker-cancel-btn" id="picker-cancel">Cancel</button>
-      <button class="picker-new-btn" id="picker-new">+ New session</button>
-    </div>
-  </div>
-
-  <!-- Step 2: new session setup -->
-  <div class="step-card" id="step-setup" style="display:none;">
-    <button class="step-back" id="setup-back">← Back</button>
-    <div class="step-card-title">New session</div>
-    <div class="step-card-sub">Give this session enough context so Claude or Codex knows what kind of annotations to expect.</div>
-
-    <label class="setup-label">Session name</label>
-    <input class="setup-input" id="setup-name" placeholder="e.g. Login page crash" maxlength="60" />
-    <div class="setup-help">Use a short, clear title. It becomes the label for this session in the list and in the handoff.</div>
-
-    <label class="setup-label" style="margin-top:14px;">About this session</label>
-    <textarea class="setup-textarea" id="setup-about" maxlength="200" placeholder="What is this session about? What kind of annotations will you add?"></textarea>
-    <div class="setup-meta-row">
-      <div class="setup-help">Tell Claude or Codex what to look for so the screenshots are read with the right intent.</div>
-      <div class="setup-count" id="setup-about-count">0 / 200</div>
-    </div>
-
-    <label class="setup-label" style="margin-top:14px;">Project folder <span class="setup-optional">(recommended)</span></label>
-    <button class="folder-pick-btn" id="setup-folder-btn">📁 Choose folder…</button>
-    <div class="folder-path" id="setup-folder-path" style="display:none;"></div>
-    <div class="setup-help">Pick the folder when this issue belongs to local code. That gives the handoff a real filesystem anchor.</div>
-
-    <label class="setup-label" style="margin-top:10px;">GitHub repo <span class="setup-optional">(optional)</span></label>
-    <input class="setup-input" id="setup-github" placeholder="owner/repo" />
-    <div class="setup-help">Add the repo when the work maps cleanly to GitHub. It helps Debugr reference the right project on the way out.</div>
-
-    <button class="setup-start-btn" id="setup-start" disabled>Start annotating →</button>
-  </div>
-
-  <!-- Step 3: annotation mode -->
   <div id="annotation-ui" style="display:none;">
     <!-- Status stack: toast + session row (layout avoids overlap) -->
     <div class="annotate-header-stack" id="annotate-header">
@@ -138,6 +94,51 @@ root.innerHTML = `
           <button type="button" class="session-mode-btn" id="session-mode-append" aria-pressed="false">Append session</button>
           <button type="button" class="session-mode-btn" id="session-mode-new" aria-pressed="false">New session</button>
         </div>
+      </div>
+    </div>
+
+    <div class="hud-popover" id="hud-picker" style="display:none;">
+      <div class="step-card step-card-hud" id="step-picker">
+        <div class="step-card-title">Where should this go?</div>
+        <div class="step-card-sub">Choose an existing session or start a new one.</div>
+        <div class="picker-hint">Click a session row to continue. Scroll for more.</div>
+        <div class="picker-list" id="picker-list">
+          <div class="picker-loading">Loading sessions…</div>
+        </div>
+        <div class="picker-actions">
+          <button class="picker-cancel-btn" id="picker-cancel">Close</button>
+          <button class="picker-new-btn" id="picker-new">+ New session</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="hud-popover" id="hud-setup" style="display:none;">
+      <div class="step-card step-card-hud step-card-setup" id="step-setup">
+        <button class="step-back" id="setup-back">← Back</button>
+        <div class="step-card-title">New session</div>
+        <div class="step-card-sub">Give this session enough context so Claude or Codex knows what kind of annotations to expect.</div>
+
+        <label class="setup-label">Session name</label>
+        <input class="setup-input" id="setup-name" placeholder="e.g. Login page crash" maxlength="60" />
+        <div class="setup-help">Use a short, clear title. It becomes the label for this session in the list and in the handoff.</div>
+
+        <label class="setup-label" style="margin-top:14px;">About this session</label>
+        <textarea class="setup-textarea" id="setup-about" maxlength="200" placeholder="What is this session about? What kind of annotations will you add?"></textarea>
+        <div class="setup-meta-row">
+          <div class="setup-help">Tell Claude or Codex what to look for so the screenshots are read with the right intent.</div>
+          <div class="setup-count" id="setup-about-count">0 / 200</div>
+        </div>
+
+        <label class="setup-label" style="margin-top:14px;">Project folder <span class="setup-optional">(recommended)</span></label>
+        <button class="folder-pick-btn" id="setup-folder-btn">Choose folder…</button>
+        <div class="folder-path" id="setup-folder-path" style="display:none;"></div>
+        <div class="setup-help">Pick the folder when this issue belongs to local code. That gives the handoff a real filesystem anchor.</div>
+
+        <label class="setup-label" style="margin-top:10px;">GitHub repo <span class="setup-optional">(optional)</span></label>
+        <input class="setup-input" id="setup-github" placeholder="owner/repo" />
+        <div class="setup-help">Add the repo when the work maps cleanly to GitHub. It helps Debugr reference the right project on the way out.</div>
+
+        <button class="setup-start-btn" id="setup-start" disabled>Use this session →</button>
       </div>
     </div>
 
@@ -185,6 +186,8 @@ root.innerHTML = `
 
 const screenshotBg   = document.getElementById('screenshot-bg')!;
 const pickerListEl   = document.getElementById('picker-list')!;
+const hudPickerEl    = document.getElementById('hud-picker')!;
+const hudSetupEl     = document.getElementById('hud-setup')!;
 const stepPickerEl   = document.getElementById('step-picker')!;
 const stepSetupEl    = document.getElementById('step-setup')!;
 const annotationUiEl = document.getElementById('annotation-ui')!;
@@ -212,10 +215,12 @@ const toolSaveBtn = document.getElementById('tool-save') as HTMLButtonElement;
 
 function showStep(s: OverlayStep) {
   step = s;
-  stepPickerEl.style.display   = s === 'picking'    ? 'flex' : 'none';
-  stepSetupEl.style.display    = s === 'setup'      ? 'flex' : 'none';
-  annotationUiEl.style.display = s === 'annotating' ? 'block' : 'none';
-  root.classList.toggle('cursor-annotating', s === 'annotating');
+  annotationUiEl.style.display = 'block';
+  hudPickerEl.style.display = s === 'picking' ? 'block' : 'none';
+  hudSetupEl.style.display = s === 'setup' ? 'block' : 'none';
+  stepPickerEl.style.display = s === 'picking' ? 'flex' : 'none';
+  stepSetupEl.style.display = s === 'setup' ? 'flex' : 'none';
+  root.classList.toggle('cursor-annotating', true);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -375,7 +380,8 @@ function renderPickerSessions(list: Array<{ id: string; title: string; createdAt
       e.stopPropagation();
       targetSessionId = btn.dataset.id ?? null;
       newSessionName = btn.querySelector('.picker-session-title')?.textContent ?? '';
-      enterAnnotating();
+      newSessionAbout = '';
+      void enterAnnotating();
     });
   });
 }
@@ -393,32 +399,31 @@ function relativeTime(iso: string) {
 document.getElementById('picker-new')!.addEventListener('click', e => {
   e.stopPropagation();
   targetSessionId = null;
+  newSessionName = '';
+  newSessionAbout = '';
+  localFolder = null;
+  githubRepo = '';
   setupNameEl.value = '';
   setupAboutEl.value = '';
   setupGithubEl.value = '';
   setupFolderPath.style.display = 'none';
-  setupFolderBtn.textContent = '📁 Choose folder…';
-  localFolder = null;
-  githubRepo = '';
+  setupFolderBtn.textContent = 'Choose folder…';
   updateSetupState();
   showStep('setup');
   setTimeout(() => setupNameEl.focus(), 50);
 });
 
 document.getElementById('picker-cancel')!.addEventListener('click', e => {
-  e.stopPropagation(); void cancelOverlay();
+  e.stopPropagation();
+  showStep('annotating');
 });
 
 sessionModeAppendBtn.addEventListener('click', e => {
   e.stopPropagation();
-  if (!confirmDiscardAnnotations()) return;
-  resetAnnotationCanvas();
-  targetSessionId = null;
-  newSessionName = '';
-  newSessionAbout = '';
-  localFolder = null;
-  githubRepo = '';
-  sessionBannerEl.style.display = 'none';
+  if (step === 'picking') {
+    showStep('annotating');
+    return;
+  }
   showStep('picking');
   setPickerLoading();
   void emit('request-sessions');
@@ -426,26 +431,29 @@ sessionModeAppendBtn.addEventListener('click', e => {
 
 sessionModeNewBtn.addEventListener('click', e => {
   e.stopPropagation();
-  if (!confirmDiscardAnnotations()) return;
-  resetAnnotationCanvas();
   targetSessionId = null;
-  setupNameEl.value = '';
-  setupAboutEl.value = '';
-  setupGithubEl.value = '';
-  setupFolderPath.style.display = 'none';
-  setupFolderBtn.textContent = '📁 Choose folder…';
-  localFolder = null;
-  githubRepo = '';
+  setupNameEl.value = newSessionName;
+  setupAboutEl.value = newSessionAbout;
+  setupGithubEl.value = githubRepo;
+  if (localFolder) {
+    setupFolderPath.textContent = '📁 ' + localFolder.replace(/\/$/, '').split('/').slice(-2).join('/');
+    setupFolderPath.style.display = 'block';
+    setupFolderBtn.textContent = 'Change folder…';
+  } else {
+    setupFolderPath.textContent = '';
+    setupFolderPath.style.display = 'none';
+    setupFolderBtn.textContent = 'Choose folder…';
+  }
   updateSetupState();
-  sessionBannerEl.style.display = 'none';
-  showStep('setup');
+  showStep(step === 'setup' ? 'annotating' : 'setup');
   setTimeout(() => setupNameEl.focus(), 50);
 });
 
 // ── Step 2: New session setup ─────────────────────────────────────────────────
 
 document.getElementById('setup-back')!.addEventListener('click', e => {
-  e.stopPropagation(); showStep('picking');
+  e.stopPropagation();
+  showStep('annotating');
 });
 
 setupFolderBtn.addEventListener('click', async e => {
@@ -461,7 +469,7 @@ setupFolderBtn.addEventListener('click', async e => {
 });
 
 setupNameEl.addEventListener('click', e => e.stopPropagation());
-setupNameEl.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') enterAnnotating(); });
+setupNameEl.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') void enterAnnotating(); });
 setupNameEl.addEventListener('input', e => { e.stopPropagation(); updateSetupState(); });
 setupAboutEl.addEventListener('click', e => e.stopPropagation());
 setupAboutEl.addEventListener('input', e => {
@@ -478,7 +486,7 @@ setupGithubEl.addEventListener('input', e => {
 
 document.getElementById('setup-start')!.addEventListener('click', e => {
   e.stopPropagation();
-  enterAnnotating();
+  void enterAnnotating();
 });
 
 function updateSetupState() {
@@ -496,16 +504,20 @@ window.addEventListener('blur', () => {
   void invoke('suspend_overlay').catch(() => {});
 });
 
-function enterAnnotating() {
-  if (!targetSessionId) {
-    updateSetupState();
-    if (!newSessionName || !newSessionAbout) {
-      setToast('Add a title and about note before starting.');
-      setupNameEl.focus();
-      return;
-    }
-  } else {
+async function enterAnnotating() {
+  if (targetSessionId) {
     newSessionAbout = '';
+  }
+
+  // Capture screenshot now that user has selected a session
+  setToast('Capturing screen...');
+  try {
+    await invoke('capture_screenshot_for_annotation');
+    // Wait a moment for the screenshot to be processed
+    await new Promise(resolve => setTimeout(resolve, 100));
+  } catch (err) {
+    setToast(`Screenshot failed: ${err}`);
+    return;
   }
 
   showStep('annotating');
@@ -550,6 +562,15 @@ document.addEventListener('keydown', e => {
 
 async function saveAll() {
   if (annotations.length === 0) { void cancelOverlay(); return; }
+  if (!targetSessionId) {
+    updateSetupState();
+    if (!newSessionName || !newSessionAbout) {
+      setToast('Choose a session target before finishing.');
+      showStep('setup');
+      setTimeout(() => setupNameEl.focus(), 50);
+      return;
+    }
+  }
   const prevLabel = toolSaveBtn.textContent || FINISH_TOOL_LABEL;
   toolSaveBtn.disabled = true;
   toolSaveBtn.textContent = 'Opening…';
@@ -1040,6 +1061,23 @@ void listen<OverlayLaunchPayload>('overlay-will-show', event => {
     startPreparedSession(event.payload);
     return;
   }
+  targetSessionId = event.payload?.targetSessionId ?? null;
+  newSessionName = event.payload?.newSessionName ?? '';
+  newSessionAbout = event.payload?.newSessionAbout ?? '';
+  localFolder = event.payload?.localFolder ?? null;
+  githubRepo = event.payload?.githubRepo ?? '';
+  setupNameEl.value = newSessionName;
+  setupAboutEl.value = newSessionAbout;
+  setupGithubEl.value = githubRepo;
+  if (localFolder) {
+    setupFolderPath.textContent = '📁 ' + localFolder.replace(/\/$/, '').split('/').slice(-2).join('/');
+    setupFolderPath.style.display = 'block';
+    setupFolderBtn.textContent = 'Change folder…';
+  }
+  updateSetupState();
+  // Don't capture screenshot yet - wait for user to select session
+  showStep('picking');
+  setPickerLoading();
   void emit('request-sessions');
 });
 
@@ -1073,16 +1111,16 @@ function resetState() {
   setupGithubEl.value = '';
   setupFolderPath.textContent = '';
   setupFolderPath.style.display = 'none';
-  setupFolderBtn.textContent = '📁 Choose folder…';
+  setupFolderBtn.textContent = 'Choose folder…';
   setupAboutCount.textContent = '0 / 200';
   setupStartBtn.disabled = true;
-  showStep('picking');
+  showStep('annotating');
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 applyDockOffset();
-showStep('picking');
+showStep('annotating');
 setPickerLoading();
 updateSetupState();
 window.addEventListener('resize', applyDockOffset);
