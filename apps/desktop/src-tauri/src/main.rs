@@ -583,25 +583,36 @@ fn take_silent_screenshot_cropped(
     crop_width: Option<u32>,
     crop_height: Option<u32>,
 ) -> Result<String, String> {
-    let x = crop_x.unwrap_or(0);
-    let y = crop_y.unwrap_or(0);
+    let crop_region = match (crop_x, crop_y, crop_width, crop_height) {
+        (Some(x), Some(y), Some(width), Some(height)) if width > 0 && height > 0 => {
+            Some((x, y, width, height))
+        }
+        _ => None,
+    };
     log_backend(
         "screenshot.silent.start",
-        format!(
-            "mode=screencapture crop_x={} crop_y={} crop_w={:?} crop_h={:?}",
-            x, y, crop_width, crop_height
-        ),
+        match crop_region {
+            Some((x, y, width, height)) => {
+                format!("mode=screencapture region x={x} y={y} width={width} height={height}")
+            }
+            None => "mode=screencapture full_screen".to_string(),
+        },
     );
 
-    // Use macOS screencapture command to bypass overlay rendering issues
-    let temp_path = PathBuf::from(format!("/tmp/debugr_screenshot_{}.png", SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis()));
+    let temp_path = PathBuf::from(format!(
+        "/tmp/debugr_screenshot_{}.png",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    ));
 
-    // Capture full screen to /tmp
-    let status = Command::new("screencapture")
-        .arg("-x")  // Don't play sound
+    let mut cmd = Command::new("screencapture");
+    cmd.arg("-x");
+    if let Some((x, y, width, height)) = crop_region {
+        cmd.arg("-R").arg(format!("{x},{y},{width},{height}"));
+    }
+    let status = cmd
         .arg(&temp_path)
         .status()
         .map_err(|e| format!("screencapture command failed: {e}"))?;
@@ -614,63 +625,9 @@ fn take_silent_screenshot_cropped(
         return Err("screencapture did not create output file".into());
     }
 
-    // Read the PNG
-    let full_png_bytes = fs::read(&temp_path)
+    // Read the PNG (no decoding/cropping/re-encoding - just use as-is)
+    let png_bytes = fs::read(&temp_path)
         .map_err(|e| format!("Failed to read screenshot: {e}"))?;
-
-    // Decode PNG, crop if needed, and re-encode
-    let png_bytes = if let (Some(w), Some(h)) = (crop_width, crop_height) {
-        // Decode the PNG
-        let decoder = png::Decoder::new(&full_png_bytes[..]);
-        let mut reader = decoder
-            .read_info()
-            .map_err(|e| format!("PNG decode failed: {e}"))?;
-
-        // Extract info fields before using reader mutably
-        let raw_bytes = reader.info().raw_bytes();
-        let color_type = reader.info().color_type;
-        let bit_depth = reader.info().bit_depth;
-        let full_width = reader.info().width as usize;
-
-        let mut img_data = vec![0; raw_bytes as usize];
-        reader.next_frame(&mut img_data)
-            .map_err(|e| format!("PNG frame read failed: {e}"))?;
-
-        let crop_x_usize = x as usize;
-        let crop_y_usize = y as usize;
-        let crop_w = (w as usize).min(full_width.saturating_sub(crop_x_usize));
-        let crop_h = h as usize;
-
-        // Crop the RGBA data
-        let bytes_per_pixel = 4; // RGBA
-        let mut cropped = vec![0u8; crop_w * crop_h * bytes_per_pixel];
-        for row in 0..crop_h {
-            let src_offset = ((crop_y_usize + row) * full_width + crop_x_usize) * bytes_per_pixel;
-            let dst_offset = row * crop_w * bytes_per_pixel;
-            if src_offset + crop_w * bytes_per_pixel <= img_data.len() {
-                cropped[dst_offset..dst_offset + crop_w * bytes_per_pixel]
-                    .copy_from_slice(&img_data[src_offset..src_offset + crop_w * bytes_per_pixel]);
-            }
-        }
-
-        // Re-encode to PNG
-        let out = {
-            let mut out = Vec::new();
-            {
-                let mut enc = png::Encoder::new(&mut out, crop_w as u32, crop_h as u32);
-                enc.set_color(color_type);
-                enc.set_depth(bit_depth);
-                let mut writer = enc.write_header()
-                    .map_err(|e| format!("PNG encode header failed: {e}"))?;
-                writer.write_image_data(&cropped)
-                    .map_err(|e| format!("PNG encode data failed: {e}"))?;
-            }
-            out
-        };
-        out
-    } else {
-        full_png_bytes
-    };
 
     // Clean up temp file
     let _ = fs::remove_file(&temp_path);
@@ -771,36 +728,18 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn capture_screenshot_for_annotation(
-    app: AppHandle,
     crop_x: Option<u32>,
     crop_y: Option<u32>,
     crop_width: Option<u32>,
     crop_height: Option<u32>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     log_backend("overlay.capture.user_ready", "capturing_on_demand");
-
-    let app_clone = app.clone();
-    std::thread::spawn(move || {
-        match take_silent_screenshot_cropped(crop_x, crop_y, crop_width, crop_height) {
-            Ok(data_url) => {
-                log_backend(
-                    "overlay.capture.success",
-                    format!("data_url_len={}", data_url.len()),
-                );
-                if let Some(overlay) = app_clone.get_webview_window("overlay") {
-                    let _ = overlay.emit("set-screenshot", data_url);
-                }
-            }
-            Err(e) => {
-                log_backend("overlay.capture.failed", e.clone());
-                if let Some(overlay) = app_clone.get_webview_window("overlay") {
-                    let _ = overlay.emit("capture-screenshot-failed", e);
-                }
-            }
-        }
-    });
-
-    Ok(())
+    let data_url = take_silent_screenshot_cropped(crop_x, crop_y, crop_width, crop_height)?;
+    log_backend(
+        "overlay.capture.success",
+        format!("data_url_len={}", data_url.len()),
+    );
+    Ok(data_url)
 }
 
 #[tauri::command]
@@ -815,9 +754,8 @@ fn suspend_overlay(app: AppHandle) -> Result<(), String> {
     } else {
         log_backend("overlay.suspend.not_found", "overlay window not found");
     }
-    // Wait longer to ensure the window has fully hidden and display is completely updated on macOS
-    // macOS compositing can be asynchronous, so we need a substantial wait
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    // Give macOS compositing a brief moment to remove the overlay before capture.
+    std::thread::sleep(std::time::Duration::from_millis(120));
     Ok(())
 }
 

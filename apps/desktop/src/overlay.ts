@@ -49,9 +49,6 @@ let annotations: Annotation[] = [];
 let activeTool: 'select' | 'pin' | 'region' = 'region';
 let selectedId: string | null = null;
 let screenshotCaptured = false;
-
-// Promise that resolves when screenshot is ready (set by set-screenshot event listener)
-let screenshotReadyResolve: (() => void) | null = null;
 const debugLog: string[] = [];
 
 function addDebugLog(msg: string) {
@@ -59,20 +56,6 @@ function addDebugLog(msg: string) {
   debugLog.push(entry);
   console.info(entry);
   localStorage.setItem('debugr-overlay-debug', JSON.stringify(debugLog.slice(-50)));
-}
-
-function waitForScreenshot(): Promise<void> {
-  return new Promise((resolve) => {
-    screenshotReadyResolve = resolve;
-    // Timeout after 5 seconds in case event never arrives
-    setTimeout(() => {
-      if (screenshotReadyResolve) {
-        addDebugLog('waitForScreenshot timeout - proceeding without screenshot');
-        screenshotReadyResolve();
-        screenshotReadyResolve = null;
-      }
-    }, 5000);
-  });
 }
 
 // session context chosen during picking/setup
@@ -232,6 +215,13 @@ const setupNameEl    = document.getElementById('setup-name') as HTMLInputElement
 const setupAboutEl   = document.getElementById('setup-about') as HTMLTextAreaElement;
 const setupAboutCount = document.getElementById('setup-about-count')!;
 const setupGithubEl  = document.getElementById('setup-github') as HTMLInputElement;
+
+function applyScreenshotDataUrl(dataUrl: string) {
+  currentScreenshotDataUrl = dataUrl || '';
+  screenshotBg.style.backgroundImage = currentScreenshotDataUrl
+    ? `url("${currentScreenshotDataUrl}")`
+    : '';
+}
 const setupFolderBtn = document.getElementById('setup-folder-btn') as HTMLButtonElement;
 const setupFolderPath = document.getElementById('setup-folder-path')!;
 const setupStartBtn = document.getElementById('setup-start') as HTMLButtonElement;
@@ -658,24 +648,20 @@ async function placePin(x: number, y: number) {
     screenshotCaptured = true;
     setToast('Capturing screen...');
     try {
-      // Temporarily hide overlay to capture actual screen content
-      // suspend_overlay waits 200ms internally to ensure window is fully hidden
+      // Hide the overlay briefly so the native capture sees the underlying app.
       await invoke('suspend_overlay');
 
       // Define crop region: 120x60 box centered on pin
       const cropBox = clampBox({ left: x - 60, top: y - 30, width: 120, height: 60 });
       addDebugLog(`placePin: requesting screenshot crop(${Math.floor(cropBox.left)}, ${Math.floor(cropBox.top)}, ${Math.floor(cropBox.width)}, ${Math.floor(cropBox.height)})`);
-      await invoke('capture_screenshot_for_annotation', {
+      const dataUrl = await invoke<string>('capture_screenshot_for_annotation', {
         cropX: Math.floor(cropBox.left),
         cropY: Math.floor(cropBox.top),
         cropWidth: Math.floor(cropBox.width),
         cropHeight: Math.floor(cropBox.height),
       });
-
-      // Wait for screenshot to be ready before resuming overlay
-      addDebugLog('placePin: waiting for screenshot event');
-      await waitForScreenshot();
-      addDebugLog('placePin: screenshot ready, resuming overlay');
+      addDebugLog(`placePin: screenshot captured len=${dataUrl.length}`);
+      applyScreenshotDataUrl(dataUrl);
 
       // Restore overlay after screenshot is captured
       await invoke('resume_overlay');
@@ -715,22 +701,18 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
     setToast('Capturing screen...');
     try {
       addDebugLog('placeRegion: suspending overlay');
-      // Temporarily hide overlay to capture actual screen content
-      // suspend_overlay waits 200ms internally to ensure window is fully hidden
+      // Hide the overlay briefly so the native capture sees the underlying app.
       await invoke('suspend_overlay');
 
       addDebugLog(`placeRegion: requesting screenshot crop(${Math.floor(box.left)}, ${Math.floor(box.top)}, ${Math.floor(box.width)}, ${Math.floor(box.height)})`);
-      await invoke('capture_screenshot_for_annotation', {
+      const dataUrl = await invoke<string>('capture_screenshot_for_annotation', {
         cropX: Math.floor(box.left),
         cropY: Math.floor(box.top),
         cropWidth: Math.floor(box.width),
         cropHeight: Math.floor(box.height),
       });
-
-      // Wait for screenshot to be ready before resuming overlay
-      addDebugLog('placeRegion: waiting for screenshot event');
-      await waitForScreenshot();
-      addDebugLog('placeRegion: screenshot ready, resuming overlay');
+      addDebugLog(`placeRegion: screenshot captured len=${dataUrl.length}`);
+      applyScreenshotDataUrl(dataUrl);
 
       // Restore overlay after screenshot is captured
       await invoke('resume_overlay');
@@ -1136,19 +1118,12 @@ function resizeBox(b: { left: number; top: number; width: number; height: number
 async function initializeEventListeners() {
   // Screenshot from backend - MUST be registered before screenshot capture starts
   await listen<string>('set-screenshot', event => {
-    currentScreenshotDataUrl = event.payload || '';
-    addDebugLog(`SET-SCREENSHOT EVENT: payload=${Boolean(event.payload)}, len=${currentScreenshotDataUrl.length}`);
+    addDebugLog(`SET-SCREENSHOT EVENT: payload=${Boolean(event.payload)}, len=${event.payload?.length ?? 0}`);
     if (event.payload) {
-      addDebugLog('Setting backgroundImage on #screenshot-bg');
-      screenshotBg.style.backgroundImage = `url("${event.payload}")`;
+      addDebugLog('Applying screenshot payload to #screenshot-bg');
+      applyScreenshotDataUrl(event.payload);
     } else {
       addDebugLog('ERROR: set-screenshot event has no payload!');
-    }
-    // Resolve any pending screenshot wait
-    if (screenshotReadyResolve) {
-      addDebugLog('Resolving waitForScreenshot promise');
-      screenshotReadyResolve();
-      screenshotReadyResolve = null;
     }
   });
 
