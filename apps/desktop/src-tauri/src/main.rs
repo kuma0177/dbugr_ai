@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::{
+    ffi::{c_char, c_void, CStr},
     fs::{self, OpenOptions},
     io::Write as _,
     path::PathBuf,
@@ -71,6 +72,20 @@ struct OverlayLaunchPayload {
 unsafe extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
     fn CGRequestScreenCaptureAccess() -> bool;
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn debugr_capture_region_png_points(
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        out_bytes: *mut *mut u8,
+        out_len: *mut usize,
+        out_error: *mut *mut c_char,
+    ) -> bool;
+    fn debugr_capture_region_png_free(ptr: *mut c_void);
 }
 
 fn temp_capture_path() -> PathBuf {
@@ -559,6 +574,54 @@ fn encode_png_bytes_to_data_url(bytes: &[u8]) -> String {
     format!("data:image/png;base64,{body}")
 }
 
+#[cfg(target_os = "macos")]
+fn capture_screencapturekit_png_bytes_in_points(
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<Vec<u8>, String> {
+    let mut out_bytes: *mut u8 = std::ptr::null_mut();
+    let mut out_len: usize = 0;
+    let mut out_error: *mut c_char = std::ptr::null_mut();
+
+    let ok = unsafe {
+        debugr_capture_region_png_points(
+            x,
+            y,
+            width,
+            height,
+            &mut out_bytes,
+            &mut out_len,
+            &mut out_error,
+        )
+    };
+
+    let error = if out_error.is_null() {
+        None
+    } else {
+        let message = unsafe { CStr::from_ptr(out_error) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { debugr_capture_region_png_free(out_error as *mut c_void) };
+        Some(message)
+    };
+
+    if !ok {
+        return Err(error.unwrap_or_else(|| "ScreenCaptureKit capture failed".to_string()));
+    }
+
+    if out_bytes.is_null() || out_len == 0 {
+        return Err(error.unwrap_or_else(|| {
+            "ScreenCaptureKit capture returned an empty PNG buffer".to_string()
+        }));
+    }
+
+    let bytes = unsafe { std::slice::from_raw_parts(out_bytes, out_len) }.to_vec();
+    unsafe { debugr_capture_region_png_free(out_bytes as *mut c_void) };
+    Ok(bytes)
+}
+
 fn capture_native_png_bytes() -> Result<Vec<u8>, String> {
     capture_native_png_bytes_cropped(0, 0, None, None)
 }
@@ -690,15 +753,19 @@ fn take_silent_screenshot_cropped(
             .as_millis()
     ));
 
-    let mut cmd = Command::new("screencapture");
-    cmd.arg("-x");
-    if let Some((x, y, width, height)) = crop_region {
-        cmd.arg("-R").arg(format!("{x},{y},{width},{height}"));
-    }
-    let output = cmd
-        .arg(&temp_path)
-        .output()
-        .map_err(|e| format!("screencapture command failed: {e}"))?;
+    let run_capture =
+        |region: Option<(u32, u32, u32, u32)>| -> Result<std::process::Output, String> {
+            let mut cmd = Command::new("screencapture");
+            cmd.arg("-x");
+            if let Some((x, y, width, height)) = region {
+                cmd.arg("-R").arg(format!("{x},{y},{width},{height}"));
+            }
+            cmd.arg(&temp_path)
+                .output()
+                .map_err(|e| format!("screencapture command failed: {e}"))
+        };
+
+    let output = run_capture(crop_region)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -707,11 +774,42 @@ fn take_silent_screenshot_cropped(
         } else {
             stderr.clone()
         };
-        log_backend(
-            "screenshot.silent.failed",
-            format!("mode=screencapture detail={detail}"),
-        );
-        return Err(format!("screencapture failed: {detail}"));
+
+        if let Some((x, y, width, height)) = crop_region {
+            log_backend(
+                "screenshot.silent.region_failed_fallback_fullscreen",
+                format!(
+                    "mode=screencapture region_x={x} region_y={y} region_width={width} region_height={height} detail={detail}"
+                ),
+            );
+
+            let fallback_output = run_capture(None)?;
+            if !fallback_output.status.success() {
+                let fallback_stderr =
+                    String::from_utf8_lossy(&fallback_output.stderr).trim().to_string();
+                let fallback_detail = if fallback_stderr.is_empty() {
+                    format!("exit_code={:?}", fallback_output.status.code())
+                } else {
+                    fallback_stderr.clone()
+                };
+                log_backend(
+                    "screenshot.silent.failed",
+                    format!("mode=screencapture fallback=full_screen detail={fallback_detail}"),
+                );
+                return Err(format!("screencapture failed after fallback: {fallback_detail}"));
+            }
+
+            log_backend(
+                "screenshot.silent.fallback_fullscreen_success",
+                "mode=screencapture".to_string(),
+            );
+        } else {
+            log_backend(
+                "screenshot.silent.failed",
+                format!("mode=screencapture detail={detail}"),
+            );
+            return Err(format!("screencapture failed: {detail}"));
+        }
     }
 
     if !temp_path.exists() {
@@ -892,14 +990,18 @@ fn capture_screenshot_for_annotation(
         .max(0.0) as u32;
     let crop_width = (width * layout.scale_factor).floor().max(1.0) as u32;
     let crop_height = (height * layout.scale_factor).floor().max(1.0) as u32;
+    let global_left_points = layout.inner_phys_x as f64 / layout.scale_factor + viewport_left;
+    let global_top_points = layout.inner_phys_y as f64 / layout.scale_factor + viewport_top;
 
     log_backend(
         "overlay.capture.params",
         format!(
-            "viewport_left={viewport_left} viewport_top={viewport_top} width={width} height={height} inner_phys=({}, {}) sf={} global_phys_xy=({}, {}) wh_phys=({}, {})",
+            "viewport_left={viewport_left} viewport_top={viewport_top} width={width} height={height} inner_phys=({}, {}) sf={} global_points=({}, {}) size_points=({width}, {height}) global_phys_xy=({}, {}) wh_phys=({}, {})",
             layout.inner_phys_x,
             layout.inner_phys_y,
             layout.scale_factor,
+            global_left_points,
+            global_top_points,
             crop_x,
             crop_y,
             crop_width,
@@ -907,17 +1009,25 @@ fn capture_screenshot_for_annotation(
         ),
     );
     log_backend("overlay.capture.user_ready", "capturing_on_demand");
-    let data_url = take_silent_screenshot_cropped(
+
+    #[cfg(target_os = "macos")]
+    let capture_result =
+        capture_screencapturekit_png_bytes_in_points(global_left_points, global_top_points, width, height);
+
+    #[cfg(not(target_os = "macos"))]
+    let capture_result = take_silent_screenshot_cropped(
         Some(crop_x),
         Some(crop_y),
         Some(crop_width),
         Some(crop_height),
     )
-    .map_err(|e| {
+    .map(|data_url| decode_png_or_jpeg_data_url(&data_url).unwrap_or_default());
+
+    let png_bytes = capture_result.map_err(|e| {
         log_backend(
             "overlay.capture.failed",
             format!(
-                "error={e} viewport_left={viewport_left} viewport_top={viewport_top} crop_logical=({crop_x},{crop_y},{crop_width}x{crop_height}) inner_phys=({}, {}) sf={}",
+                "error={e} viewport_left={viewport_left} viewport_top={viewport_top} crop_points=({global_left_points},{global_top_points},{width}x{height}) crop_phys=({crop_x},{crop_y},{crop_width}x{crop_height}) inner_phys=({}, {}) sf={}",
                 layout.inner_phys_x,
                 layout.inner_phys_y,
                 layout.scale_factor
@@ -925,9 +1035,10 @@ fn capture_screenshot_for_annotation(
         );
         e
     })?;
+    let data_url = encode_png_bytes_to_data_url(&png_bytes);
     log_backend(
         "overlay.capture.success",
-        format!("data_url_len={}", data_url.len()),
+        format!("mode=screencapturekit data_url_len={} png_bytes={}", data_url.len(), png_bytes.len()),
     );
     Ok(data_url)
 }

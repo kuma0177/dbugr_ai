@@ -782,6 +782,7 @@ name = "feedbackagent-desktop"
 version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
+ "cc",
  "core-graphics",
  "dirs-next",
  "objc",
