@@ -60,6 +60,43 @@ function addDebugLog(msg: string) {
   void invoke('append_overlay_debug_log', { scope: 'overlay', message: entry }).catch(() => {});
 }
 
+/** Structured handoff logging for annotation → crop → session preview debugging. */
+function logAnnotationPipeline(phase: string, detail: Record<string, string | number | boolean | null>) {
+  const tail = Object.entries(detail)
+    .map(([k, v]) => (v === null ? `${k}=null` : `${k}=${v}`))
+    .join(' ');
+  addDebugLog(`annotation.pipeline ${phase}${tail ? ` ${tail}` : ''}`);
+}
+
+function viewportLayoutSnapshot(): Record<string, number> {
+  const vv = window.visualViewport;
+  const out: Record<string, number> = {
+    innerW: window.innerWidth,
+    innerH: window.innerHeight,
+    dpr: window.devicePixelRatio,
+    screenX: window.screenX,
+    screenY: window.screenY,
+  };
+  if (vv) {
+    out.vvW = vv.width;
+    out.vvH = vv.height;
+    out.vvOffX = vv.offsetLeft;
+    out.vvOffY = vv.offsetTop;
+    out.vvScale = vv.scale;
+  }
+  return out;
+}
+
+function describeScreenshotRef(ref: string): { kind: string; len: number; head: string } {
+  const len = ref.length;
+  const head = ref.slice(0, Math.min(48, len)).replace(/\s+/g, ' ');
+  if (!ref) return { kind: 'empty', len: 0, head: '' };
+  if (ref.startsWith('data:image/png')) return { kind: 'data_png', len, head };
+  if (ref.startsWith('data:image/jpeg')) return { kind: 'data_jpeg', len, head };
+  if (ref.startsWith('/') || /^[A-Za-z]:[\\/]/.test(ref)) return { kind: 'abs_path', len, head };
+  return { kind: 'other', len, head };
+}
+
 // session context chosen during picking/setup
 let targetSessionId: string | null = null;   // null → create new
 let newSessionName = '';
@@ -223,6 +260,12 @@ function applyScreenshotDataUrl(dataUrl: string) {
   screenshotBg.style.backgroundImage = currentScreenshotDataUrl
     ? `url("${currentScreenshotDataUrl}")`
     : '';
+  const d = describeScreenshotRef(currentScreenshotDataUrl);
+  logAnnotationPipeline('screenshot_applied_to_overlay', {
+    kind: d.kind,
+    len: d.len,
+    has_bg: Boolean(currentScreenshotDataUrl),
+  });
 }
 
 const setupFolderBtn = document.getElementById('setup-folder-btn') as HTMLButtonElement;
@@ -613,15 +656,36 @@ async function saveAll() {
   toolSaveBtn.textContent = 'Opening…';
   try {
     let screenshotForPayload = '';
+    const beforePersist = describeScreenshotRef(currentScreenshotDataUrl);
+    logAnnotationPipeline('finish_persist_branch', {
+      screenshotCaptured,
+      current_kind: beforePersist.kind,
+      current_len: beforePersist.len,
+      will_try_disk_persist: currentScreenshotDataUrl.startsWith('data:image/'),
+    });
+
     if (currentScreenshotDataUrl.startsWith('data:image/')) {
       try {
         screenshotForPayload = await invoke<string>('persist_annotation_screenshot', {
           dataUrl: currentScreenshotDataUrl,
         });
+        const after = describeScreenshotRef(screenshotForPayload);
+        logAnnotationPipeline('finish_persist_ok', {
+          result_kind: after.kind,
+          result_len: after.len,
+        });
       } catch (persistErr) {
         console.warn('[Debugr] persist_annotation_screenshot failed; falling back to inline payload', persistErr);
         screenshotForPayload = currentScreenshotDataUrl;
+        logAnnotationPipeline('finish_persist_fallback_inline', {
+          err: String(persistErr).slice(0, 200),
+          inline_len: currentScreenshotDataUrl.length,
+        });
       }
+    } else {
+      logAnnotationPipeline('finish_skip_persist', {
+        reason: !currentScreenshotDataUrl ? 'no_current_screenshot' : 'not_data_image_url',
+      });
     }
 
     // Snapshot data BEFORE clearing the canvas (resetAnnotationCanvas sets annotations = [])
@@ -635,22 +699,33 @@ async function saveAll() {
       screenshotUrl: screenshotForPayload,
     };
 
+    const shotOut = describeScreenshotRef(snapshot.screenshotUrl);
     console.info('[debugr-ui]', JSON.stringify({
       event: 'overlay_save_all',
       annotationCount: snapshot.annotations.length,
       hasScreenshot: Boolean(snapshot.screenshotUrl),
+      screenshot_kind: shotOut.kind,
+      screenshot_len: shotOut.len,
       targetSessionId: snapshot.targetSessionId ?? null,
     }));
+    logAnnotationPipeline('finish_invoke_finish_annotations', {
+      annotation_count: snapshot.annotations.length,
+      screenshot_kind: shotOut.kind,
+      screenshot_len: shotOut.len,
+      first_ann_id: snapshot.annotations[0]?.id ?? 'none',
+    });
 
     // Clear canvas immediately so rectangles vanish the moment user clicks Finish
     resetAnnotationCanvas();
 
     // Route through Rust backend — relays to main window without permission restrictions
     await invoke('finish_annotations', { payload: snapshot });
+    logAnnotationPipeline('finish_rust_command_ok', { annotation_count: snapshot.annotations.length });
 
     // Full state reset after command resolves
     resetState();
   } catch (err) {
+    logAnnotationPipeline('save_all_failed', { error: String(err).slice(0, 400) });
     console.error('[Debugr] Error in saveAll():', err);
     setToast(`Error: ${err instanceof Error ? err.message : String(err)}`);
     updateAnnotatingHints();
@@ -714,8 +789,21 @@ async function placePin(x: number, y: number) {
     setToast('Capturing screen...');
     let dataUrl: string | null = null;
     try {
+      const layout = viewportLayoutSnapshot();
+      logAnnotationPipeline('place_pin_capture_start', {
+        ann_id: ann.id,
+        pin_x: x,
+        pin_y: y,
+        ...layout,
+      });
       await invoke('suspend_overlay_for_capture');
       const cropBox = clampBox({ left: x - 60, top: y - 30, width: 120, height: 60 });
+      logAnnotationPipeline('place_pin_crop_box', {
+        left: cropBox.left,
+        top: cropBox.top,
+        width: cropBox.width,
+        height: cropBox.height,
+      });
       addDebugLog(`placePin: requesting screenshot viewport(${cropBox.left}, ${cropBox.top}, ${cropBox.width}, ${cropBox.height})`);
       dataUrl = await invoke<string>('capture_screenshot_for_annotation', {
         viewportLeft: cropBox.left,
@@ -723,12 +811,16 @@ async function placePin(x: number, y: number) {
         width: cropBox.width,
         height: cropBox.height,
       });
+      const got = describeScreenshotRef(dataUrl);
+      logAnnotationPipeline('place_pin_capture_ok', { data_kind: got.kind, data_len: got.len });
       addDebugLog(`placePin: screenshot captured len=${dataUrl.length}`);
     } catch (err) {
+      logAnnotationPipeline('place_pin_capture_failed', { error: String(err).slice(0, 300) });
       addDebugLog(`placePin capture failed: ${err}`);
       setToast(`Screenshot unavailable — you can still add your note. (${err})`);
     } finally {
       await invoke('clear_annotation_capture_overlay').catch(() => {});
+      logAnnotationPipeline('place_pin_capture_cleared', {});
       captureInProgress = false;
     }
     if (dataUrl) {
@@ -772,9 +864,24 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
     setToast('Capturing screen...');
     let dataUrl: string | null = null;
     try {
+      const layout = viewportLayoutSnapshot();
+      logAnnotationPipeline('place_region_capture_start', {
+        ann_id: ann.id,
+        raw_left: x,
+        raw_top: y,
+        raw_w: w,
+        raw_h: h,
+        ...layout,
+      });
       addDebugLog('placeRegion: suspending overlay');
       await invoke('suspend_overlay_for_capture');
 
+      logAnnotationPipeline('place_region_crop_box', {
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: box.height,
+      });
       addDebugLog(`placeRegion: requesting screenshot viewport(${box.left}, ${box.top}, ${box.width}, ${box.height})`);
       dataUrl = await invoke<string>('capture_screenshot_for_annotation', {
         viewportLeft: box.left,
@@ -782,12 +889,16 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
         width: box.width,
         height: box.height,
       });
+      const got = describeScreenshotRef(dataUrl);
+      logAnnotationPipeline('place_region_capture_ok', { data_kind: got.kind, data_len: got.len });
       addDebugLog(`placeRegion: screenshot captured len=${dataUrl.length}`);
     } catch (err) {
+      logAnnotationPipeline('place_region_capture_failed', { error: String(err).slice(0, 300) });
       addDebugLog(`placeRegion capture failed: ${err}`);
       setToast(`Screenshot unavailable — you can still add your note. (${err})`);
     } finally {
       await invoke('clear_annotation_capture_overlay').catch(() => {});
+      logAnnotationPipeline('place_region_capture_cleared', {});
       captureInProgress = false;
     }
     if (dataUrl) {
@@ -1203,11 +1314,17 @@ function resizeBox(b: { left: number; top: number; width: number; height: number
 async function initializeEventListeners() {
   // Screenshot from backend - MUST be registered before screenshot capture starts
   await listen<string>('set-screenshot', event => {
-    addDebugLog(`SET-SCREENSHOT EVENT: payload=${Boolean(event.payload)}, len=${event.payload?.length ?? 0}`);
+    const len = event.payload?.length ?? 0;
+    addDebugLog(`SET-SCREENSHOT EVENT: payload=${Boolean(event.payload)}, len=${len}`);
     if (event.payload) {
       addDebugLog('Applying screenshot payload to #screenshot-bg');
+      logAnnotationPipeline('precapture_fullscreen_applied', {
+        source: 'set_screenshot_event',
+        payload_len: len,
+      });
       applyScreenshotDataUrl(event.payload);
     } else {
+      logAnnotationPipeline('precapture_fullscreen_missing', { source: 'set_screenshot_event' });
       addDebugLog('ERROR: set-screenshot event has no payload!');
     }
   });

@@ -2331,12 +2331,22 @@ async function listenForAnnotations() {
     const payloadGithubRepo = event.payload.githubRepo?.trim() || '';
     const rawShot = event.payload.screenshotUrl?.trim();
 
+    const rawShotKind = !rawShot
+      ? 'empty'
+      : rawShot.startsWith('data:image/')
+        ? 'data_url'
+        : isAbsoluteFilesystemScreenshotRef(rawShot)
+          ? 'abs_path_pending'
+          : 'other';
+
     logUi('workspace_annotations_saved_event', {
       targetSessionId: event.payload.targetSessionId ?? null,
       annotationCount: annotations.length,
       hasLocalFolder: Boolean(event.payload.localFolder),
       hasGithubRepo: Boolean(event.payload.githubRepo),
       hasScreenshot: Boolean(rawShot),
+      rawScreenshotKind: rawShotKind,
+      rawScreenshotChars: rawShot?.length ?? 0,
     });
 
     const captureId = uid('capture');
@@ -2350,6 +2360,11 @@ async function listenForAnnotations() {
           pendingPath: rawShot,
         });
       } catch (err) {
+        logUi('workspace_finalize_screenshot_failed', {
+          captureId,
+          pendingPathChars: rawShot.length,
+          error: String(err).slice(0, 300),
+        });
         console.warn('[Debugr] finalize_capture_screenshot failed:', err);
         screenshotStored = rawShot;
       }
@@ -2365,6 +2380,20 @@ async function listenForAnnotations() {
       timestamp: new Date().toISOString(),
       screenshotUrl: screenshotStored,
     };
+
+    const storedDesc = screenshotStored
+      ? !screenshotStored.startsWith('data:') && isAbsoluteFilesystemScreenshotRef(screenshotStored)
+        ? 'finalized_path'
+        : screenshotStored.startsWith('data:image/')
+          ? 'inline_data_url'
+          : 'other'
+      : 'none';
+    logUi('workspace_capture_materialized', {
+      captureId,
+      storedScreenshotKind: storedDesc,
+      storedScreenshotChars: screenshotStored?.length ?? 0,
+      preview_img_usable: Boolean(screenshotImgSrc(screenshotStored)),
+    });
 
     const targetSessionId = event.payload.targetSessionId ?? null;
     if (targetSessionId && sessions.find((session) => session.id === targetSessionId)) {

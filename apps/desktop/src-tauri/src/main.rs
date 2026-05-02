@@ -705,8 +705,12 @@ fn take_silent_screenshot_cropped(
         let detail = if stderr.is_empty() {
             format!("exit_code={:?}", output.status.code())
         } else {
-            stderr
+            stderr.clone()
         };
+        log_backend(
+            "screenshot.silent.failed",
+            format!("mode=screencapture detail={detail}"),
+        );
         return Err(format!("screencapture failed: {detail}"));
     }
 
@@ -773,15 +777,35 @@ fn finish_annotations(
         .and_then(|a| a.as_array())
         .map(|a| a.len())
         .unwrap_or(0);
-    let shot_chars = payload
-        .get("screenshotUrl")
-        .and_then(|u| u.as_str())
-        .map(|s| s.len())
-        .unwrap_or(0);
+    let shot_raw = payload.get("screenshotUrl").and_then(|u| u.as_str());
+    let shot_chars = shot_raw.map(|s| s.len()).unwrap_or(0);
+    let shot_kind = shot_raw
+        .map(|s| {
+            let t = s.trim();
+            if t.is_empty() {
+                "empty"
+            } else if t.starts_with("data:image/png") {
+                "data_png"
+            } else if t.starts_with("data:image/jpeg") {
+                "data_jpeg"
+            } else if t.starts_with('/') || t.len() > 2 && t.chars().nth(1) == Some(':') {
+                "abs_path"
+            } else {
+                "other"
+            }
+        })
+        .unwrap_or("missing_field");
+    let first_ann_id = payload
+        .get("annotations")
+        .and_then(|a| a.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|o| o.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     log_backend(
         "workspace.annotations.finish",
         format!(
-            "annotations={ann_n} screenshot_url_chars={shot_chars} payload_keys={}",
+            "annotations={ann_n} screenshot_kind={shot_kind} screenshot_url_chars={shot_chars} first_ann_id={first_ann_id} payload_keys={}",
             payload.as_object().map(|o| o.len()).unwrap_or(0)
         ),
     );
@@ -789,6 +813,10 @@ fn finish_annotations(
     if let Some(main) = app.get_webview_window("main") {
         main.emit("annotations-saved", &payload)
             .map_err(|e| format!("Failed to emit annotations-saved: {e}"))?;
+        log_backend(
+            "workspace.annotations.emit_ok",
+            format!("annotations={ann_n} screenshot_kind={shot_kind} screenshot_url_chars={shot_chars}"),
+        );
     } else {
         return Err("Main window not found".into());
     }
@@ -883,7 +911,19 @@ fn capture_screenshot_for_annotation(
         Some(crop_y),
         Some(crop_width),
         Some(crop_height),
-    )?;
+    )
+    .map_err(|e| {
+        log_backend(
+            "overlay.capture.failed",
+            format!(
+                "error={e} viewport_left={viewport_left} viewport_top={viewport_top} crop_logical=({crop_x},{crop_y},{crop_width}x{crop_height}) inner_phys=({}, {}) sf={}",
+                layout.inner_phys_x,
+                layout.inner_phys_y,
+                layout.scale_factor
+            ),
+        );
+        e
+    })?;
     log_backend(
         "overlay.capture.success",
         format!("data_url_len={}", data_url.len()),
@@ -1061,7 +1101,19 @@ fn decode_png_or_jpeg_data_url(data_url: &str) -> Result<Vec<u8>, String> {
 /// Write overlay screenshot bytes to disk before `finish_annotations` so the IPC payload stays tiny.
 #[tauri::command]
 fn persist_annotation_screenshot(data_url: String) -> Result<String, String> {
-    let bytes = decode_png_or_jpeg_data_url(&data_url)?;
+    let url_len = data_url.len();
+    let prefix: String = data_url.chars().take(56).collect();
+    log_backend(
+        "workspace.screenshot.persist_start",
+        format!("data_url_chars={url_len} prefix={prefix}"),
+    );
+    let bytes = decode_png_or_jpeg_data_url(&data_url).map_err(|e| {
+        log_backend(
+            "workspace.screenshot.persist_decode_failed",
+            format!("data_url_chars={url_len} error={e}"),
+        );
+        e
+    })?;
     let dir = debugr_screenshots_dir();
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create screenshots dir: {e}"))?;
 
@@ -1074,10 +1126,15 @@ fn persist_annotation_screenshot(data_url: String) -> Result<String, String> {
         std::process::id()
     );
     let path = dir.join(name);
+    let decoded_len = bytes.len();
     fs::write(&path, bytes).map_err(|e| format!("Failed to write screenshot: {e}"))?;
+    let written = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     log_backend(
         "workspace.screenshot.persist_pending",
-        format!("path={}", path.display()),
+        format!(
+            "path={} written_bytes={written} decoded_input_bytes={decoded_len}",
+            path.display(),
+        ),
     );
     Ok(path.to_string_lossy().to_string())
 }
