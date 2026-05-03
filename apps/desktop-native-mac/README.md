@@ -1,6 +1,6 @@
 # Debugr Native Mac Prototype
 
-This is the native macOS-first prototype for Debugr. It intentionally lives beside the existing Tauri app while we prove the risky native path: source listing, ScreenCaptureKit capture, validation, and debug artifact persistence.
+This is the native macOS-first prototype for Debugr. It intentionally lives beside the existing Tauri app while we prove the risky native path: source listing, ScreenCaptureKit capture, validation, annotation save flow, native session persistence, and provider payload review.
 
 ## Run
 
@@ -33,15 +33,20 @@ Each capture writes a PNG plus a JSON diagnostic file. The app should reject bla
 - Display/window capture through ScreenCaptureKit.
 - Pixel-level blank-image validation.
 - Debug PNG and JSON persistence.
+- Native local session persistence under `~/Library/Application Support/debugr/native-workspace/`.
+- Draft annotation note add / update / delete flow before save.
+- Save captured screenshots into native sessions with durable asset paths.
+- Native workspace panel with saved-session summary and prompt preview.
+- Provider target selector for Claude, Codex, and Cursor with prototype connection state + payload preparation.
 - Screen Recording permission diagnostics.
 - Global shortcut scaffold using Carbon (`Command-Control-Z`).
 
 ## Not Yet Included
 
-- Native annotation overlay.
-- Session persistence parity with `apps/desktop`.
-- Claude/Codex provider settings.
-- Send-to-agent flow.
+- Native overlay drawing/editing over the frozen frame.
+- Full session workspace parity with `apps/desktop`.
+- Real Claude/Codex/Cursor connection plumbing.
+- Real send-to-agent execution and streaming response handling.
 - App bundle/signing/notarization.
 
 Keep `apps/desktop` as the reference implementation until this prototype reaches capture and annotation parity.

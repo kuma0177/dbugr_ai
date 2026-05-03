@@ -24,6 +24,7 @@ interface PickerSession {
   id: string;
   title: string;
   createdAt: string;
+  annotationCount?: number;
 }
 
 interface OverlayLaunchPayload {
@@ -54,7 +55,7 @@ const FINISH_TOOL_LABEL = 'Add to session';
 
 // ── State ────────────────────────────────────────────────────────────────────
 
-type OverlayStep = 'picking' | 'setup' | 'capture-source' | 'annotating';
+type OverlayStep = 'picking' | 'setup' | 'capture-source' | 'annotating' | 'saved';
 type CaptureSourceMode = 'screen' | 'browser' | 'app';
 
 let step: OverlayStep = 'picking';
@@ -118,6 +119,18 @@ let newSessionAbout = '';
 let localFolder: string | null = null;
 let githubRepo = '';
 let currentScreenshotDataUrl = '';
+let pickerSessions: PickerSession[] = [];
+let lastSavedSessionTitle = '';
+let lastSavedAnnotationCount = 0;
+
+function targetSessionAnnotationCount() {
+  if (!targetSessionId) return 0;
+  return pickerSessions.find((session) => session.id === targetSessionId)?.annotationCount ?? 0;
+}
+
+function remainingAnnotationSlots() {
+  return Math.max(0, MAX_ANNOTATIONS - targetSessionAnnotationCount() - annotations.length);
+}
 /** Full-frame PNG from ScreenCaptureKit (display or window); cropping is done in this overlay. */
 let sourceFrameDataUrl: string | null = null;
 /** Where capture-source should return when the user taps Back. */
@@ -227,6 +240,19 @@ root.innerHTML = `
       </div>
     </div>
 
+    <div class="hud-popover" id="hud-saved" style="display:none;">
+      <div class="step-card step-card-hud" id="step-saved">
+        <div class="step-card-title">Added to session</div>
+        <div class="step-card-sub" id="saved-step-sub">Your annotation was saved.</div>
+        <div class="picker-hint" id="saved-step-hint">Open the current session board when you are ready to submit it.</div>
+        <div class="picker-actions saved-actions">
+          <button class="picker-cancel-btn" id="saved-close">Close</button>
+          <button class="picker-cancel-btn" id="saved-more">+ Add more</button>
+          <button class="picker-new-btn" id="saved-open-session">Open session board</button>
+        </div>
+      </div>
+    </div>
+
     <!-- SVG connectors -->
     <svg class="ann-connector" id="connectors" xmlns="http://www.w3.org/2000/svg"></svg>
 
@@ -269,9 +295,12 @@ root.innerHTML = `
 const screenshotBg   = document.getElementById('screenshot-bg')!;
 const screenshotImgEl = document.getElementById('screenshot-img') as HTMLImageElement;
 const hudCaptureEl   = document.getElementById('hud-capture')!;
+const hudSavedEl     = document.getElementById('hud-saved')!;
 const captureListEl  = document.getElementById('capture-list')!;
 const captureStepSubEl = document.getElementById('capture-step-sub')!;
 const captureModeBarEl = document.getElementById('capture-mode-bar')!;
+const savedStepSubEl = document.getElementById('saved-step-sub')!;
+const savedStepHintEl = document.getElementById('saved-step-hint')!;
 const pickerListEl   = document.getElementById('picker-list')!;
 const hudPickerEl    = document.getElementById('hud-picker')!;
 const hudSetupEl     = document.getElementById('hud-setup')!;
@@ -340,17 +369,18 @@ function showStep(s: OverlayStep) {
   hudPickerEl.style.display = s === 'picking' ? 'block' : 'none';
   hudSetupEl.style.display = s === 'setup' ? 'block' : 'none';
   hudCaptureEl.style.display = s === 'capture-source' ? 'block' : 'none';
+  hudSavedEl.style.display = s === 'saved' ? 'block' : 'none';
   stepPickerEl.style.display = s === 'picking' ? 'flex' : 'none';
   stepSetupEl.style.display = s === 'setup' ? 'flex' : 'none';
   root.classList.toggle('cursor-annotating', s === 'annotating');
 
   // During picker/setup phases, allow clicks to pass through to apps behind overlay.
   // During annotation phase, capture mouse events for drawing annotations.
-  if (s === 'picking' || s === 'setup' || s === 'capture-source') {
+  if (s === 'picking' || s === 'setup' || s === 'capture-source' || s === 'saved') {
     // Make overlay transparent to mouse events (clicks pass through to apps)
     root.style.pointerEvents = 'none';
     // But allow interaction with picker/setup UI by setting pointer-events on interactive elements
-    const interactiveEls = root.querySelectorAll('button, input, select, .step-picker, .step-setup, #hud-capture button, #hud-capture .capture-list');
+    const interactiveEls = root.querySelectorAll('button, input, select, .step-picker, .step-setup, #hud-capture button, #hud-capture .capture-list, #hud-saved button');
     interactiveEls.forEach(el => {
       (el as HTMLElement).style.pointerEvents = 'auto';
     });
@@ -358,7 +388,7 @@ function showStep(s: OverlayStep) {
     // During annotation, capture all mouse events for drawing
     root.style.pointerEvents = 'auto';
     // Picker/setup left pointer-events:auto on many buttons; strip those so subtree inherits clean state.
-    [hudPickerEl, hudSetupEl].forEach(container => {
+    [hudPickerEl, hudSetupEl, hudSavedEl].forEach(container => {
       container.querySelectorAll<HTMLElement>('button, input, select, textarea').forEach(el => {
         el.style.removeProperty('pointer-events');
       });
@@ -911,10 +941,20 @@ function updateAnnotatingHints() {
 
 function updateCounter() {
   const n = annotations.length;
+  if (step === 'saved') {
+    return;
+  }
   if (step === 'annotating' && n === 0 && !sourceFrameDataUrl) {
     setToast('Choose a screen or window to snapshot before annotating (capture step).');
+  } else if (targetSessionId && remainingAnnotationSlots() <= 0) {
+    setToast(`"${newSessionName}" is full at ${MAX_ANNOTATIONS} annotations. Start a new session to keep going.`);
   } else if (n > 0) {
-    setToast(`${n} annotation${n > 1 ? 's' : ''} — save each note, then tap Finish below.`);
+    if (targetSessionId) {
+      const remaining = remainingAnnotationSlots();
+      setToast(`${n} new annotation${n > 1 ? 's' : ''} for "${newSessionName}" — ${remaining} slot${remaining === 1 ? '' : 's'} left in this session.`);
+    } else {
+      setToast(`${n} annotation${n > 1 ? 's' : ''} — save each note, then tap Finish below.`);
+    }
   } else {
     setToast('Click anywhere to add an annotation. Right-drag to draw a region.');
   }
@@ -1047,6 +1087,7 @@ function deleteAnnotation(id: string) {
 
 function renderPickerSessions(list: Array<{ id: string; title: string; createdAt: string }>) {
   clearPickerLoadingTimer();
+  pickerSessions = list;
   if (list.length === 0) {
     pickerListEl.innerHTML = '<div class="picker-empty">No past sessions yet. Start a new one to create your first list item.</div>';
     return;
@@ -1055,7 +1096,9 @@ function renderPickerSessions(list: Array<{ id: string; title: string; createdAt
     <button class="picker-session-item" data-id="${s.id}">
       <span class="picker-session-main">
         <span class="picker-session-title">${s.title}</span>
-        <span class="picker-session-sub">Click to append annotations</span>
+        <span class="picker-session-sub">${typeof s.annotationCount === 'number'
+          ? `${s.annotationCount}/${MAX_ANNOTATIONS} annotations saved`
+          : 'Click to append annotations'}</span>
       </span>
       <span class="picker-session-meta">
         <span class="picker-session-time">${relativeTime(s.createdAt)}</span>
@@ -1069,6 +1112,11 @@ function renderPickerSessions(list: Array<{ id: string; title: string; createdAt
       targetSessionId = btn.dataset.id ?? null;
       newSessionName = btn.querySelector('.picker-session-title')?.textContent ?? '';
       newSessionAbout = '';
+      const remaining = remainingAnnotationSlots();
+      if (remaining <= 0) {
+        setToast(`"${newSessionName}" already has the maximum ${MAX_ANNOTATIONS} annotations. Start a new session instead.`);
+        return;
+      }
       void enterAnnotating();
     });
   });
@@ -1203,12 +1251,47 @@ document.getElementById('setup-start')!.addEventListener('click', e => {
   void enterAnnotating();
 });
 
+document.getElementById('saved-close')!.addEventListener('click', e => {
+  e.stopPropagation();
+  void cancelOverlay();
+});
+
+document.getElementById('saved-more')!.addEventListener('click', e => {
+  e.stopPropagation();
+  clearCurrentDraftCaptureState();
+  void showCaptureSourceStep();
+});
+
+document.getElementById('saved-open-session')!.addEventListener('click', async e => {
+  e.stopPropagation();
+  await invoke('hide_overlay');
+  resetState();
+  await invoke('show_session_window');
+});
+
 function updateSetupState() {
   newSessionName = setupNameEl.value.trim();
   newSessionAbout = setupAboutEl.value.trim();
   githubRepo = setupGithubEl.value.trim();
   setupAboutCount.textContent = `${newSessionAbout.length} / 200`;
   setupStartBtn.disabled = !newSessionName || !newSessionAbout;
+}
+
+function clearCurrentDraftCaptureState() {
+  resetAnnotationCanvas();
+  screenshotCaptured = false;
+  currentScreenshotDataUrl = '';
+  applySourceFrameDisplay('');
+  selRectEl.style.display = 'none';
+  toolSaveBtn.disabled = false;
+  toolSaveBtn.textContent = FINISH_TOOL_LABEL;
+}
+
+function showSavedStep() {
+  const nextLabel = 'Submit';
+  savedStepSubEl.innerHTML = `<strong>${escapeHtml(lastSavedSessionTitle || 'Current session')}</strong> · added ${lastSavedAnnotationCount} annotation${lastSavedAnnotationCount === 1 ? '' : 's'}.`;
+  savedStepHintEl.innerHTML = `Nothing was sent yet. Open the current session board when you are ready, then go to <strong>${escapeHtml(nextLabel)}</strong>.`;
+  showStep('saved');
 }
 
 // If the user switches apps before placing any annotations, step out of the
@@ -1282,6 +1365,10 @@ async function saveAll() {
       setTimeout(() => setupNameEl.focus(), 50);
       return;
     }
+  } else if (targetSessionAnnotationCount() + annotations.length > MAX_ANNOTATIONS) {
+    const remaining = Math.max(0, MAX_ANNOTATIONS - targetSessionAnnotationCount());
+    setToast(`"${newSessionName}" only has room for ${remaining} more annotation${remaining === 1 ? '' : 's'}.`);
+    return;
   }
   const prevLabel = toolSaveBtn.textContent || FINISH_TOOL_LABEL;
   toolSaveBtn.disabled = true;
@@ -1347,15 +1434,13 @@ async function saveAll() {
       first_ann_id: snapshot.annotations[0]?.id ?? 'none',
     });
 
-    // Clear canvas immediately so rectangles vanish the moment user clicks Finish
-    resetAnnotationCanvas();
-
     // Route through Rust backend — relays to main window without permission restrictions
     await invoke('finish_annotations', { payload: snapshot });
     logAnnotationPipeline('finish_rust_command_ok', { annotation_count: snapshot.annotations.length });
-
-    // Full state reset after command resolves
-    resetState();
+    lastSavedSessionTitle = snapshot.targetSessionId ? (newSessionName || 'Current session') : (snapshot.newSessionName || 'Current session');
+    lastSavedAnnotationCount = snapshot.annotations.length;
+    clearCurrentDraftCaptureState();
+    showSavedStep();
   } catch (err) {
     logAnnotationPipeline('save_all_failed', { error: String(err).slice(0, 400) });
     console.error('[Debugr] Error in saveAll():', err);
@@ -1404,6 +1489,12 @@ async function resumeOverlayVisible(): Promise<void> {
 async function placePin(x: number, y: number) {
   if (annotations.length >= MAX_ANNOTATIONS) {
     setToast(`Maximum ${MAX_ANNOTATIONS} annotations per session.`);
+    return;
+  }
+  if (remainingAnnotationSlots() <= 0) {
+    setToast(targetSessionId
+      ? `"${newSessionName}" already has the maximum ${MAX_ANNOTATIONS} annotations.`
+      : `Maximum ${MAX_ANNOTATIONS} annotations per session.`);
     return;
   }
 
@@ -1489,6 +1580,12 @@ async function placePin(x: number, y: number) {
 async function placeRegion(x: number, y: number, w: number, h: number) {
   if (annotations.length >= MAX_ANNOTATIONS) {
     setToast(`Maximum ${MAX_ANNOTATIONS} annotations per session.`);
+    return;
+  }
+  if (remainingAnnotationSlots() <= 0) {
+    setToast(targetSessionId
+      ? `"${newSessionName}" already has the maximum ${MAX_ANNOTATIONS} annotations.`
+      : `Maximum ${MAX_ANNOTATIONS} annotations per session.`);
     return;
   }
 
@@ -2004,6 +2101,7 @@ async function initializeEventListeners() {
     } catch {
       // Ignore cache write failures.
     }
+    pickerSessions = event.payload;
     renderPickerSessions(event.payload);
   });
 
@@ -2060,11 +2158,14 @@ function resetState() {
   newSessionAbout = '';
   localFolder = null;
   githubRepo = '';
+  pickerSessions = [];
   dragging = false; dragStart = null; moveState = null;
   selRectEl.style.display = 'none';
   currentScreenshotDataUrl = '';
   screenshotBg.style.backgroundImage = '';
   applySourceFrameDisplay('');
+  lastSavedSessionTitle = '';
+  lastSavedAnnotationCount = 0;
   notePanelEl.style.display = 'none';
   sessionBannerEl.style.display = 'none';
   toastEl.removeAttribute('title');

@@ -72,6 +72,7 @@ struct PickerSessionCacheItem {
     id: String,
     title: String,
     created_at: String,
+    annotation_count: u32,
 }
 
 // ── CoreGraphics for screen-capture permissions ───────────────────────────────
@@ -941,17 +942,6 @@ fn finish_annotations(
         return Err("Main window not found".into());
     }
 
-    // Hide overlay
-    if let Some(overlay) = app.get_webview_window("overlay") {
-        let _ = overlay.hide();
-    }
-
-    // Show and focus main window
-    if let Some(main) = app.get_webview_window("main") {
-        main.show().map_err(|e| format!("Failed to show main window: {e}"))?;
-        main.set_focus().map_err(|e| format!("Failed to focus main window: {e}"))?;
-    }
-
     Ok(())
 }
 
@@ -1151,32 +1141,62 @@ fn get_overlay_session_log_path() -> String {
 
 #[tauri::command]
 fn show_session_window(app: AppHandle) -> Result<(), String> {
+    let visible_before = app
+        .get_webview_window("main")
+        .and_then(|w| w.is_visible().ok());
+    log_backend(
+        "main.show_session.start",
+        format!("main_visible_before={visible_before:?}"),
+    );
     macos_activate();
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
         win.emit("enter-session-mode", ()).map_err(|e| e.to_string())?;
+        log_backend("main.show_session.success", "emitted=enter-session-mode");
+    } else {
+        log_backend("main.show_session.missing", "label=main");
     }
     Ok(())
 }
 
 #[tauri::command]
 fn show_home_window(app: AppHandle) -> Result<(), String> {
+    let visible_before = app
+        .get_webview_window("main")
+        .and_then(|w| w.is_visible().ok());
+    log_backend(
+        "main.show_home.start",
+        format!("main_visible_before={visible_before:?}"),
+    );
     macos_activate();
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
         win.emit("go-home", ()).map_err(|e| e.to_string())?;
+        log_backend("main.show_home.success", "emitted=go-home");
+    } else {
+        log_backend("main.show_home.missing", "label=main");
     }
     Ok(())
 }
 
 #[tauri::command]
 fn hide_main_window(app: AppHandle) -> Result<(), String> {
+    let visible_before = app
+        .get_webview_window("main")
+        .and_then(|w| w.is_visible().ok());
+    log_backend(
+        "main.hide.requested",
+        format!("main_visible_before={visible_before:?}"),
+    );
     if let Some(win) = app.get_webview_window("main") {
         win.hide().map_err(|e| e.to_string())?;
+        log_backend("main.hide.success", "main window hidden");
+    } else {
+        log_backend("main.hide.missing", "label=main");
     }
     Ok(())
 }
@@ -1577,10 +1597,13 @@ fn trigger_overlay(app: &AppHandle, source: &str, launch: Option<OverlayLaunchPa
     let ov_vis = app
         .get_webview_window("overlay")
         .and_then(|w| w.is_visible().ok());
+    let main_vis = app
+        .get_webview_window("main")
+        .and_then(|w| w.is_visible().ok());
     log_backend(
         "overlay.trigger.start",
         format!(
-            "source={source} overlay_visible={ov_vis:?} capture_guard={}",
+            "source={source} overlay_visible={ov_vis:?} main_visible={main_vis:?} capture_guard={}",
             OVERLAY_HIDDEN_FOR_SCREENSHOT.load(Ordering::SeqCst)
         ),
     );
@@ -1602,8 +1625,26 @@ fn trigger_overlay(app: &AppHandle, source: &str, launch: Option<OverlayLaunchPa
         log_backend("overlay.window.missing", "label=overlay");
     }
 
-    // Keep the main workspace window visible in the stack so annotation captures can target it
-    // (do not hide — fullscreen overlay still covers it while annotating).
+    if let Some(main) = app.get_webview_window("main") {
+        match main.is_visible() {
+            Ok(true) => {
+                log_backend("overlay.trigger.main_hide.start", "reason=prevent_capture_hijack");
+                if let Err(error) = main.hide() {
+                    log_backend("overlay.trigger.main_hide.failed", error.to_string());
+                } else {
+                    log_backend("overlay.trigger.main_hide.success", "main hidden before overlay show");
+                }
+            }
+            Ok(false) => {
+                log_backend("overlay.trigger.main_hide.skipped", "main already hidden");
+            }
+            Err(error) => {
+                log_backend("overlay.trigger.main_hide.visibility_failed", error.to_string());
+            }
+        }
+    } else {
+        log_backend("overlay.trigger.main_hide.missing", "label=main");
+    }
 
     // Show overlay window for picker UI
     // NOTE: This is transparent and doesn't call set_focus to keep other apps interactive

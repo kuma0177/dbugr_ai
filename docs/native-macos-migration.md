@@ -231,6 +231,9 @@ Current verified behavior:
 - Validation reported the capture as valid rather than trusting byte count alone.
 - The native prototype now exposes a simpler chooser model: `Visible area`, `Full screen`, and `App window`.
 - The advanced window path filters obvious helper/service windows and sorts browser windows first.
+- The native prototype now persists local sessions under `~/Library/Application Support/debugr/native-workspace/`.
+- A captured frame can now be reviewed, annotated with note text, and saved into an existing or new native session.
+- The native app now includes a first-pass workspace panel with session summary, provider target chooser, prompt preview, and immediate handoff-status copy.
 
 Latest verified smoke output shape:
 
@@ -277,6 +280,12 @@ Success criteria:
 - Save screenshot + notes into a session payload.
 - Show a clear “saved to session” confirmation state.
 
+Status update:
+
+- `Save screenshot + notes into a session payload` has started in the native app.
+- The current Swift prototype supports text-note annotations tied to a captured screenshot and saves them into native session storage.
+- The missing piece is the true native visual overlay/editor for box or region placement on top of the frozen frame.
+
 ### Milestone 4: Session and handoff flow
 
 - Choose existing session or create a new one after annotation.
@@ -285,6 +294,12 @@ Success criteria:
 - Show provider connection status and first-run linking UX.
 - Show the prompt summary before send.
 - Show immediate response or handoff confirmation after send.
+
+Status update:
+
+- `Choose existing session or create a new one` is now started in the Swift prototype.
+- Repo/folder fields, provider target selection, prompt preview, and immediate response copy all exist in first-pass native form.
+- Real provider connection plumbing and real send execution still need to be implemented.
 
 ## Capture Validation Requirements
 
@@ -323,13 +338,15 @@ When validation fails:
 
 ## Suggested Next Task For A New Agent
 
-The next practical implementation step is Milestone 2: native capture UX cleanup.
+The next practical implementation step is to finish Milestone 3 and harden Milestone 4.
 
 Concretely:
 
-- Change the native prototype so the top-level capture actions are simpler than the current raw window list.
-- Add filtering/grouping rules for source selection.
-- Treat “choose window” as advanced, not the primary path.
+- Replace the text-note-only draft flow with a true native box/region annotation overlay on the frozen frame.
+- Persist annotation geometry along with note text.
+- Promote the current workspace panel into a fuller native session browser with saved capture previews.
+- Replace the prototype provider toggle with real Claude/Codex/Cursor connection flows.
+- Wire the native prompt preview panel into real send execution and immediate provider responses.
 
 Use the current Tauri app only as a behavior/reference source where it helps, especially:
 

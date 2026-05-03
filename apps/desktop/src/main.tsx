@@ -80,6 +80,7 @@ interface PickerSessionCacheItem {
   id: string;
   title: string;
   createdAt: string;
+  annotationCount: number;
 }
 
 const API = 'http://127.0.0.1:3001/api';
@@ -87,6 +88,8 @@ const APP_STATE_KEY = 'debugr-desktop-v2-state';
 const MAX_ANNOTATIONS = 5;
 const UI_LOG_PREFIX = '[debugr-ui]';
 const SCREENSHOT_SUPPORT_ROLLOUT_AT = new Date('2026-05-01T11:00:00-07:00').getTime();
+const PERSIST_MIRROR_DEBOUNCE_MS = 250;
+const SESSION_API_REFRESH_INTERVAL_MS = 10_000;
 
 let appMode: AppMode = 'welcome';
 let sessions: Session[] = [];
@@ -100,7 +103,7 @@ let feedback: AgentFeedback | null = null;
 let isSending = false;
 let isAuthenticating = false;
 let contextToggles = { consoleLogs: true, networkLogs: true, environmentInfo: true };
-let lastSavedCapture: { sessionTitle: string; annotationCount: number } | null = null;
+let lastSavedCapture: { sessionId: string; sessionTitle: string; annotationCount: number; totalSessionAnnotations: number } | null = null;
 /** Inline validation when Send is blocked (e.g. missing session note). */
 let submitGateError = '';
 /** Stored Codex API key (loaded from disk on startup). */
@@ -122,6 +125,9 @@ let providerRecheckError = '';
 const screenshotFileDataUrlCache = new Map<string, string>();
 const screenshotFileLoadsInFlight = new Set<string>();
 let screenshotCacheRefreshQueued = false;
+let persistMirrorsTimer: number | null = null;
+let sessionsApiLoadInFlight: Promise<void> | null = null;
+let lastSessionsApiLoadAt = 0;
 let authState: AuthState = {
   authenticated: false,
   profileInitialized: false,
@@ -328,20 +334,32 @@ function persistAppState() {
   } catch {
     // ignore persistence errors
   }
-  // Mirror sessions to disk so the local MCP server can read them.
-  // Fire-and-forget — never block the UI on this.
-  invoke('save_sessions_to_disk', { payload: { sessions } }).catch(() => {
-    // silently ignore — disk write is best-effort
-  });
-  invoke('save_picker_sessions_cache', {
-    sessions: sortedSessions().map((session): PickerSessionCacheItem => ({
+  queuePersistMirrors();
+}
+
+function queuePersistMirrors() {
+  if (persistMirrorsTimer !== null) {
+    window.clearTimeout(persistMirrorsTimer);
+  }
+  persistMirrorsTimer = window.setTimeout(() => {
+    persistMirrorsTimer = null;
+    const pickerSessions = sortedSessions().map((session): PickerSessionCacheItem => ({
       id: session.id,
       title: session.title,
       createdAt: session.createdAt,
-    })),
-  }).catch(() => {
-    // silently ignore — picker cache is best-effort
-  });
+      annotationCount: totalAnnotations(session),
+    }));
+    // Mirror sessions to disk so the local MCP server can read them.
+    // Fire-and-forget — never block the UI on this.
+    invoke('save_sessions_to_disk', { payload: { sessions } }).catch(() => {
+      // silently ignore — disk write is best-effort
+    });
+    invoke('save_picker_sessions_cache', {
+      sessions: pickerSessions,
+    }).catch(() => {
+      // silently ignore — picker cache is best-effort
+    });
+  }, PERSIST_MIRROR_DEBOUNCE_MS);
 }
 
 function hydrateAppState() {
@@ -922,6 +940,7 @@ function renderWelcome() {
 
 function renderConfirmation() {
   const info = lastSavedCapture;
+  const nextStepLabel = activeSession()?.submissionFlow === 'direct' ? 'Submit' : 'Review & curate';
   app.innerHTML = `
     <div class="welcome-shell">
       <div class="welcome-card confirmation-card">
@@ -929,17 +948,18 @@ function renderConfirmation() {
         <h1>Capture saved</h1>
         <p class="confirm-sub">
           ${info
-            ? `<strong>${escapeHtml(info.sessionTitle)}</strong> · ${info.annotationCount} annotation${info.annotationCount === 1 ? '' : 's'}`
+            ? `<strong>${escapeHtml(info.sessionTitle)}</strong> · added ${info.annotationCount} annotation${info.annotationCount === 1 ? '' : 's'} · ${info.totalSessionAnnotations} total in this session`
             : 'Your annotation was added to the active session.'}
         </p>
         <div class="confirm-summary">
-          <div><strong>Next:</strong> in the Debugr workspace, open <strong>Submit</strong> and choose Claude, Codex, or Cursor — captures are not sent from the overlay itself.</div>
+          <div><strong>Saved to:</strong> ${info ? `<strong>${escapeHtml(info.sessionTitle)}</strong>` : 'your active session'}.</div>
+          <div><strong>Next:</strong> open the session board, then go to <strong>${nextStepLabel}</strong> to choose Claude, Codex, or Cursor. Captures are not sent from the overlay itself.</div>
         </div>
         <div class="confirm-actions">
           <button class="btn-secondary" id="confirm-more-btn">+ Add more annotations</button>
-          <button class="btn-primary" id="confirm-open-btn">Open workspace →</button>
+          <button class="btn-primary" id="confirm-open-btn">Open session board →</button>
         </div>
-        <button class="confirm-view-session" id="confirm-review-btn">Go straight to review</button>
+        <button class="confirm-view-session" id="confirm-review-btn">Go straight to ${nextStepLabel}</button>
       </div>
     </div>
   `;
@@ -2180,7 +2200,13 @@ async function checkPermission() {
   }
 }
 
-async function loadSessionsFromApi() {
+async function loadSessionsFromApi(options: { force?: boolean } = {}) {
+  const { force = false } = options;
+  if (!force) {
+    if (sessionsApiLoadInFlight) return sessionsApiLoadInFlight;
+    if (Date.now() - lastSessionsApiLoadAt < SESSION_API_REFRESH_INTERVAL_MS) return;
+  }
+  sessionsApiLoadInFlight = (async () => {
   try {
     logUi('workspace_load_sessions_start', { existingLocalSessions: sessions.length });
     const response = await fetch(`${API}/feedback-sessions`);
@@ -2237,11 +2263,18 @@ async function loadSessionsFromApi() {
     const firstCapture = activeSession()?.captures[0];
     activeCaptureId = firstCapture?.id ?? activeCaptureId;
     activeAnnotationId = firstCapture?.annotations[0]?.id ?? activeAnnotationId;
+    lastSessionsApiLoadAt = Date.now();
     persistAppState();
     render();
   } catch {
     logUi('workspace_load_sessions_failed');
     render();
+  }
+  })();
+  try {
+    await sessionsApiLoadInFlight;
+  } finally {
+    sessionsApiLoadInFlight = null;
   }
 }
 
@@ -2471,12 +2504,14 @@ async function listenForAnnotations() {
         id: session.id,
         title: session.title,
         createdAt: session.createdAt,
+        annotationCount: totalAnnotations(session),
       })));
     };
 
     await emitPickerSessions();
-    await loadSessionsFromApi();
-    await emitPickerSessions();
+    void loadSessionsFromApi().then(async () => {
+      await emitPickerSessions();
+    }).catch(() => {});
   });
 
   await listen<{
@@ -2490,6 +2525,9 @@ async function listenForAnnotations() {
   }>('annotations-saved', async (event) => {
     const annotations = (event.payload.annotations ?? []).slice(0, MAX_ANNOTATIONS);
     if (annotations.length === 0) return;
+    const priorAppMode = appMode;
+    const priorWorkspaceSection = workspaceSection;
+    const priorActiveSessionId = activeSessionId;
     const payloadTitle = event.payload.newSessionName?.trim() || '';
     const payloadAbout = event.payload.newSessionAbout?.trim() || '';
     const payloadGithubRepo = event.payload.githubRepo?.trim() || '';
@@ -2506,6 +2544,9 @@ async function listenForAnnotations() {
     logUi('workspace_annotations_saved_event', {
       targetSessionId: event.payload.targetSessionId ?? null,
       annotationCount: annotations.length,
+      priorAppMode,
+      priorWorkspaceSection,
+      priorActiveSessionId,
       hasLocalFolder: Boolean(event.payload.localFolder),
       hasGithubRepo: Boolean(event.payload.githubRepo),
       hasScreenshot: Boolean(rawShot),
@@ -2570,9 +2611,16 @@ async function listenForAnnotations() {
       activeCaptureId = capture.id;
       activeAnnotationId = capture.annotations[0]?.id ?? null;
       lastSavedCapture = {
+        sessionId: session.id,
         sessionTitle: session.title,
         annotationCount: annotations.length,
+        totalSessionAnnotations: totalAnnotations(session),
       };
+      logUi('workspace_annotations_saved_existing_session', {
+        sessionId: session.id,
+        captureId,
+        totalSessionAnnotations: totalAnnotations(session),
+      });
     } else {
       const session: Session = {
         id: uid('session'),
@@ -2595,16 +2643,39 @@ async function listenForAnnotations() {
       activeCaptureId = capture.id;
       activeAnnotationId = capture.annotations[0]?.id ?? null;
       lastSavedCapture = {
+        sessionId: session.id,
         sessionTitle: session.title,
         annotationCount: annotations.length,
+        totalSessionAnnotations: totalAnnotations(session),
       };
+      logUi('workspace_annotations_saved_new_session', {
+        sessionId: session.id,
+        captureId,
+        totalSessionAnnotations: totalAnnotations(session),
+      });
     }
 
     sessions = sortedSessions();
     persistAppState();
-    // Land on the session notes/capture view so the user can immediately verify
-    // the screenshot and annotation text that were just saved.
-    await enterSessionMode('notes');
+    logUi('workspace_annotations_saved_persisted', {
+      sessionCount: sessions.length,
+      activeSessionId,
+      activeCaptureId,
+      appModeAfterPersist: appMode,
+      workspaceSectionAfterPersist: workspaceSection,
+    });
+    if (appMode === 'session') {
+      logUi('workspace_annotations_saved_render_visible_session', {
+        sessionId: activeSessionId,
+        workspaceSection,
+      });
+      renderSession();
+    } else {
+      logUi('workspace_annotations_saved_deferred_session_open', {
+        sessionId: activeSessionId,
+        appMode,
+      });
+    }
   });
 
   await listen('enter-session-mode', async () => {
@@ -2746,13 +2817,7 @@ async function saveProviderConfig() {
 
 async function init() {
   hydrateAppState();
-  void invoke('save_picker_sessions_cache', {
-    sessions: sortedSessions().map((session): PickerSessionCacheItem => ({
-      id: session.id,
-      title: session.title,
-      createdAt: session.createdAt,
-    })),
-  }).catch(() => {});
+  queuePersistMirrors();
   await loadProviderConfig();
   invoke('request_screen_capture_permission').catch(() => {});
   // Check Cursor installation without blocking render
@@ -2771,7 +2836,7 @@ async function init() {
     render();
   });
   await listenForAnnotations();
-  void loadSessionsFromApi();
+  void loadSessionsFromApi({ force: true });
 }
 
 void init();

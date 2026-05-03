@@ -101,6 +101,7 @@ Tools:
 ## Current State
 
 - [x] Native macOS capture app with screenshot freeze + box annotations
+- [x] Native macOS prototype with local session persistence and prompt-preview groundwork
 - [x] Express API for sessions, comments, tasks, integrations, and handoff context
 - [x] Next.js dashboard for review, summaries, and follow-up actions
 - [x] MCP server for Claude/Codex-style agent access

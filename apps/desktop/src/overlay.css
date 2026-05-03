@@ -607,6 +607,21 @@ html, body {
 .picker-actions {
   display: flex; gap: 8px; justify-content: space-between; align-items: center;
 }
+.saved-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+}
+.saved-actions > button {
+  width: 100%;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1.15;
+  white-space: normal;
+}
 .picker-cancel-btn {
   padding: 8px 14px; border: 1px solid var(--border); border-radius: 4px;
   background: transparent; font-size: 12.5px; font-weight: 600;
@@ -621,6 +636,12 @@ html, body {
   transition: background 0.15s ease;
 }
 .picker-new-btn:hover { background: var(--blue-hover); }
+
+@media (max-width: 520px) {
+  .saved-actions {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* Setup form */
 .setup-label {
