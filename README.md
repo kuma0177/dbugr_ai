@@ -235,6 +235,21 @@ For a cleaner step-by-step install and troubleshooting flow, see:
 
 - [docs/local-development.md](/Users/kumar/debugr/docs/local-development.md:1)
 
+## Design Reference
+
+Dbugr's canonical product design language lives in:
+
+- [docs/design-system-dbugr.md](/Users/kumar/debugr/docs/design-system-dbugr.md:1)
+
+Use this guide for desktop, web, onboarding, review feed, public feed, and submit-flow UI changes.
+
+## Product Roadmap
+
+The current phased scope and architecture plan lives in:
+
+- [docs/phase-roadmap-and-architecture.md](/Users/kumar/debugr/docs/phase-roadmap-and-architecture.md:1)
+- [docs/phase-2-social-refinement-plan.md](/Users/kumar/debugr/docs/phase-2-social-refinement-plan.md:1)
+
 ## Remaining Work
 
 - [ ] Windows and Linux native desktop builds
