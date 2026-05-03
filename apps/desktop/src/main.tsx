@@ -29,6 +29,8 @@ import {
   getPendingSessions,
   buildSessionPrompt,
   buildCombinedPrompt,
+  getPromptDiagnostics,
+  getCombinedPromptDiagnostics,
 } from './core';
 
 /** True when `screenshotUrl` was persisted by Rust under screenshots/ (absolute path), not an inline data URL. */
@@ -2474,7 +2476,14 @@ async function pushPendingSessions() {
   const screenshotPaths = await saveScreenshots(allCaptures);
 
   try {
+    const diagnostics = getCombinedPromptDiagnostics(pending, screenshotPaths);
     const prompt = buildCombinedPrompt(pending, screenshotPaths);
+    logUi('workspace_push_pending_prompt_ready', {
+      target,
+      sessionCount: pending.length,
+      promptLength: prompt.length,
+      diagnostics,
+    });
     const cwd = pending.find((s) => s.projectFolder?.trim())?.projectFolder?.trim() || '';
     const titleSuffix = pending.length === 1 ? pending[0]!.title : `${pending.length} pending sessions`;
 
@@ -2606,6 +2615,12 @@ async function sendSession() {
   const screenshotPaths = await saveScreenshots(session.captures);
   logUi('workspace_send_screenshots_saved', { sessionId: session.id, screenshotCount: screenshotPaths.size });
   const prompt = buildSessionPrompt(session, screenshotPaths);
+  logUi('workspace_send_prompt_ready', {
+    sessionId: session.id,
+    target,
+    promptLength: prompt.length,
+    diagnostics: getPromptDiagnostics(session, screenshotPaths),
+  });
   const cwd = session.projectFolder?.trim() || (await invoke<string>('pick_folder').catch(() => '')) || '';
   const title = `Debugr → ${providerLabel(target)}: ${session.title}`;
 

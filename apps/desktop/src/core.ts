@@ -75,6 +75,17 @@ export interface ProviderConnectionState {
   lastConnectedAt?: string;
 }
 
+export interface PromptDiagnostics {
+  sessionId: string;
+  captureCount: number;
+  annotationCount: number;
+  acceptedContributionCount: number;
+  screenshotReferenceCount: number;
+  hasSessionNote: boolean;
+  hasProjectFolder: boolean;
+  hasGithubRepo: boolean;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 export function uid(prefix: string): string {
@@ -220,6 +231,17 @@ export function buildSessionPrompt(
     });
   });
 
+  const accepted = acceptedContributions(session);
+  if (accepted.length > 0) {
+    lines.push('\n## Accepted feedback');
+    accepted.forEach((item, index) => {
+      const source = item.source === 'community' ? 'Public' : 'Team';
+      const type = item.type.replaceAll('_', ' ');
+      lines.push(`\n  Feedback ${index + 1} (${source} ${type} from ${item.author}):`);
+      lines.push(`    ${item.body}`);
+    });
+  }
+
   lines.push('\n---');
   lines.push('Please analyse the above session and provide:');
   lines.push('1. The likely root cause of the issue');
@@ -230,6 +252,33 @@ export function buildSessionPrompt(
   }
 
   return lines.join('\n');
+}
+
+export function getPromptDiagnostics(
+  session: Session,
+  screenshotPaths: Map<string, string> = new Map(),
+): PromptDiagnostics {
+  const screenshotReferenceCount = session.captures.reduce((count, capture) => {
+    return count + (screenshotPaths.has(capture.id) ? 1 : 0);
+  }, 0);
+
+  return {
+    sessionId: session.id,
+    captureCount: session.captures.length,
+    annotationCount: totalAnnotations(session),
+    acceptedContributionCount: acceptedContributions(session).length,
+    screenshotReferenceCount,
+    hasSessionNote: Boolean(session.about?.trim() || session.sessionNote?.trim()),
+    hasProjectFolder: Boolean(session.projectFolder?.trim()),
+    hasGithubRepo: Boolean(session.githubRepo?.trim()),
+  };
+}
+
+export function getCombinedPromptDiagnostics(
+  sessions: Session[],
+  screenshotPaths: Map<string, string> = new Map(),
+): PromptDiagnostics[] {
+  return sessions.map((session) => getPromptDiagnostics(session, screenshotPaths));
 }
 
 export function buildCombinedPrompt(

@@ -31,6 +31,8 @@ import {
   getPendingSessions,
   buildSessionPrompt,
   buildCombinedPrompt,
+  getPromptDiagnostics,
+  getCombinedPromptDiagnostics,
   makeSession,
   makeCapture,
   makeAnnotation,
@@ -83,8 +85,8 @@ describe('escapeHtml()', () => {
 
 describe('providerLabel()', () => {
   it('maps all three providers', () => {
-    expect(providerLabel('claude')).toBe('Claude');
-    expect(providerLabel('codex')).toBe('Codex');
+    expect(providerLabel('claude')).toBe('Claude CLI');
+    expect(providerLabel('codex')).toBe('Codex CLI');
     expect(providerLabel('cursor')).toBe('Cursor');
   });
 });
@@ -296,9 +298,16 @@ describe('buildSessionPrompt()', () => {
     expect(prompt).toContain('Users are skipping setup');
   });
 
-  it('includes the session note', () => {
+  it('uses the about field as the single session note when both fields exist', () => {
     const prompt = buildSessionPrompt(session);
-    expect(prompt).toContain('CTA is unclear');
+    expect(prompt).toContain('Session note: Users are skipping setup');
+    expect(prompt).not.toContain('CTA is unclear');
+  });
+
+  it('falls back to the legacy sessionNote field', () => {
+    const legacy = makeSession({ title: 'Legacy', sessionNote: 'Old note field' });
+    const prompt = buildSessionPrompt(legacy);
+    expect(prompt).toContain('Session note: Old note field');
   });
 
   it('includes the project folder', () => {
@@ -340,6 +349,62 @@ describe('buildSessionPrompt()', () => {
     const prompt = buildSessionPrompt(minimal);
     expect(prompt.length).toBeGreaterThan(20);
     expect(prompt).toContain('Minimal');
+  });
+
+  it('includes local screenshot paths when provided', () => {
+    const captureId = session.captures[0]!.id;
+    const prompt = buildSessionPrompt(session, new Map([[captureId, '/tmp/debugr/capture.png']]));
+    expect(prompt).toContain('Screenshot: /tmp/debugr/capture.png');
+    expect(prompt).toContain('screenshots referenced above are saved locally');
+  });
+
+  it('includes accepted feedback but excludes rejected feedback', () => {
+    session.contributions = [
+      {
+        id: 'accepted-team',
+        source: 'team',
+        author: 'Sarah',
+        type: 'comment',
+        body: 'Make the CTA wording clearer.',
+        accepted: true,
+        timestamp: '',
+      },
+      {
+        id: 'rejected-public',
+        source: 'community',
+        author: 'Public reviewer',
+        type: 'suggested_edit',
+        body: 'Change the whole layout.',
+        accepted: false,
+        timestamp: '',
+      },
+    ];
+    const prompt = buildSessionPrompt(session);
+    expect(prompt).toContain('## Accepted feedback');
+    expect(prompt).toContain('Make the CTA wording clearer.');
+    expect(prompt).not.toContain('Change the whole layout.');
+  });
+
+  it('reports prompt diagnostics without exposing prompt body', () => {
+    const captureId = session.captures[0]!.id;
+    session.contributions = [
+      { id: '1', source: 'team', author: 'A', type: 'comment', body: 'Accepted', accepted: true, timestamp: '' },
+      { id: '2', source: 'community', author: 'B', type: 'comment', body: 'Rejected', accepted: false, timestamp: '' },
+    ];
+    const diagnostics = getPromptDiagnostics(session, new Map([[captureId, '/tmp/debugr/capture.png']]));
+    expect(diagnostics).toMatchObject({
+      sessionId: session.id,
+      captureCount: 1,
+      annotationCount: 2,
+      acceptedContributionCount: 1,
+      screenshotReferenceCount: 1,
+      hasSessionNote: true,
+      hasProjectFolder: true,
+      hasGithubRepo: true,
+    });
+    expect(JSON.stringify(diagnostics)).not.toContain('Accepted');
+    expect(JSON.stringify(diagnostics)).not.toContain('Onboarding flow bug');
+    expect(JSON.stringify(diagnostics)).not.toContain('/tmp/debugr/capture.png');
   });
 });
 
@@ -404,6 +469,13 @@ describe('buildCombinedPrompt()', () => {
     const sessions = [sessionWithAnnotations(1), sessionWithAnnotations(1)];
     const prompt = buildCombinedPrompt(sessions);
     expect(prompt).toContain('address all sessions');
+  });
+
+  it('reports diagnostics for every session in a combined prompt', () => {
+    const sessions = [sessionWithAnnotations(1), sessionWithAnnotations(2)];
+    const diagnostics = getCombinedPromptDiagnostics(sessions);
+    expect(diagnostics).toHaveLength(2);
+    expect(diagnostics.map((item) => item.annotationCount)).toEqual([1, 2]);
   });
 });
 
