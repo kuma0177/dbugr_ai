@@ -31,6 +31,8 @@ import {
   buildPickerSessionCache,
   normalizeProjectFolderInput,
   normalizeGithubRepoInput,
+  isAbsoluteFilesystemScreenshotRef,
+  classifyScreenshotRef,
   planAnnotationAppend,
   buildSessionPrompt,
   buildCombinedPrompt,
@@ -38,13 +40,6 @@ import {
   getCombinedPromptDiagnostics,
   buildAiCliCommand,
 } from './core';
-
-/** True when `screenshotUrl` was persisted by Rust under screenshots/ (absolute path), not an inline data URL. */
-function isAbsoluteFilesystemScreenshotRef(ref: string): boolean {
-  const trimmed = ref.trim();
-  if (!trimmed || trimmed.startsWith('data:')) return false;
-  return trimmed.startsWith('/') || /^[A-Za-z]:[\\/]/.test(trimmed);
-}
 
 /** Image URL suitable for `<img src>` — Tauri cannot load raw POSIX paths without conversion. */
 function screenshotImgSrc(ref?: string): string | undefined {
@@ -1332,13 +1327,7 @@ function renderCaptureList(session: Session) {
     logUi('workspace_render_capture_card', {
       sessionId: session.id,
       captureId: capture.id,
-      screenshotKind: capture.screenshotUrl
-        ? isAbsoluteFilesystemScreenshotRef(capture.screenshotUrl)
-          ? 'abs_path'
-          : capture.screenshotUrl.startsWith('data:image/')
-            ? 'data_url'
-            : 'other'
-        : 'none',
+      screenshotKind: classifyScreenshotRef(capture.screenshotUrl),
       screenshotChars: capture.screenshotUrl?.length ?? 0,
       thumbSrcKind: thumbSrc
         ? thumbSrc.startsWith('data:image/')
@@ -1447,13 +1436,7 @@ function renderCapturePayload(session: Session) {
     sessionId: session.id,
     captureId: capture.id,
     annotationCount: capture.annotations.length,
-    screenshotKind: capture.screenshotUrl
-      ? isAbsoluteFilesystemScreenshotRef(capture.screenshotUrl)
-        ? 'abs_path'
-        : capture.screenshotUrl.startsWith('data:image/')
-          ? 'data_url'
-          : 'other'
-      : 'none',
+    screenshotKind: classifyScreenshotRef(capture.screenshotUrl),
     screenshotChars: capture.screenshotUrl?.length ?? 0,
     payloadImgSrcKind: payloadImgSrc
       ? payloadImgSrc.startsWith('data:image/')
@@ -2518,7 +2501,8 @@ async function saveScreenshots(capturesToSave: Array<{ id: string; screenshotUrl
       try {
         const url = c.screenshotUrl?.trim();
         if (!url) return;
-        if (url.startsWith('data:image/')) {
+        const kind = classifyScreenshotRef(url);
+        if (kind === 'data_url') {
           const path = await invoke<string>('save_screenshot', {
             captureId: c.id,
             dataUrl: url,
@@ -2526,7 +2510,7 @@ async function saveScreenshots(capturesToSave: Array<{ id: string; screenshotUrl
           paths.set(c.id, path);
           return;
         }
-        if (isAbsoluteFilesystemScreenshotRef(url)) {
+        if (kind === 'absolute_path') {
           paths.set(c.id, url);
         }
       } catch {
@@ -2697,13 +2681,7 @@ async function listenForAnnotations() {
     const payloadGithubRepo = normalizeGithubRepoInput(event.payload.githubRepo);
     const rawShot = event.payload.screenshotUrl?.trim();
 
-    const rawShotKind = !rawShot
-      ? 'empty'
-      : rawShot.startsWith('data:image/')
-        ? 'data_url'
-        : isAbsoluteFilesystemScreenshotRef(rawShot)
-          ? 'abs_path_pending'
-          : 'other';
+    const rawShotKind = classifyScreenshotRef(rawShot);
 
     logUi('workspace_annotations_saved_event', {
       targetSessionId: event.payload.targetSessionId ?? null,
@@ -2754,9 +2732,9 @@ async function listenForAnnotations() {
     };
 
     const storedDesc = screenshotStored
-      ? !screenshotStored.startsWith('data:') && isAbsoluteFilesystemScreenshotRef(screenshotStored)
+      ? classifyScreenshotRef(screenshotStored) === 'absolute_path'
         ? 'finalized_path'
-        : screenshotStored.startsWith('data:image/')
+        : classifyScreenshotRef(screenshotStored) === 'data_url'
           ? 'inline_data_url'
           : 'other'
       : 'none';

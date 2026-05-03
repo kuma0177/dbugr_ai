@@ -37,6 +37,8 @@ import {
   buildPickerSessionCache,
   normalizeProjectFolderInput,
   normalizeGithubRepoInput,
+  isAbsoluteFilesystemScreenshotRef,
+  classifyScreenshotRef,
   buildSessionPrompt,
   buildCombinedPrompt,
   getPromptDiagnostics,
@@ -473,6 +475,25 @@ describe('repo and local folder context helpers', () => {
     });
     expect(session.projectFolder).toBe('/Users/kumar/app');
     expect(session.githubRepo).toBe('owner/repo');
+  });
+});
+
+describe('screenshot reference helpers', () => {
+  it('identifies absolute filesystem screenshot refs', () => {
+    expect(isAbsoluteFilesystemScreenshotRef('/Users/kumar/debugr/capture.png')).toBe(true);
+    expect(isAbsoluteFilesystemScreenshotRef('C:\\Users\\kumar\\capture.png')).toBe(true);
+    expect(isAbsoluteFilesystemScreenshotRef('data:image/png;base64,abc')).toBe(false);
+    expect(isAbsoluteFilesystemScreenshotRef('https://example.com/capture.png')).toBe(false);
+    expect(isAbsoluteFilesystemScreenshotRef('')).toBe(false);
+  });
+
+  it('classifies screenshot refs for logging and persistence decisions', () => {
+    expect(classifyScreenshotRef(undefined)).toBe('empty');
+    expect(classifyScreenshotRef('  ')).toBe('empty');
+    expect(classifyScreenshotRef('data:image/png;base64,abc')).toBe('data_url');
+    expect(classifyScreenshotRef('/Users/kumar/debugr/capture.png')).toBe('absolute_path');
+    expect(classifyScreenshotRef('C:\\Users\\kumar\\capture.png')).toBe('absolute_path');
+    expect(classifyScreenshotRef('https://example.com/capture.png')).toBe('other');
   });
 });
 

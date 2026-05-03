@@ -92,6 +92,8 @@ export interface AnnotationAppendPlan {
   canAppend: boolean;
 }
 
+export type ScreenshotRefKind = 'empty' | 'data_url' | 'absolute_path' | 'other';
+
 export interface PromptDiagnostics {
   sessionId: string;
   captureCount: number;
@@ -263,6 +265,20 @@ export function normalizeGithubRepoInput(value: string | null | undefined): stri
   const sshMatch = trimmed.match(/^git@github\.com:([^/\s]+\/[^/\s#?]+?)(?:\.git)?$/i);
   const raw = httpsMatch?.[1] ?? sshMatch?.[1] ?? trimmed;
   return raw.replace(/\.git$/i, '').replace(/\/+$/g, '');
+}
+
+export function isAbsoluteFilesystemScreenshotRef(ref: string | null | undefined): boolean {
+  const trimmed = ref?.trim();
+  if (!trimmed || trimmed.startsWith('data:')) return false;
+  return trimmed.startsWith('/') || /^[A-Za-z]:[\\/]/.test(trimmed);
+}
+
+export function classifyScreenshotRef(ref: string | null | undefined): ScreenshotRefKind {
+  const trimmed = ref?.trim();
+  if (!trimmed) return 'empty';
+  if (trimmed.startsWith('data:image/')) return 'data_url';
+  if (isAbsoluteFilesystemScreenshotRef(trimmed)) return 'absolute_path';
+  return 'other';
 }
 
 export function normalizePersistedSession(
