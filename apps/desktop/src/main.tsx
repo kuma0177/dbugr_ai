@@ -91,6 +91,7 @@ const SCREENSHOT_SUPPORT_ROLLOUT_AT = new Date('2026-05-01T11:00:00-07:00').getT
 const PERSIST_MIRROR_DEBOUNCE_MS = 250;
 const SESSION_API_REFRESH_INTERVAL_MS = 10_000;
 const PERMISSION_REFRESH_INTERVAL_MS = 15_000;
+const LOADING_INDICATOR_DELAY_MS = 500;
 
 let appMode: AppMode = 'welcome';
 let sessions: Session[] = [];
@@ -131,6 +132,12 @@ let sessionsApiLoadInFlight: Promise<void> | null = null;
 let lastSessionsApiLoadAt = 0;
 let pendingSessionSwitchId: string | null = null;
 let pendingFlowSelection: SubmissionFlow | null = null;
+let visiblePendingSessionSwitchId: string | null = null;
+let pendingSessionSwitchTimer: number | null = null;
+let visiblePendingFlowSelection: SubmissionFlow | null = null;
+let pendingFlowSelectionTimer: number | null = null;
+let showSendLoadingIndicator = false;
+let sendLoadingTimer: number | null = null;
 let permissionCheckInFlight: Promise<void> | null = null;
 let lastPermissionCheckAt = 0;
 let lastPermissionMarkup = '';
@@ -233,8 +240,73 @@ function sessionLevelNote(session: Session): string {
   return session.about?.trim() || session.sessionNote?.trim() || '';
 }
 
+function sandclockMarkup(label: string) {
+  return `<span class="sandclock-inline"><span class="sandclock-spinner" aria-hidden="true">⌛</span><span>${label}</span></span>`;
+}
+
 function loadingDots(label: string) {
-  return `${label} <span class="inline-spinner" aria-hidden="true"></span>`;
+  return sandclockMarkup(`${label}…`);
+}
+
+function clearPendingSessionSwitchIndicator() {
+  if (pendingSessionSwitchTimer !== null) {
+    window.clearTimeout(pendingSessionSwitchTimer);
+    pendingSessionSwitchTimer = null;
+  }
+  visiblePendingSessionSwitchId = null;
+}
+
+function schedulePendingSessionSwitchIndicator(sessionId: string) {
+  clearPendingSessionSwitchIndicator();
+  pendingSessionSwitchTimer = window.setTimeout(() => {
+    pendingSessionSwitchTimer = null;
+    if (pendingSessionSwitchId === sessionId) {
+      visiblePendingSessionSwitchId = sessionId;
+      if (appMode === 'welcome') {
+        renderWelcome();
+      } else {
+        renderSessionList();
+      }
+    }
+  }, LOADING_INDICATOR_DELAY_MS);
+}
+
+function clearSendLoadingIndicator() {
+  if (sendLoadingTimer !== null) {
+    window.clearTimeout(sendLoadingTimer);
+    sendLoadingTimer = null;
+  }
+  showSendLoadingIndicator = false;
+}
+
+function scheduleSendLoadingIndicator() {
+  clearSendLoadingIndicator();
+  sendLoadingTimer = window.setTimeout(() => {
+    sendLoadingTimer = null;
+    if (isSending) {
+      showSendLoadingIndicator = true;
+      renderWorkspacePanel();
+    }
+  }, LOADING_INDICATOR_DELAY_MS);
+}
+
+function clearPendingFlowSelectionIndicator() {
+  if (pendingFlowSelectionTimer !== null) {
+    window.clearTimeout(pendingFlowSelectionTimer);
+    pendingFlowSelectionTimer = null;
+  }
+  visiblePendingFlowSelection = null;
+}
+
+function schedulePendingFlowSelectionIndicator(flow: SubmissionFlow) {
+  clearPendingFlowSelectionIndicator();
+  pendingFlowSelectionTimer = window.setTimeout(() => {
+    pendingFlowSelectionTimer = null;
+    if (pendingFlowSelection === flow) {
+      visiblePendingFlowSelection = flow;
+      renderWorkspacePanel();
+    }
+  }, LOADING_INDICATOR_DELAY_MS);
 }
 
 function refreshSessionMetaDisplay(session: Session) {
@@ -469,7 +541,7 @@ function pushPendingButtonText() {
 }
 
 function pushPendingButtonSubtext(currentTarget: Target) {
-  return `Current target: ${providerLabel(currentTarget)}. Switch between Claude, Codex, or Cursor in Submit.`;
+  return `Current target: ${providerLabel(currentTarget)}. Switch between Claude CLI, Codex CLI, or Cursor in Submit.`;
 }
 
 async function fitWindowToContent() {
@@ -656,7 +728,7 @@ function renderWelcome() {
             <div class="wc-provider-block">
               <div class="wc-provider-header">
                 <div class="wc-provider-name">
-                  <img class="provider-logo" src="${logoClaudeUrl}" alt="Claude" /><strong>Claude</strong>
+                  <img class="provider-logo" src="${logoClaudeUrl}" alt="Claude CLI" /><strong>Claude CLI</strong>
                   <span class="provider-pill ${claudeReady ? 'connected' : ''}">${claudeReady ? '● Connected' : '○ Not connected'}</span>
                 </div>
                 ${claudeReady ? `<button class="wc-disconnect-btn" id="wc-disconnect-claude">Disconnect</button>` : ''}
@@ -679,12 +751,12 @@ function renderWelcome() {
                     <div class="connect-key-hint">Stored locally on this Mac only — never sent anywhere.</div>
                   ` : claudeConnecting ? `
                     <p class="wc-hint">${escapeHtml(providerConnectionPendingCopy('claude', 'oauth'))}</p>
-                    <div class="wc-waiting"><div class="connect-spinner"></div>Waiting for you to finish in the browser…</div>
+                    <div class="wc-waiting">${sandclockMarkup('Waiting for you to finish in the browser…')}</div>
                     ${connectVerifyError ? `<div class="wc-verify-error">${escapeHtml(connectVerifyError)}</div>` : ''}
                     <button class="wc-done-btn" id="wc-claude-done">✓ Done — verify my login</button>
                   ` : `
                     <p class="wc-hint">${escapeHtml(providerConnectionPendingCopy('claude', 'oauth'))}</p>
-                    <button class="wc-connect-btn" id="wc-connect-claude">Connect Claude →</button>
+                    <button class="wc-connect-btn" id="wc-connect-claude">Connect Claude CLI →</button>
                   `}
                 </div>
               `}
@@ -694,7 +766,7 @@ function renderWelcome() {
             <div class="wc-provider-block">
               <div class="wc-provider-header">
                 <div class="wc-provider-name">
-                  <img class="provider-logo" src="${logoCodexUrl}" alt="Codex" /><strong>Codex</strong>
+                  <img class="provider-logo" src="${logoCodexUrl}" alt="Codex CLI" /><strong>Codex CLI</strong>
                   <span class="provider-pill ${codexReady ? 'connected' : ''}">${codexReady ? '● Connected' : '○ Not connected'}</span>
                 </div>
                 ${codexReady ? `<button class="wc-disconnect-btn" id="wc-disconnect-codex">Disconnect</button>` : ''}
@@ -756,9 +828,9 @@ function renderWelcome() {
               <div class="sessions-divider"><span>or continue</span></div>
               <div class="recent-session-list">
                 ${recentSessions.map((session) => `
-                  <button class="recent-session-tile ${pendingSessionSwitchId === session.id ? 'loading' : ''}" data-session-id="${session.id}" ${pendingSessionSwitchId ? 'disabled' : ''}>
+                  <button class="recent-session-tile ${visiblePendingSessionSwitchId === session.id ? 'loading' : ''}" data-session-id="${session.id}" ${pendingSessionSwitchId ? 'disabled' : ''}>
                     <strong>${escapeHtml(session.title)}</strong>
-                    <span>${pendingSessionSwitchId === session.id
+                    <span>${visiblePendingSessionSwitchId === session.id
                       ? loadingDots('Opening session')
                       : `${flowLabel(session.submissionFlow)} · ${totalAnnotations(session)} annotations · ${fmtDate(session.createdAt)}`}</span>
                   </button>
@@ -848,7 +920,7 @@ function renderWelcome() {
     connectVerifyError = '';
     renderWelcome();
     const script = [
-      `echo "=== Connecting Debugr to Claude ==="`,
+      `echo "=== Connecting Debugr to Claude CLI ==="`,
       `echo ""`,
       `echo "Complete the Claude CLI login flow, then come back to Debugr and click Done."`,
       `echo ""`,
@@ -857,7 +929,7 @@ function renderWelcome() {
     await invoke('open_command_in_terminal', {
       cwd: process.env['HOME'] || '~',
       command: script,
-      title: 'Connect Debugr to Claude',
+      title: 'Connect Debugr to Claude CLI',
     }).catch(() => {
       claudeConnecting = false;
       connectVerifyError = 'Could not open Claude CLI login automatically. Open Terminal, run `claude /login`, finish the login flow, then return here and click Done.';
@@ -968,6 +1040,7 @@ function renderWelcome() {
       const sessionId = button.dataset.sessionId;
       if (!sessionId) return;
       pendingSessionSwitchId = sessionId;
+      schedulePendingSessionSwitchIndicator(sessionId);
       renderWelcome();
       window.requestAnimationFrame(() => {
         activeSessionId = sessionId;
@@ -976,6 +1049,7 @@ function renderWelcome() {
         activeAnnotationId = firstCapture?.annotations[0]?.id ?? null;
         feedback = null;
         void enterSessionMode('notes', { preserveWindowFrame: true }).finally(() => {
+          clearPendingSessionSwitchIndicator();
           pendingSessionSwitchId = null;
         });
       });
@@ -1001,7 +1075,7 @@ function renderConfirmation() {
         </p>
         <div class="confirm-summary">
           <div><strong>Saved to:</strong> ${info ? `<strong>${escapeHtml(info.sessionTitle)}</strong>` : 'your active session'}.</div>
-          <div><strong>Next:</strong> open the session board, then go to <strong>${nextStepLabel}</strong> to choose Claude, Codex, or Cursor. Captures are not sent from the overlay itself.</div>
+          <div><strong>Next:</strong> open the session board, then go to <strong>${nextStepLabel}</strong> to choose Claude CLI, Codex CLI, or Cursor. Captures are not sent from the overlay itself.</div>
         </div>
         <div class="confirm-actions">
           <button class="btn-secondary" id="confirm-more-btn">+ Add more annotations</button>
@@ -1098,7 +1172,7 @@ function renderSession() {
                 <div class="session-header-actions">
                   <button type="button" class="mini-action" id="save-session-btn">Save session</button>
                   <button type="button" class="mini-action mini-action-danger" id="delete-session-btn">Delete session</button>
-                  <div class="session-badge responded">${escapeHtml(session.status === 'responded' ? 'Responded' : session.status === 'sent' ? 'Submitted' : 'Draft')}</div>
+                  <div class="session-badge responded">${escapeHtml(session.status === 'responded' ? 'AI ready' : session.status === 'sent' ? 'Sent to AI' : 'Draft')}</div>
                 </div>
               </div>
               <div class="session-summary-strip">
@@ -1224,28 +1298,30 @@ function renderSessionList() {
     list.appendChild(labelEl);
     group.forEach((session) => {
       const row = document.createElement('div');
-      row.className = `session-item ${session.id === activeSessionId ? 'active' : ''} ${pendingSessionSwitchId === session.id ? 'loading' : ''}`;
+      row.className = `session-item ${session.id === activeSessionId ? 'active' : ''} ${visiblePendingSessionSwitchId === session.id ? 'loading' : ''}`;
       row.setAttribute('role', 'button');
       row.tabIndex = 0;
       row.innerHTML = `
         <div class="session-item-copy">
           <strong>${escapeHtml(session.title)}</strong>
-          <span>${pendingSessionSwitchId === session.id ? loadingDots('Opening session') : `${flowLabel(session.submissionFlow)} · ${fmtTime(session.createdAt)}`}</span>
+          <span>${visiblePendingSessionSwitchId === session.id ? loadingDots('Opening session') : `${flowLabel(session.submissionFlow)} · ${fmtTime(session.createdAt)}`}</span>
         </div>
         <button type="button" class="session-item-delete" data-delete-session="${session.id}" aria-label="Delete session">Delete</button>
       `;
       const selectSession = () => {
         if (pendingSessionSwitchId || activeSessionId === session.id) return;
         pendingSessionSwitchId = session.id;
+        schedulePendingSessionSwitchIndicator(session.id);
         renderSessionList();
         window.requestAnimationFrame(() => {
         activeSessionId = session.id;
         activeCaptureId = session.captures[0]?.id ?? null;
         activeAnnotationId = session.captures[0]?.annotations[0]?.id ?? null;
         feedback = session.status === 'responded' ? feedback : null;
+        clearPendingSessionSwitchIndicator();
+        pendingSessionSwitchId = null;
         persistAppState();
         renderSession();
-        pendingSessionSwitchId = null;
         });
       };
       row.addEventListener('click', selectSession);
@@ -1623,13 +1699,13 @@ function renderWorkspacePanel() {
             copy: 'Gather community signal, then curate the best context into the final submission.',
           },
         ] as const).map((item) => `
-          <button class="flow-card ${session.submissionFlow === item.flow ? 'active' : ''} ${pendingFlowSelection === item.flow ? 'loading' : ''}" data-flow="${item.flow}" ${pendingFlowSelection ? 'disabled' : ''}>
+          <button class="flow-card ${session.submissionFlow === item.flow ? 'active' : ''} ${visiblePendingFlowSelection === item.flow ? 'loading' : ''}" data-flow="${item.flow}" ${pendingFlowSelection ? 'disabled' : ''}>
             <strong>${item.title}</strong>
-            <span>${pendingFlowSelection === item.flow ? `${item.copy} Processing…` : item.copy}</span>
+            <span>${visiblePendingFlowSelection === item.flow ? sandclockMarkup('Processing…') : item.copy}</span>
           </button>
         `).join('')}
         <div class="flow-selection-status" aria-live="polite">
-          <strong>${pendingFlowSelection ? `${loadingDots('Processing')}` : 'Selected:'}</strong> ${flowLabel(pendingFlowSelection ?? session.submissionFlow)}
+          <strong>${visiblePendingFlowSelection ? `${loadingDots('Processing')}` : 'Selected:'}</strong> ${flowLabel(pendingFlowSelection ?? session.submissionFlow)}
           <span>${(pendingFlowSelection ?? session.submissionFlow) === 'direct'
             ? 'You will send this session straight to Claude, Codex, or Cursor.'
             : (pendingFlowSelection ?? session.submissionFlow) === 'team'
@@ -1644,6 +1720,7 @@ function renderWorkspacePanel() {
         const flow = button.dataset.flow as SubmissionFlow | undefined;
         if (!flow || pendingFlowSelection) return;
         pendingFlowSelection = flow;
+        schedulePendingFlowSelectionIndicator(flow);
         session.submissionFlow = flow;
         session.collaborationReady = flow === 'direct';
         if (flow === 'direct') session.contributions = [];
@@ -1652,6 +1729,7 @@ function renderWorkspacePanel() {
         renderSessionList();
         window.requestAnimationFrame(() => {
           persistAppState();
+          clearPendingFlowSelectionIndicator();
           pendingFlowSelection = null;
           renderWorkspacePanel();
           refreshSessionMetaDisplay(session);
@@ -1763,15 +1841,15 @@ function renderWorkspacePanel() {
     // ── Connect card for Claude ─────────────────────────────────────────────
     const claudeConnectCard = isClaudeReady ? '' : `
       <div class="connect-card">
-        <div class="connect-card-title">Connect Claude</div>
+          <div class="connect-card-title">Connect Claude CLI</div>
         ${claudeConnecting ? `
           <div class="connect-card-body">${escapeHtml(providerConnectionPendingCopy('claude', 'oauth'))}</div>
-          <div class="connect-waiting"><div class="connect-spinner"></div>Waiting for browser login…</div>
+          <div class="connect-waiting">${sandclockMarkup('Waiting for browser login…')}</div>
           ${connectVerifyError ? `<div class="connect-verify-error">${escapeHtml(connectVerifyError)}</div>` : ''}
           <button class="connect-done-btn" id="claude-done-btn">✓ Done — verify my login</button>
         ` : `
           <div class="connect-card-body">${escapeHtml(providerConnectionPendingCopy('claude', 'oauth'))}</div>
-          <button class="connect-primary-btn" id="connect-claude-btn">Connect Claude →</button>
+          <button class="connect-primary-btn" id="connect-claude-btn">Connect Claude CLI →</button>
         `}
       </div>
     `;
@@ -1779,7 +1857,7 @@ function renderWorkspacePanel() {
     // ── Connect card for Codex ──────────────────────────────────────────────
     const codexConnectCard = isCodexReady ? '' : `
       <div class="connect-card">
-        <div class="connect-card-title">Connect Codex</div>
+        <div class="connect-card-title">Connect Codex CLI</div>
         <div class="connect-card-body">${escapeHtml(providerConnectionPendingCopy('codex', 'api_key'))}</div>
         ${connectVerifyError ? `<div class="connect-verify-error">${escapeHtml(connectVerifyError)}</div>` : ''}
         <div class="connect-key-row">
@@ -1825,7 +1903,9 @@ function renderWorkspacePanel() {
         ${isReady ? `
           <div class="save-banner">✓ ${escapeHtml(providerConnectionReadyCopy(target, providerConnections[target].method))}</div>
           <button class="send-btn" id="send-btn" ${isSending ? 'disabled' : ''}>
-            ${isSending ? 'Opening…' : `Send to ${providerLabel(target)} ⌘↵`}
+            ${isSending
+              ? (showSendLoadingIndicator ? sandclockMarkup('Opening…') : 'Opening…')
+              : `Send to ${providerLabel(target)} ⌘↵`}
           </button>
           <div class="send-tip">${target === 'cursor'
             ? 'Debugr will open Cursor with your project folder and the session prompt ready to paste.'
@@ -1833,8 +1913,8 @@ function renderWorkspacePanel() {
           ${session.projectFolder
             ? `<div class="context-folder">📁 ${escapeHtml(session.projectFolder)}</div>`
             : `<button class="link-btn" id="add-folder-btn">+ Add project folder</button>`}
-          ${target === 'claude' ? `<button class="disconnect-btn" id="disconnect-claude-btn">Disconnect Claude</button>` : ''}
-          ${target === 'codex' ? `<button class="disconnect-btn" id="disconnect-codex-btn">Disconnect Codex</button>` : ''}
+          ${target === 'claude' ? `<button class="disconnect-btn" id="disconnect-claude-btn">Disconnect Claude CLI</button>` : ''}
+          ${target === 'codex' ? `<button class="disconnect-btn" id="disconnect-codex-btn">Disconnect Codex CLI</button>` : ''}
         ` : (target === 'claude' ? claudeConnectCard : codexConnectCard)}
       </div>
     `;
@@ -1866,9 +1946,9 @@ function renderWorkspacePanel() {
       claudeConnecting = true;
       connectVerifyError = '';
       renderSession();
-      // Also try Terminal for the CLI auth step
+      // Also try Terminal for the Claude CLI auth step
       const script = [
-        `echo "=== Connecting Debugr to Claude ==="`,
+        `echo "=== Connecting Debugr to Claude CLI ==="`,
         `echo ""`,
         `echo "Complete the Claude CLI login flow, then come back to Debugr and click Done."`,
         `echo ""`,
@@ -1877,7 +1957,7 @@ function renderWorkspacePanel() {
       await invoke('open_command_in_terminal', {
         cwd: process.env['HOME'] || '~',
         command: script,
-        title: 'Connect Debugr to Claude',
+        title: 'Connect Debugr to Claude CLI',
       }).catch(() => {
         claudeConnecting = false;
         connectVerifyError = 'Could not open Claude CLI login automatically. Open Terminal, run `claude /login`, finish the login flow, then return here and click Done.';
@@ -2385,7 +2465,7 @@ async function pushPendingSessions() {
 
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = `<span class="push-pending-copy"><strong>Opening ${pending.length} session${pending.length > 1 ? 's' : ''}…</strong><span>Preparing the prompt and handing it to ${providerLabel(target)}.</span></span>`;
+    btn.innerHTML = `<span class="push-pending-copy"><strong>${sandclockMarkup(`Opening ${pending.length} session${pending.length > 1 ? 's' : ''}…`)}</strong><span>Preparing the prompt and handing it to ${providerLabel(target)}.</span></span>`;
   }
 
   // Save sessions + screenshots to disk before the CLI reads them
@@ -2417,8 +2497,8 @@ async function pushPendingSessions() {
   } catch (err) {
     console.error('[Debugr] pushPendingSessions failed:', err);
     const hint = target === 'codex'
-      ? 'Go to Submit tab → Connect Codex to enter your API key'
-      : 'Go to Submit tab → Connect Claude to log in';
+      ? 'Go to Submit tab → Connect Codex CLI to enter your API key'
+      : 'Go to Submit tab → Connect Claude CLI to log in';
     if (btn) {
       btn.title = hint;
       btn.innerHTML = `<span class="push-pending-copy"><strong>Could not open ${providerLabel(target)}</strong><span>See the terminal, then reconnect or retry from Submit.</span></span>`;
@@ -2516,6 +2596,7 @@ async function sendSession() {
   }
 
   isSending = true;
+  scheduleSendLoadingIndicator();
   session.status = 'sent';
   session.lastTarget = target;
   persistAppState();
@@ -2534,7 +2615,7 @@ async function sendSession() {
       await invoke('open_in_cursor', { projectFolder: cwd || null });
       feedback = {
         title: 'Cursor opened',
-        summary: 'Your project has been opened in Cursor. The session prompt has been copied to your clipboard — paste it into the Cursor agent chat.',
+        summary: 'Your project has been opened in Cursor. The session prompt has been copied to your clipboard — paste it into Cursor chat to continue.',
         nextSteps: ['Paste the session prompt into Cursor chat', 'The agent will analyse the annotated areas'],
       };
       await invoke('copy_to_clipboard', { text: prompt }).catch(() => {});
@@ -2545,7 +2626,7 @@ async function sendSession() {
       await invoke('open_command_in_terminal', { cwd: cwd || process.env['HOME'] || '~', command, title });
       feedback = {
         title: `${providerLabel(target)} is running in Terminal`,
-        summary: `A Terminal window has opened with your session context. ${screenshotPaths.size > 0 ? `${screenshotPaths.size} screenshot(s) saved locally and referenced in the prompt.` : ''} ${providerLabel(target)} CLI is now analysing your annotations.`.trim(),
+        summary: `A Terminal window has opened with your session context. ${screenshotPaths.size > 0 ? `${screenshotPaths.size} screenshot(s) saved locally and referenced in the prompt.` : ''} ${providerLabel(target)} is now analysing your annotations.`.trim(),
         nextSteps: [
           'Check the Terminal window that just opened',
           screenshotPaths.size > 0 ? `${providerLabel(target)} will read the screenshot(s) from disk` : `${providerLabel(target)} will respond with its analysis there`,
@@ -2556,15 +2637,21 @@ async function sendSession() {
   } catch (err) {
     logUi('workspace_send_failed', { sessionId: session.id, target, error: err instanceof Error ? err.message : String(err) });
     feedback = {
-      title: 'Could not launch CLI',
-      summary: `Failed to open ${providerLabel(target)}: ${err instanceof Error ? err.message : String(err)}. Make sure the CLI is installed and on your PATH.`,
+      title: target === 'cursor' ? 'Could not open Cursor' : 'Could not launch CLI',
+      summary: target === 'cursor'
+        ? `Failed to open Cursor: ${err instanceof Error ? err.message : String(err)}. Make sure Cursor is installed on this Mac.`
+        : `Failed to open ${providerLabel(target)}: ${err instanceof Error ? err.message : String(err)}. Make sure the CLI is installed and on your PATH.`,
       nextSteps: [
-        target === 'codex'
-          ? 'Make sure Codex CLI is installed on this Mac'
-          : 'Make sure Claude CLI is installed on this Mac',
-        target === 'codex'
-          ? 'Go to the Submit tab → Connect Codex to enter your API key'
-          : 'Go to the Submit tab → Connect Claude to log in',
+        target === 'cursor'
+          ? 'Make sure Cursor is installed on this Mac'
+          : target === 'codex'
+            ? 'Make sure Codex CLI is installed on this Mac'
+            : 'Make sure Claude CLI is installed on this Mac',
+        target === 'cursor'
+          ? 'Retry after opening Cursor manually once'
+          : target === 'codex'
+            ? 'Go to the Submit tab → Connect Codex CLI to enter your API key'
+            : 'Go to the Submit tab → Connect Claude CLI to log in',
         'Try sending again after reconnecting',
       ],
     };
@@ -2573,6 +2660,7 @@ async function sendSession() {
   session.status = 'responded';
   logUi('workspace_send_complete', { sessionId: session.id, target, status: session.status });
   isSending = false;
+  clearSendLoadingIndicator();
   persistAppState();
   renderSession();
 }

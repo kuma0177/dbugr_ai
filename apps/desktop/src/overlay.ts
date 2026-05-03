@@ -184,7 +184,7 @@ root.innerHTML = `
         <div class="step-card-sub">Choose an existing session or start a new one.</div>
         <div class="picker-hint">Click a session row to continue. Scroll for more.</div>
         <div class="picker-list" id="picker-list">
-          <div class="picker-loading">Loading sessions…</div>
+          <div class="picker-loading">${sandclockMarkup('Loading sessions…')}</div>
         </div>
         <div class="picker-actions">
           <button class="picker-cancel-btn" id="picker-cancel">Close</button>
@@ -233,7 +233,7 @@ root.innerHTML = `
           <button type="button" class="capture-mode-btn" id="capture-mode-app" data-capture-mode="app" aria-selected="false">Other apps</button>
         </div>
         <button type="button" class="picker-cancel-btn" id="capture-refresh" style="margin-top:8px;">Refresh list</button>
-        <div class="capture-list" id="capture-list"><div class="picker-loading">Loading…</div></div>
+        <div class="capture-list" id="capture-list"><div class="picker-loading">${sandclockMarkup('Loading…')}</div></div>
         <div class="picker-actions" style="margin-top:12px;">
           <button type="button" class="picker-cancel-btn" id="capture-back">← Back</button>
         </div>
@@ -360,6 +360,10 @@ const setupFolderBtn = document.getElementById('setup-folder-btn') as HTMLButton
 const setupFolderPath = document.getElementById('setup-folder-path')!;
 const setupStartBtn = document.getElementById('setup-start') as HTMLButtonElement;
 const toolSaveBtn = document.getElementById('tool-save') as HTMLButtonElement;
+
+function sandclockMarkup(label: string) {
+  return `<span class="sandclock-inline"><span class="sandclock-spinner" aria-hidden="true">⌛</span><span>${label}</span></span>`;
+}
 
 // ── Step transitions ──────────────────────────────────────────────────────────
 
@@ -719,7 +723,7 @@ function renderCaptureSourcesError(
 }
 
 async function loadCaptureSources() {
-  captureListEl.innerHTML = '<div class="picker-loading">Loading capture sources…</div>';
+  captureListEl.innerHTML = `<div class="picker-loading">${sandclockMarkup('Loading capture sources…')}</div>`;
 
   try {
     const list = await invoke<CaptureSourceListPayload>('list_capture_sources');
@@ -1025,7 +1029,7 @@ function setPickerLoading() {
   if (cached.length > 0) {
     renderPickerSessions(cached);
   } else {
-    pickerListEl.innerHTML = '<div class="picker-loading">Loading sessions…</div>';
+    pickerListEl.innerHTML = `<div class="picker-loading">${sandclockMarkup('Loading sessions…')}</div>`;
     void hydratePickerSessionsFromBackend();
     pickerLoadingTimer = window.setTimeout(() => {
       if (token !== pickerLoadingToken) return;
@@ -1370,9 +1374,9 @@ async function saveAll() {
     setToast(`"${newSessionName}" only has room for ${remaining} more annotation${remaining === 1 ? '' : 's'}.`);
     return;
   }
-  const prevLabel = toolSaveBtn.textContent || FINISH_TOOL_LABEL;
+  const prevLabel = toolSaveBtn.innerHTML || FINISH_TOOL_LABEL;
   toolSaveBtn.disabled = true;
-  toolSaveBtn.textContent = 'Opening…';
+  toolSaveBtn.innerHTML = sandclockMarkup('Opening…');
   try {
     let screenshotForPayload = '';
     const beforePersist = describeScreenshotRef(currentScreenshotDataUrl);
@@ -1447,7 +1451,7 @@ async function saveAll() {
     setToast(`Error: ${err instanceof Error ? err.message : String(err)}`);
     updateAnnotatingHints();
     toolSaveBtn.disabled = false;
-    toolSaveBtn.textContent = prevLabel;
+    toolSaveBtn.innerHTML = prevLabel;
   }
 }
 

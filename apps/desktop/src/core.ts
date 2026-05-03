@@ -91,15 +91,15 @@ export function escapeHtml(value: string | undefined | null): string {
 }
 
 export function providerLabel(value: Target): string {
-  if (value === 'codex') return 'Codex';
+  if (value === 'codex') return 'Codex CLI';
   if (value === 'cursor') return 'Cursor';
-  return 'Claude';
+  return 'Claude CLI';
 }
 
 export function providerSubtitle(value: Target): string {
-  if (value === 'codex') return 'GPT-4.1 or local CLI';
-  if (value === 'cursor') return 'Cursor background agent';
-  return 'Anthropic Claude';
+  if (value === 'codex') return 'Terminal handoff with your OpenAI API key';
+  if (value === 'cursor') return 'Open Cursor and paste the prompt';
+  return 'Terminal handoff through the Claude CLI';
 }
 
 export function providerConnectionMethodLabel(method: ProviderConnectionMethod | null): string {
@@ -124,15 +124,15 @@ export function providerConnectionPendingCopy(
   method: ProviderConnectionMethod,
 ): string {
   if (provider === 'claude' && method === 'api_key') {
-    return 'Paste your Anthropic API key below and click Verify & Save. Debugr verifies it before saving it locally.';
+    return 'Paste your Anthropic API key below and click Verify & Save. Debugr verifies it before saving it locally, then uses Claude CLI in Terminal when you send.';
   }
   if (provider === 'claude') {
     return 'Debugr will open a Terminal window and run `claude /login`. Finish the Claude CLI login flow, then click Done to verify it worked.';
   }
   if (provider === 'codex') {
-    return 'Open the OpenAI API keys page, then paste your key below and click Verify & Save. Opening the page alone does not connect Debugr.';
+    return 'Open the OpenAI API keys page, then paste your key below and click Verify & Save. When you send, Debugr will launch Codex CLI in Terminal.';
   }
-  return 'Install Cursor to send sessions directly to the Cursor AI agent. No API key is required.';
+  return 'Install Cursor to open the project in Cursor and paste the session prompt there. No API key is required.';
 }
 
 export function providerConnectionReadyCopy(
@@ -140,15 +140,15 @@ export function providerConnectionReadyCopy(
   method: ProviderConnectionMethod | null,
 ): string {
   if (provider === 'claude' && method === 'api_key') {
-    return 'Your Anthropic API key is stored locally on this Mac. When you click Send, Debugr will use it to hand off the session to Claude.';
+    return 'Your Anthropic API key is stored locally on this Mac. When you click Send, Debugr will open Claude CLI in Terminal and hand off the session there.';
   }
   if (provider === 'claude') {
-    return 'You can now send any session straight to Claude from the Submit tab. Claude will read your screenshots and annotations and reply with a diagnosis.';
+    return 'You can now send any session straight to Claude CLI from the Submit tab. Terminal will open, Claude CLI will read your screenshots and annotations, and reply with a diagnosis.';
   }
   if (provider === 'codex') {
-    return 'Your OpenAI API key is stored locally on this Mac. When you click Send, Debugr will use it to hand off the session to Codex.';
+    return 'Your OpenAI API key is stored locally on this Mac. When you click Send, Debugr will open Codex CLI in Terminal and hand off the session there.';
   }
-  return 'No login needed. Debugr will open your project folder directly in Cursor with the session prompt ready to paste.';
+  return 'No login needed. Debugr will open your project folder directly in Cursor and copy the session prompt so you can paste it into chat.';
 }
 
 export function flowLabel(flow: SubmissionFlow): string {

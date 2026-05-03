@@ -610,6 +610,36 @@ html, body {
 .picker-loading, .picker-empty {
   font-size: 12px; color: var(--muted); text-align: center; padding: 16px 0;
 }
+
+.sandclock-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sandclock-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--blue);
+  font-size: 14px;
+  line-height: 1;
+  font-family: "Segoe UI Symbol", "Segoe UI Emoji", "Apple Color Emoji", sans-serif;
+  transform-origin: 50% 56%;
+  animation: sandclock-tick 1.15s steps(2, end) infinite;
+  flex-shrink: 0;
+}
+
+@keyframes sandclock-tick {
+  0%, 100% {
+    transform: rotate(0deg) translateY(0);
+  }
+  50% {
+    transform: rotate(180deg) translateY(-1px);
+  }
+}
 .picker-actions {
   display: flex; gap: 8px; justify-content: space-between; align-items: center;
 }
