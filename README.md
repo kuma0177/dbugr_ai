@@ -1,74 +1,207 @@
-# debugr.ai
+# Dbugr.ai
 
-Native macOS feedback capture for AI coding workflows. Debugr lets a user open the desktop app, freeze the exact browser tab or app view they want help with, annotate it, confirm the linked GitHub repo context, and send the report to Claude Code or Codex.
+Native macOS feedback capture for AI coding workflows. Dbugr lets you capture the exact browser tab, app window, or visible screen content you want help with, annotate it, attach project context, and send the session to Claude, Codex, or Cursor.
+
+## GitHub About
+
+Suggested GitHub repository description:
+
+`Native macOS screenshot annotation and AI handoff tool for Claude, Codex, and Cursor.`
+
+Suggested repository website / docs link:
+
+- `README.md` for local install and run instructions
+- `docs/native-macos-migration.md` for the native-app roadmap
+
+## What You Can Run Today
+
+- `apps/desktop` — the main Tauri desktop app used for the current local product flow
+- `apps/desktop-native-mac` — the Swift/AppKit native macOS prototype
+- `apps/api` — local Express API
+- `apps/worker` — local background/mock processing worker
+- `apps/web` — local Next.js review dashboard
+- `apps/mcp-server` — stdio MCP server for agent access to saved feedback
+
+If you want the full current product experience, run the Tauri desktop app plus the API, worker, and web apps.
+
+If you want to experiment with the native migration, run `apps/desktop-native-mac`.
 
 ## Monorepo Structure
 
 ```text
 debugr/
 ├── apps/
-│   ├── desktop/      Tauri native capture app
-│   ├── web/          Next.js review dashboard (port 3000)
-│   ├── api/          Express REST API (port 3001)
-│   ├── worker/       Mock processing worker (port 3002)
-│   └── mcp-server/   MCP server (stdio)
+│   ├── desktop/             Tauri desktop app
+│   ├── desktop-native-mac/  Swift/AppKit native macOS prototype
+│   ├── web/                 Next.js review dashboard (port 3000)
+│   ├── api/                 Express REST API (port 3001)
+│   ├── worker/              Worker service (port 3002)
+│   └── mcp-server/          MCP server (stdio)
 ├── packages/
-│   ├── shared/       TypeScript types
-│   ├── db/           Prisma schema + SQLite client
-│   ├── ai/           AI provider interfaces (stub)
-│   └── integrations/ Integration providers and env config
+│   ├── shared/              Shared TypeScript types
+│   ├── db/                  Prisma schema + SQLite client
+│   ├── ai/                  AI provider interfaces
+│   └── integrations/        Integration providers and env config
 ```
 
-## Prerequisites
+## Requirements
 
-- Node.js 20+
-- pnpm 9+
-- macOS for the native DMG app flow
+For local development on macOS, install:
 
-## Setup
+- macOS
+- Node.js `20+`
+- `pnpm 9+`
+- Rust toolchain
+- Xcode Command Line Tools
 
-1. Copy `.env.example` to `.env` at the repo root.
-2. Install dependencies.
-3. Create and seed the local SQLite database.
+Recommended checks:
 
 ```bash
+node -v
+pnpm -v
+rustc -V
+xcode-select -p
+```
+
+Why these are needed:
+
+- `apps/desktop` is a Tauri app, so it depends on Node, pnpm, Rust, and macOS build tooling.
+- `apps/desktop-native-mac` is a Swift Package, so it also depends on Apple developer tooling.
+- Screen capture features require macOS Screen Recording permission when you first run the app.
+
+## First-Time Setup
+
+1. Clone the repo.
+2. Copy `.env.example` to `.env` at the repo root.
+3. Install workspace dependencies.
+4. Create and seed the local SQLite database.
+
+```bash
+git clone <your-fork-or-this-repo-url>
+cd debugr
 cp .env.example .env
 pnpm install
 pnpm db:setup
 ```
 
-The database lives in `packages/db/prisma/dev.db`. It is a local SQLite file, so every clone gets its own copy once `pnpm db:setup` runs.
+The local database is created at:
 
-## Running Locally
+`packages/db/prisma/dev.db`
 
-Open four terminals:
+Every clone gets its own local SQLite database after `pnpm db:setup`.
+
+## Run The Main App Locally
+
+For the current end-to-end product flow, open four terminals:
 
 ```bash
-# Terminal 1 — Desktop app
-cd apps/desktop && pnpm dev
+# Terminal 1 — Tauri desktop app
+cd apps/desktop
+pnpm dev
 
 # Terminal 2 — API
-cd apps/api && pnpm dev
+cd apps/api
+pnpm dev
 
 # Terminal 3 — Worker
-cd apps/worker && pnpm dev
+cd apps/worker
+pnpm dev
 
 # Terminal 4 — Web dashboard
-cd apps/web && pnpm dev
+cd apps/web
+pnpm dev
 ```
 
-During development:
+Local endpoints:
 
-- Desktop app preview: `http://127.0.0.1:5173`
+- Desktop frontend preview: `http://127.0.0.1:5173`
 - Review dashboard: `http://127.0.0.1:3000`
 - API: `http://127.0.0.1:3001`
 - Worker: `http://127.0.0.1:3002`
 
-If you need to reset the local store after changing the schema:
+## Run The Native macOS Prototype
+
+If you want to test the Swift/AppKit native migration path:
 
 ```bash
+cd apps/desktop-native-mac
+swift run debugr-native-mac
+```
+
+Capture smoke test:
+
+```bash
+cd apps/desktop-native-mac
+swift run debugr-native-mac --capture-smoke
+```
+
+More native-app details live in:
+
+- [apps/desktop-native-mac/README.md](/Users/kumar/debugr/apps/desktop-native-mac/README.md)
+- [docs/native-macos-migration.md](/Users/kumar/debugr/docs/native-macos-migration.md)
+
+## Environment Variables
+
+Start with:
+
+```bash
+cp .env.example .env
+```
+
+Important defaults from [.env.example](/Users/kumar/debugr/.env.example:1):
+
+- `DATABASE_URL` points at the local SQLite database
+- `NEXT_PUBLIC_API_URL` points the web app at the local API
+- `ANTHROPIC_API_KEY` is optional for local runs
+- GitHub and Jira variables are optional unless you want those integrations
+
+Current local behavior:
+
+- If no AI key is configured, the worker falls back to mock summaries in some flows.
+- Integration routes are present, but some production-grade routing and auth work are still pending.
+
+## Permissions On First Run
+
+The macOS desktop app may ask for:
+
+- Screen Recording permission
+- Accessibility permission in some shortcut/focus flows
+
+If capture looks blank or fails:
+
+1. Open `System Settings -> Privacy & Security -> Screen Recording`
+2. Make sure the app or terminal you launched it from has permission
+3. Restart the app after granting permission
+
+## Common Commands
+
+Database:
+
+```bash
+pnpm db:generate
 pnpm db:push
 pnpm db:seed
+pnpm db:migrate
+```
+
+Build all packages and apps:
+
+```bash
+pnpm build
+```
+
+Build just the desktop app:
+
+```bash
+cd apps/desktop
+pnpm build
+```
+
+Run MCP server:
+
+```bash
+cd apps/mcp-server
+pnpm dev
 ```
 
 ## Product Flow
@@ -77,30 +210,14 @@ pnpm db:seed
 2. Capture the content on screen, freeze it, and add annotation notes to the screenshot.
 3. Choose an existing session or create a new one if needed.
 4. When creating a new session, attach the GitHub repo or local project folder that the work belongs to.
-5. Save the notes into the session and show a clear confirmation with next actions.
+5. Save the notes into the session and confirm what session was updated.
 6. Choose whether to submit the saved session to Claude, Codex, or Cursor.
 7. On first submission, complete the provider connection flow if the target is not yet linked.
-8. Show the prompt summary that is being handed off, then show the immediate provider response or handoff result.
-
-## MCP Server
-
-The MCP server exposes saved feedback context to AI coding agents via stdio.
-
-```bash
-cd apps/mcp-server && pnpm dev
-```
-
-Tools:
-
-- `list_feedback` — list non-private sessions
-- `get_feedback` — full session detail including annotations, screenshots, comments, and task brief
-- `get_feedback_assets` — saved capture assets
-- `create_improvement_task` — create a draft task
-- `send_approved_task` — send an approved task to an integration target
+8. Review the prompt summary that is being handed off, then submit.
 
 ## Current State
 
-- [x] Native macOS capture app with screenshot freeze + box annotations
+- [x] Tauri desktop app for the current local workflow
 - [x] Native macOS prototype with local session persistence and prompt-preview groundwork
 - [x] Express API for sessions, comments, tasks, integrations, and handoff context
 - [x] Next.js dashboard for review, summaries, and follow-up actions
@@ -110,7 +227,13 @@ Tools:
 
 ## Native macOS Migration
 
-Debugr is moving toward a macOS-native-first desktop app. See [Native macOS Migration Guide](docs/native-macos-migration.md) for the migration context, target user flow, capture UX decisions, and milestone plan.
+Dbugr is moving toward a macOS-native-first desktop app. See [docs/native-macos-migration.md](/Users/kumar/debugr/docs/native-macos-migration.md:1) for the migration context, target user flow, capture UX decisions, and milestone plan.
+
+## Detailed Setup Guide
+
+For a cleaner step-by-step install and troubleshooting flow, see:
+
+- [docs/local-development.md](/Users/kumar/debugr/docs/local-development.md:1)
 
 ## Remaining Work
 
