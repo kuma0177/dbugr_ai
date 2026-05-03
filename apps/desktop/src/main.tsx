@@ -90,6 +90,7 @@ const UI_LOG_PREFIX = '[debugr-ui]';
 const SCREENSHOT_SUPPORT_ROLLOUT_AT = new Date('2026-05-01T11:00:00-07:00').getTime();
 const PERSIST_MIRROR_DEBOUNCE_MS = 250;
 const SESSION_API_REFRESH_INTERVAL_MS = 10_000;
+const PERMISSION_REFRESH_INTERVAL_MS = 15_000;
 
 let appMode: AppMode = 'welcome';
 let sessions: Session[] = [];
@@ -128,6 +129,13 @@ let screenshotCacheRefreshQueued = false;
 let persistMirrorsTimer: number | null = null;
 let sessionsApiLoadInFlight: Promise<void> | null = null;
 let lastSessionsApiLoadAt = 0;
+let pendingSessionSwitchId: string | null = null;
+let pendingFlowSelection: SubmissionFlow | null = null;
+let permissionCheckInFlight: Promise<void> | null = null;
+let lastPermissionCheckAt = 0;
+let lastPermissionMarkup = '';
+let lastPermissionClassName = 'perm-note';
+let lastPermissionExecutablePath = '';
 let authState: AuthState = {
   authenticated: false,
   profileInitialized: false,
@@ -219,6 +227,37 @@ function activePreviewCapture() {
   const session = activeSession();
   if (!session || !activePreviewCaptureId) return undefined;
   return session.captures.find((capture) => capture.id === activePreviewCaptureId);
+}
+
+function sessionLevelNote(session: Session): string {
+  return session.about?.trim() || session.sessionNote?.trim() || '';
+}
+
+function loadingDots(label: string) {
+  return `${label} <span class="inline-spinner" aria-hidden="true"></span>`;
+}
+
+function refreshSessionMetaDisplay(session: Session) {
+  const meta = document.getElementById('session-meta-display');
+  if (!meta) return;
+  meta.textContent = `${fmtDate(session.createdAt)} · ${fmtTime(session.createdAt)} · ${flowLabel(session.submissionFlow)} · ${buildStatusCopy(session)}`;
+}
+
+function providerLogoUrl(provider: Target) {
+  if (provider === 'claude') return logoClaudeUrl;
+  if (provider === 'codex') return logoCodexUrl;
+  return logoCursorUrl;
+}
+
+function bindPermissionNoteActions(executablePath: string) {
+  document.getElementById('open-screen-settings-btn')?.addEventListener('click', async () => {
+    await requestScreenRecordingPermission().catch(() => {});
+    await invoke('request_screen_capture_permission').catch(() => false);
+    await invoke('open_screen_capture_settings').catch(() => {});
+  });
+  document.getElementById('reveal-runtime-btn')?.addEventListener('click', () => {
+    void invoke('reveal_in_finder', { path: executablePath }).catch(() => {});
+  });
 }
 
 function captureNeedsLegacyScreenshotLabel(capture: CaptureCard) {
@@ -476,7 +515,7 @@ function connectedProviderCount() {
 function mockContributionBody(flow: SubmissionFlow, session: Session, index: number) {
   const capture = session.captures[index % Math.max(1, session.captures.length)];
   const annotation = capture?.annotations[index % Math.max(1, capture.annotations.length)];
-  const note = annotation?.text || session.sessionNote || session.about || 'The onboarding flow needs a closer look.';
+  const note = annotation?.text || sessionLevelNote(session) || 'The onboarding flow needs a closer look.';
   if (flow === 'public') {
     const ideas = [
       `${note} needs a tighter explanation before this reaches the AI summary.`,
@@ -550,7 +589,7 @@ function renderWelcome() {
         <div class="welcome-hero">
           <img class="app-icon" src="${brandIconUrl}" alt="Debugr logo" />
           <div class="welcome-hero-copy">
-            <h1>Debugr V2</h1>
+            <h1>Dbugr.ai</h1>
             <p>A desktop-first capture flow for sign-in, MCP setup, session notes, review, and AI submission.</p>
           </div>
         </div>
@@ -717,9 +756,11 @@ function renderWelcome() {
               <div class="sessions-divider"><span>or continue</span></div>
               <div class="recent-session-list">
                 ${recentSessions.map((session) => `
-                  <button class="recent-session-tile" data-session-id="${session.id}">
+                  <button class="recent-session-tile ${pendingSessionSwitchId === session.id ? 'loading' : ''}" data-session-id="${session.id}" ${pendingSessionSwitchId ? 'disabled' : ''}>
                     <strong>${escapeHtml(session.title)}</strong>
-                    <span>${flowLabel(session.submissionFlow)} · ${totalAnnotations(session)} annotations · ${fmtDate(session.createdAt)}</span>
+                    <span>${pendingSessionSwitchId === session.id
+                      ? loadingDots('Opening session')
+                      : `${flowLabel(session.submissionFlow)} · ${totalAnnotations(session)} annotations · ${fmtDate(session.createdAt)}`}</span>
                   </button>
                 `).join('')}
               </div>
@@ -923,14 +964,21 @@ function renderWelcome() {
 
   document.querySelectorAll<HTMLButtonElement>('.recent-session-tile').forEach((button) => {
     button.addEventListener('click', () => {
+      if (pendingSessionSwitchId) return;
       const sessionId = button.dataset.sessionId;
       if (!sessionId) return;
-      activeSessionId = sessionId;
-      const firstCapture = sessions.find((session) => session.id === sessionId)?.captures[0];
-      activeCaptureId = firstCapture?.id ?? null;
-      activeAnnotationId = firstCapture?.annotations[0]?.id ?? null;
-      feedback = null;
-      void enterSessionMode('notes', { preserveWindowFrame: true });
+      pendingSessionSwitchId = sessionId;
+      renderWelcome();
+      window.requestAnimationFrame(() => {
+        activeSessionId = sessionId;
+        const firstCapture = sessions.find((session) => session.id === sessionId)?.captures[0];
+        activeCaptureId = firstCapture?.id ?? null;
+        activeAnnotationId = firstCapture?.annotations[0]?.id ?? null;
+        feedback = null;
+        void enterSessionMode('notes', { preserveWindowFrame: true }).finally(() => {
+          pendingSessionSwitchId = null;
+        });
+      });
     });
   });
 
@@ -1044,8 +1092,8 @@ function renderSession() {
               <div class="session-title-row">
                 <div class="session-title-block">
                   <input class="session-title-inline" id="header-title-input" value="${escapeHtml(session.title)}" placeholder="Untitled session" spellcheck="false" />
-                  <div class="session-header-note" id="header-note-display">${session.sessionNote?.trim() ? escapeHtml(session.sessionNote) : '<span class="session-header-note-placeholder">Add a session note…</span>'}</div>
-                  <div class="session-meta">${fmtDate(session.createdAt)} · ${fmtTime(session.createdAt)} · ${flowLabel(session.submissionFlow)} · ${buildStatusCopy(session)}</div>
+                  <div class="session-header-note" id="header-note-display">${sessionLevelNote(session) ? escapeHtml(sessionLevelNote(session)) : '<span class="session-header-note-placeholder">Add a session note…</span>'}</div>
+                  <div class="session-meta" id="session-meta-display">${fmtDate(session.createdAt)} · ${fmtTime(session.createdAt)} · ${flowLabel(session.submissionFlow)} · ${buildStatusCopy(session)}</div>
                 </div>
                 <div class="session-header-actions">
                   <button type="button" class="mini-action" id="save-session-btn">Save session</button>
@@ -1074,15 +1122,10 @@ function renderSession() {
                     <input class="field-input" id="session-title-input" value="${escapeHtml(session.title)}" placeholder="Onboarding flow bug" />
                   </label>
                   <label class="field-block">
-                    <span class="field-label-inline">About <span id="about-count">${(session.about ?? '').length}</span>/200</span>
-                    <textarea class="field-textarea" id="session-about-input" maxlength="200" placeholder="What is this session about, and what kind of annotations are being collected?">${escapeHtml(session.about ?? '')}</textarea>
-                    <span class="field-helper">Use this to give the AI the frame before it reads individual annotations.</span>
-                  </label>
-                  <label class="field-block">
-                    <span class="field-label-inline">Session note</span>
-                    <textarea class="field-textarea compact" id="session-note-input" placeholder="Add session-level notes, expected behavior, or reproduction detail.">${escapeHtml(session.sessionNote ?? '')}</textarea>
-                    <span class="field-helper">This is the human note that should travel with the whole session, not just a single screenshot.</span>
-                    ${totalAnnotations(session) > 1 && !(session.sessionNote ?? '').trim()
+                    <span class="field-label-inline">Session Note <span id="about-count">${sessionLevelNote(session).length}</span>/200</span>
+                    <textarea class="field-textarea" id="session-about-input" maxlength="200" placeholder="Add session-level notes, expected behavior, reproduction detail, or the frame for this issue.">${escapeHtml(sessionLevelNote(session))}</textarea>
+                    <span class="field-helper">This is the one session-level note that should travel with the whole session and frame the annotations for the AI.</span>
+                    ${totalAnnotations(session) > 1 && !sessionLevelNote(session)
     ? '<span class="field-helper field-helper-warn">Required before you can send to AI when this session has more than one annotation.</span>'
     : ''}
                   </label>
@@ -1181,23 +1224,29 @@ function renderSessionList() {
     list.appendChild(labelEl);
     group.forEach((session) => {
       const row = document.createElement('div');
-      row.className = `session-item ${session.id === activeSessionId ? 'active' : ''}`;
+      row.className = `session-item ${session.id === activeSessionId ? 'active' : ''} ${pendingSessionSwitchId === session.id ? 'loading' : ''}`;
       row.setAttribute('role', 'button');
       row.tabIndex = 0;
       row.innerHTML = `
         <div class="session-item-copy">
           <strong>${escapeHtml(session.title)}</strong>
-          <span>${flowLabel(session.submissionFlow)} · ${fmtTime(session.createdAt)}</span>
+          <span>${pendingSessionSwitchId === session.id ? loadingDots('Opening session') : `${flowLabel(session.submissionFlow)} · ${fmtTime(session.createdAt)}`}</span>
         </div>
         <button type="button" class="session-item-delete" data-delete-session="${session.id}" aria-label="Delete session">Delete</button>
       `;
       const selectSession = () => {
+        if (pendingSessionSwitchId || activeSessionId === session.id) return;
+        pendingSessionSwitchId = session.id;
+        renderSessionList();
+        window.requestAnimationFrame(() => {
         activeSessionId = session.id;
         activeCaptureId = session.captures[0]?.id ?? null;
         activeAnnotationId = session.captures[0]?.annotations[0]?.id ?? null;
         feedback = session.status === 'responded' ? feedback : null;
         persistAppState();
         renderSession();
+        pendingSessionSwitchId = null;
+        });
       };
       row.addEventListener('click', selectSession);
       row.addEventListener('keydown', (event) => {
@@ -1389,8 +1438,7 @@ function renderCapturePayload(session: Session) {
           </div>
         ` : ''}
         <div class="capture-payload-context">
-          <div><strong>Session about:</strong> ${escapeHtml(session.about?.trim() || 'Not set')}</div>
-          <div><strong>Session note:</strong> ${escapeHtml(session.sessionNote?.trim() || 'Not set')}</div>
+          <div><strong>Session note:</strong> ${escapeHtml(sessionLevelNote(session) || 'Not set')}</div>
         </div>
       </div>
     </div>
@@ -1537,8 +1585,7 @@ function renderWorkspacePanel() {
           <strong>Checklist</strong>
           <ul class="bullet-list">
             <li>Give the session a concrete title.</li>
-            <li>Use the 200-character about field to name the problem space.</li>
-            <li>Add a session note for reproduction detail or expected behavior.</li>
+            <li>Use the session note field to frame the problem and expected behavior.</li>
             <li>Link the folder or GitHub repo if code changes are the likely next step.</li>
           </ul>
         </div>
@@ -1576,27 +1623,40 @@ function renderWorkspacePanel() {
             copy: 'Gather community signal, then curate the best context into the final submission.',
           },
         ] as const).map((item) => `
-          <button class="flow-card ${session.submissionFlow === item.flow ? 'active' : ''}" data-flow="${item.flow}">
+          <button class="flow-card ${session.submissionFlow === item.flow ? 'active' : ''} ${pendingFlowSelection === item.flow ? 'loading' : ''}" data-flow="${item.flow}" ${pendingFlowSelection ? 'disabled' : ''}>
             <strong>${item.title}</strong>
-            <span>${item.copy}</span>
+            <span>${pendingFlowSelection === item.flow ? `${item.copy} Processing…` : item.copy}</span>
           </button>
         `).join('')}
-        <div class="journey-card">
-          <strong>Current path</strong>
-          <p>${flowLabel(session.submissionFlow)} keeps the session in <strong>${session.submissionFlow === 'direct' ? 'solo mode' : session.submissionFlow === 'team' ? 'team review' : 'community curation'}</strong> until you submit it.</p>
+        <div class="flow-selection-status" aria-live="polite">
+          <strong>${pendingFlowSelection ? `${loadingDots('Processing')}` : 'Selected:'}</strong> ${flowLabel(pendingFlowSelection ?? session.submissionFlow)}
+          <span>${(pendingFlowSelection ?? session.submissionFlow) === 'direct'
+            ? 'You will send this session straight to Claude, Codex, or Cursor.'
+            : (pendingFlowSelection ?? session.submissionFlow) === 'team'
+              ? 'Teammates can add notes and annotations before you submit it.'
+              : 'Community feedback will be curated before the final submission.'}</span>
         </div>
-        <button class="send-btn" id="flow-next-btn">${session.submissionFlow === 'direct' ? 'Skip to submit →' : 'Start collaboration →'}</button>
+        <button class="send-btn" id="flow-next-btn" ${pendingFlowSelection ? 'disabled' : ''}>${session.submissionFlow === 'direct' ? 'Skip to submit →' : 'Start collaboration →'}</button>
       </div>
     `;
     document.querySelectorAll<HTMLButtonElement>('[data-flow]').forEach((button) => {
       button.addEventListener('click', () => {
         const flow = button.dataset.flow as SubmissionFlow | undefined;
-        if (!flow) return;
+        if (!flow || pendingFlowSelection) return;
+        pendingFlowSelection = flow;
         session.submissionFlow = flow;
         session.collaborationReady = flow === 'direct';
         if (flow === 'direct') session.contributions = [];
-        persistAppState();
-        renderSession();
+        renderWorkspacePanel();
+        refreshSessionMetaDisplay(session);
+        renderSessionList();
+        window.requestAnimationFrame(() => {
+          persistAppState();
+          pendingFlowSelection = null;
+          renderWorkspacePanel();
+          refreshSessionMetaDisplay(session);
+          renderSessionList();
+        });
       });
     });
     document.getElementById('flow-next-btn')?.addEventListener('click', () => {
@@ -1732,22 +1792,30 @@ function renderWorkspacePanel() {
     `;
 
     panel.innerHTML = `
-      <div class="right-panel-head">
+      <div class="right-panel-head submit-panel-head">
         <div class="right-panel-title">Send session</div>
         <div class="right-panel-sub">${annCount} capture${session.captures.length !== 1 ? 's' : ''} · ${annCount} annotation${annCount !== 1 ? 's' : ''}</div>
       </div>
-      <div class="right-panel-body stacked-panel">
+      <div class="right-panel-body stacked-panel submit-panel-body">
         ${submitGateError ? `<div class="submit-gate-error" role="alert">${escapeHtml(submitGateError)}</div>` : ''}
 
-        <div class="field-label">SEND TO</div>
-        <div class="target-grid">
+        <div class="submit-kicker">Send to</div>
+        <div class="target-grid" role="radiogroup" aria-label="Choose AI destination">
           ${(['claude', 'codex', 'cursor'] as Target[]).map((provider) => {
             const connected = provider === 'claude' ? isClaudeReady : provider === 'codex' ? isCodexReady : isCursorReady;
             return `
-              <button class="target-card ${target === provider ? 'active' : ''}" data-target="${provider}">
-                <strong>${providerLabel(provider)}</strong>
-                <span class="target-status ${connected ? 'connected' : 'not-connected'}">
-                  ${connected ? '● Ready' : '○ Not connected'}
+              <button class="target-card ${target === provider ? 'active' : ''}" data-target="${provider}" role="radio" aria-checked="${target === provider ? 'true' : 'false'}">
+                <span class="target-card-radio" aria-hidden="true">
+                  <span class="target-card-radio-dot"></span>
+                </span>
+                <span class="target-card-main">
+                  <span class="target-card-head">
+                    <img class="provider-logo target-provider-logo" src="${providerLogoUrl(provider)}" alt="" />
+                    <strong>${providerLabel(provider)}</strong>
+                  </span>
+                  <span class="target-status ${connected ? 'connected' : 'not-connected'}">
+                    ${connected ? 'Ready' : 'Not connected'}
+                  </span>
                 </span>
               </button>
             `;
@@ -2034,7 +2102,6 @@ function bindSessionActions() {
 
   const titleInput = document.getElementById('session-title-input') as HTMLInputElement | null;
   const aboutInput = document.getElementById('session-about-input') as HTMLTextAreaElement | null;
-  const noteInput = document.getElementById('session-note-input') as HTMLTextAreaElement | null;
   const folderInput = document.getElementById('session-folder-input') as HTMLInputElement | null;
   const repoInput = document.getElementById('session-repo-input') as HTMLInputElement | null;
 
@@ -2047,20 +2114,16 @@ function bindSessionActions() {
   });
   aboutInput?.addEventListener('input', () => {
     session.about = aboutInput.value.slice(0, 200);
+    session.sessionNote = '';
     logUi('workspace_about_input', { sessionId: session.id, length: session.about.length });
     const count = document.getElementById('about-count');
     if (count) count.textContent = String(session.about.length);
-    persistAppState();
-  });
-  noteInput?.addEventListener('input', () => {
-    session.sessionNote = noteInput.value;
-    logUi('workspace_session_note_input', { sessionId: session.id, length: session.sessionNote.length });
     submitGateError = '';
     persistAppState();
     const noteDisplay = document.getElementById('header-note-display');
     if (noteDisplay) {
-      noteDisplay.innerHTML = session.sessionNote.trim()
-        ? escapeHtml(session.sessionNote)
+      noteDisplay.innerHTML = session.about.trim()
+        ? escapeHtml(session.about)
         : '<span class="session-header-note-placeholder">Add a session note…</span>';
     }
   });
@@ -2151,27 +2214,41 @@ function syncRepoContextChips(session: Session) {
 async function checkPermission() {
   const note = document.getElementById('perm-note');
   if (!note) return;
-  try {
-    const diagnostics = await invoke<{
+  if (lastPermissionMarkup && Date.now() - lastPermissionCheckAt < PERMISSION_REFRESH_INTERVAL_MS) {
+    note.innerHTML = lastPermissionMarkup;
+    note.className = lastPermissionClassName;
+    if (lastPermissionClassName.includes('warn') && lastPermissionExecutablePath) {
+      bindPermissionNoteActions(lastPermissionExecutablePath);
+    }
+    return;
+  }
+  if (permissionCheckInFlight) return permissionCheckInFlight;
+  permissionCheckInFlight = (async () => {
+    try {
+      const diagnostics = await invoke<{
       preflight: boolean;
       probe: boolean;
       granted: boolean;
       bundle_identifier: string;
       executable_path: string;
     }>('get_screen_capture_diagnostics');
-    logUi('workspace_permission_diagnostics', diagnostics);
-    const granted = diagnostics.granted;
-    if (granted) {
-      note.innerHTML = `
+      logUi('workspace_permission_diagnostics', diagnostics);
+      const granted = diagnostics.granted;
+      if (granted) {
+        note.innerHTML = `
         <strong>Screen capture ready</strong>
         <span>Debugr can capture your screen and create new annotations.</span>
       `;
-      note.className = 'perm-note ok';
-      return;
-    }
-    const executable = diagnostics.executable_path ?? '';
-    const isDevRuntime = executable.includes('/target/debug/') || executable.endsWith('/feedbackagent-desktop');
-    note.innerHTML = `
+        note.className = 'perm-note ok';
+        lastPermissionMarkup = note.innerHTML;
+        lastPermissionClassName = note.className;
+        lastPermissionCheckAt = Date.now();
+        return;
+      }
+      const executable = diagnostics.executable_path ?? '';
+      lastPermissionExecutablePath = executable;
+      const isDevRuntime = executable.includes('/target/debug/') || executable.endsWith('/feedbackagent-desktop');
+      note.innerHTML = `
       <strong>Screen capture blocked</strong>
       <span>Debugr still cannot capture screenshots in this runtime.</span>
       ${isDevRuntime ? '<span><strong>Why two entries:</strong> macOS treats the dev binary (<code>target/debug/feedbackagent-desktop</code>) separately from the bundled <code>.app</code> under <code>target/release/bundle/macos/</code> after you build.</span>' : ''}
@@ -2180,24 +2257,27 @@ async function checkPermission() {
       <button type="button" class="perm-note-action" id="open-screen-settings-btn">Open Screen Recording settings</button>
       <button type="button" class="perm-note-action" id="reveal-runtime-btn">Reveal current runtime in Finder</button>
     `;
-    note.className = 'perm-note warn';
-    document.getElementById('open-screen-settings-btn')?.addEventListener('click', async () => {
-      await requestScreenRecordingPermission().catch(() => {});
-      await invoke('request_screen_capture_permission').catch(() => false);
-      await invoke('open_screen_capture_settings').catch(() => {});
-    });
-    document.getElementById('reveal-runtime-btn')?.addEventListener('click', () => {
-      void invoke('reveal_in_finder', { path: diagnostics.executable_path }).catch(() => {});
-    });
-    return;
-  } catch {
-    logUi('workspace_permission_check_failed');
-    note.innerHTML = `
+      note.className = 'perm-note warn';
+      lastPermissionMarkup = note.innerHTML;
+      lastPermissionClassName = note.className;
+      lastPermissionCheckAt = Date.now();
+      bindPermissionNoteActions(executable);
+      return;
+    } catch {
+      logUi('workspace_permission_check_failed');
+      note.innerHTML = `
       <strong>Screen capture status unavailable</strong>
       <span>Debugr could not check macOS screen-recording permissions right now. Try reopening the app, then open System Settings if capture still fails.</span>
     `;
-    note.className = 'perm-note warn';
-  }
+      note.className = 'perm-note warn';
+      lastPermissionMarkup = note.innerHTML;
+      lastPermissionClassName = note.className;
+      lastPermissionCheckAt = Date.now();
+    } finally {
+      permissionCheckInFlight = null;
+    }
+  })();
+  return permissionCheckInFlight;
 }
 
 async function loadSessionsFromApi(options: { force?: boolean } = {}) {

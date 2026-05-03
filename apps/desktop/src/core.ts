@@ -198,9 +198,9 @@ export function buildSessionPrompt(
   screenshotPaths: Map<string, string> = new Map(),
 ): string {
   const lines: string[] = [];
+  const sessionNote = session.about?.trim() || session.sessionNote?.trim();
   lines.push(`# Debugr session: ${session.title}`);
-  if (session.about) lines.push(`\nContext: ${session.about}`);
-  if (session.sessionNote) lines.push(`\nSession note: ${session.sessionNote}`);
+  if (sessionNote) lines.push(`\nSession note: ${sessionNote}`);
   if (session.projectFolder) lines.push(`\nProject folder: ${session.projectFolder}`);
   if (session.githubRepo) lines.push(`\nGitHub repo: ${session.githubRepo}`);
 
