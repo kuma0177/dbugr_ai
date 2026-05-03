@@ -75,6 +75,13 @@ export interface ProviderConnectionState {
   lastConnectedAt?: string;
 }
 
+export interface PickerSessionCacheItem {
+  id: string;
+  title: string;
+  createdAt: string;
+  annotationCount: number;
+}
+
 export interface PromptDiagnostics {
   sessionId: string;
   captureCount: number;
@@ -193,6 +200,42 @@ export function getPendingSessions(sessions: Session[]): Session[] {
   return sortedSessions(sessions).filter(
     (s) => s.status === 'draft' && totalAnnotations(s) > 0,
   );
+}
+
+export function normalizePersistedSession(
+  session: Partial<Session>,
+  fallbackCreatedAt = new Date().toISOString(),
+): Session {
+  return {
+    id: session.id ?? uid('session'),
+    title: session.title || 'Untitled session',
+    createdAt: session.createdAt || fallbackCreatedAt,
+    status: session.status === 'responded' || session.status === 'sent' ? session.status : 'draft',
+    captures: Array.isArray(session.captures) ? session.captures : [],
+    about: session.about ?? '',
+    sessionNote: session.sessionNote ?? '',
+    projectFolder: session.projectFolder ?? null,
+    githubRepo: session.githubRepo ?? '',
+    submissionFlow: session.submissionFlow === 'team' || session.submissionFlow === 'public' ? session.submissionFlow : 'direct',
+    contributions: Array.isArray(session.contributions) ? session.contributions : [],
+    collaborationReady: Boolean(session.collaborationReady),
+    lastTarget: session.lastTarget === 'codex' || session.lastTarget === 'cursor' ? session.lastTarget : 'claude',
+    lastExplicitSaveAt: session.lastExplicitSaveAt ?? null,
+  };
+}
+
+export function hydratePersistedSessions(input: unknown): Session[] {
+  if (!Array.isArray(input)) return [];
+  return input.map((session) => normalizePersistedSession(session as Partial<Session>));
+}
+
+export function buildPickerSessionCache(sessions: Session[]): PickerSessionCacheItem[] {
+  return sortedSessions(sessions).map((session) => ({
+    id: session.id,
+    title: session.title,
+    createdAt: session.createdAt,
+    annotationCount: totalAnnotations(session),
+  }));
 }
 
 /**

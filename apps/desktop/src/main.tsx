@@ -27,6 +27,8 @@ import {
   totalAnnotations,
   acceptedContributions,
   getPendingSessions,
+  hydratePersistedSessions,
+  buildPickerSessionCache,
   buildSessionPrompt,
   buildCombinedPrompt,
   getPromptDiagnostics,
@@ -76,13 +78,6 @@ interface PersistedState {
   authState: AuthState;
   providerConnections: Record<Target, ProviderConnectionState>;
   target: Target;
-}
-
-interface PickerSessionCacheItem {
-  id: string;
-  title: string;
-  createdAt: string;
-  annotationCount: number;
 }
 
 const API = 'http://127.0.0.1:3001/api';
@@ -456,12 +451,7 @@ function queuePersistMirrors() {
   }
   persistMirrorsTimer = window.setTimeout(() => {
     persistMirrorsTimer = null;
-    const pickerSessions = sortedSessions().map((session): PickerSessionCacheItem => ({
-      id: session.id,
-      title: session.title,
-      createdAt: session.createdAt,
-      annotationCount: totalAnnotations(session),
-    }));
+    const pickerSessions = buildPickerSessionCache(sessions);
     // Mirror sessions to disk so the local MCP server can read them.
     // Fire-and-forget — never block the UI on this.
     invoke('save_sessions_to_disk', { payload: { sessions } }).catch(() => {
@@ -481,22 +471,7 @@ function hydrateAppState() {
     if (!raw) return;
     const parsed = JSON.parse(raw) as Partial<PersistedState>;
     if (Array.isArray(parsed.sessions)) {
-      sessions = parsed.sessions.map((session) => ({
-        id: session.id ?? uid('session'),
-        title: session.title || 'Untitled session',
-        createdAt: session.createdAt || new Date().toISOString(),
-        status: session.status === 'responded' || session.status === 'sent' ? session.status : 'draft',
-        captures: Array.isArray(session.captures) ? session.captures : [],
-        about: session.about ?? '',
-        sessionNote: session.sessionNote ?? '',
-        projectFolder: session.projectFolder ?? null,
-        githubRepo: session.githubRepo ?? '',
-        submissionFlow: session.submissionFlow === 'team' || session.submissionFlow === 'public' ? session.submissionFlow : 'direct',
-        contributions: Array.isArray(session.contributions) ? session.contributions : [],
-        collaborationReady: Boolean(session.collaborationReady),
-        lastTarget: session.lastTarget === 'codex' || session.lastTarget === 'cursor' ? session.lastTarget : 'claude',
-        lastExplicitSaveAt: session.lastExplicitSaveAt ?? null,
-      }));
+      sessions = hydratePersistedSessions(parsed.sessions);
     }
     if (parsed.authState) {
       authState = {

@@ -29,6 +29,9 @@ import {
   totalAnnotations,
   acceptedContributions,
   getPendingSessions,
+  hydratePersistedSessions,
+  normalizePersistedSession,
+  buildPickerSessionCache,
   buildSessionPrompt,
   buildCombinedPrompt,
   getPromptDiagnostics,
@@ -261,6 +264,106 @@ describe('sortedSessions()', () => {
     const original = [...sessions];
     sortedSessions(sessions);
     expect(sessions.map((s) => s.id)).toEqual(original.map((s) => s.id));
+  });
+});
+
+describe('session persistence helpers', () => {
+  it('normalizes missing persisted fields to safe defaults', () => {
+    const session = normalizePersistedSession(
+      {
+        id: 'session_1',
+        title: '',
+        status: 'draft',
+        submissionFlow: 'direct',
+      },
+      '2026-05-03T00:00:00.000Z',
+    );
+    expect(session).toMatchObject({
+      id: 'session_1',
+      title: 'Untitled session',
+      createdAt: '2026-05-03T00:00:00.000Z',
+      status: 'draft',
+      captures: [],
+      about: '',
+      sessionNote: '',
+      projectFolder: null,
+      githubRepo: '',
+      submissionFlow: 'direct',
+      contributions: [],
+      collaborationReady: false,
+      lastTarget: 'claude',
+      lastExplicitSaveAt: null,
+    });
+  });
+
+  it('preserves valid persisted state needed for reopen', () => {
+    const capture = makeCapture({
+      id: 'capture_1',
+      screenshotUrl: '/Users/kumar/Library/Application Support/debugr/screenshots/capture_1.png',
+      annotations: [makeAnnotation({ text: 'Button should be blue' })],
+    });
+    const session = normalizePersistedSession({
+      id: 'session_1',
+      title: 'Visual fix',
+      createdAt: '2026-05-03T08:00:00.000Z',
+      status: 'sent',
+      captures: [capture],
+      about: 'Make CTA match design system',
+      projectFolder: '/Users/kumar/app',
+      githubRepo: 'org/app',
+      submissionFlow: 'team',
+      contributions: [
+        { id: 'c1', source: 'team', author: 'A', type: 'comment', body: 'Accepted', accepted: true, timestamp: '' },
+      ],
+      collaborationReady: true,
+      lastTarget: 'codex',
+      lastExplicitSaveAt: '2026-05-03T08:05:00.000Z',
+    });
+    expect(session.captures[0]!.screenshotUrl).toContain('capture_1.png');
+    expect(totalAnnotations(session)).toBe(1);
+    expect(session.about).toBe('Make CTA match design system');
+    expect(session.projectFolder).toBe('/Users/kumar/app');
+    expect(session.githubRepo).toBe('org/app');
+    expect(session.submissionFlow).toBe('team');
+    expect(session.contributions).toHaveLength(1);
+    expect(session.lastTarget).toBe('codex');
+  });
+
+  it('guards unknown persisted status, flow, and target values', () => {
+    const session = normalizePersistedSession({
+      id: 'session_1',
+      status: 'unknown' as Session['status'],
+      submissionFlow: 'private' as Session['submissionFlow'],
+      lastTarget: 'desktop' as Session['lastTarget'],
+    });
+    expect(session.status).toBe('draft');
+    expect(session.submissionFlow).toBe('direct');
+    expect(session.lastTarget).toBe('claude');
+  });
+
+  it('hydrates only array input and preserves multiple sessions', () => {
+    expect(hydratePersistedSessions(null)).toEqual([]);
+    const sessions = hydratePersistedSessions([
+      { id: 'older', title: 'Older', createdAt: '2026-05-01T00:00:00.000Z' },
+      { id: 'newer', title: 'Newer', createdAt: '2026-05-02T00:00:00.000Z' },
+    ]);
+    expect(sessions.map((session) => session.id)).toEqual(['older', 'newer']);
+  });
+
+  it('builds the picker cache newest-first with annotation counts', () => {
+    const older = sessionWithAnnotations(1);
+    older.id = 'older';
+    older.title = 'Older';
+    older.createdAt = '2026-05-01T00:00:00.000Z';
+    const newer = sessionWithAnnotations(3);
+    newer.id = 'newer';
+    newer.title = 'Newer';
+    newer.createdAt = '2026-05-02T00:00:00.000Z';
+    const cache = buildPickerSessionCache([older, newer]);
+    expect(cache).toEqual([
+      { id: 'newer', title: 'Newer', createdAt: '2026-05-02T00:00:00.000Z', annotationCount: 3 },
+      { id: 'older', title: 'Older', createdAt: '2026-05-01T00:00:00.000Z', annotationCount: 1 },
+    ]);
   });
 });
 
