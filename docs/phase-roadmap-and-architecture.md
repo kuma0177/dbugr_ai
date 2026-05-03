@@ -247,6 +247,20 @@ Exit criteria:
 - AI handoff works repeatedly
 - install and run instructions are clean enough for GitHub-driven adoption
 
+Milestone checklist:
+
+- [ ] Stable macOS capture flow
+- [ ] Stable annotation and session-save flow
+- [ ] Stable session history and reopen flow
+- [ ] Stable Claude CLI handoff
+- [ ] Stable Codex CLI handoff
+- [ ] Stable Cursor handoff
+- [ ] Prompt preview before submission
+- [ ] Repo / local-folder context attached to session
+- [ ] Local-first persistence for screenshots and notes
+- [ ] Clear local install and run documentation
+- [ ] Native migration direction documented without disrupting the current stable desktop flow
+
 ### Phase 2: Social Review
 
 Add collaboration on top of the solo core:
@@ -268,6 +282,25 @@ Exit criteria:
 - accepted comments correctly shape the final AI prompt
 - org-level visibility and roles work predictably
 
+Milestone checklist:
+
+- [ ] Web auth and desktop account linking
+- [ ] User profile and organization creation
+- [ ] Team invites and lightweight roles
+- [ ] Session sync between desktop and web
+- [ ] Visibility controls for `Private`, `Organization`, and `Public`
+- [ ] Internal review feed
+- [ ] Public feed on the same website
+- [ ] Session-level comments
+- [ ] Capture-level comments
+- [ ] Annotation-specific comments
+- [ ] Curation board with accept / reject / edit decisions
+- [ ] AI summary preflight
+- [ ] Final prompt approval before send
+- [ ] Submission history with frozen prompt snapshots
+- [ ] Basic org policy controls for public sharing and credential usage
+- [ ] Audit events for sensitive collaboration and submission actions
+
 ### Phase 3: Enterprise-Ready
 
 Extend the same product for larger organizations:
@@ -282,6 +315,15 @@ Extend the same product for larger organizations:
 Exit criteria:
 
 - a larger company can evaluate Dbugr without asking us to redesign the core data, permission, or submission model
+
+Milestone checklist:
+
+- [ ] Stronger org admin controls
+- [ ] Enterprise auth path planned or implemented
+- [ ] Organization-managed credential model hardened
+- [ ] Customer-controlled storage / deployment path defined
+- [ ] Retention and audit posture expanded
+- [ ] Compliance-oriented policy layer extended without changing the core product model
 
 ## Architecture Principles
 
@@ -517,6 +559,18 @@ Phase 3:
 8. Add public feed with redaction confirmation and approval controls.
 9. Add policy and audit hardening.
 10. Add Phase 3 seams deliberately, without fully building enterprise features yet.
+
+## Tracking Guidance
+
+Use this roadmap file to track milestone completion at the phase level.
+
+Use [docs/phase-2-social-refinement-plan.md](/Users/kumar/debugr/docs/phase-2-social-refinement-plan.md:1) to track the detailed implementation sequence for collaboration, IAM, curation, and submission work.
+
+Rule of thumb:
+
+- update this roadmap when a milestone is meaningfully complete
+- update the detailed social refinement plan as sub-steps are implemented
+- avoid copying low-level implementation tasks back into this roadmap unless they change phase scope or milestone status
 
 ## Final Recommendation
 
