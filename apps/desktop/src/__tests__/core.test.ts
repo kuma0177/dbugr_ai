@@ -32,6 +32,8 @@ import {
   hydratePersistedSessions,
   normalizePersistedSession,
   buildPickerSessionCache,
+  normalizeProjectFolderInput,
+  normalizeGithubRepoInput,
   buildSessionPrompt,
   buildCombinedPrompt,
   getPromptDiagnostics,
@@ -364,6 +366,45 @@ describe('session persistence helpers', () => {
       { id: 'newer', title: 'Newer', createdAt: '2026-05-02T00:00:00.000Z', annotationCount: 3 },
       { id: 'older', title: 'Older', createdAt: '2026-05-01T00:00:00.000Z', annotationCount: 1 },
     ]);
+  });
+});
+
+describe('repo and local folder context helpers', () => {
+  it('normalizes local folder input without requiring filesystem access', () => {
+    expect(normalizeProjectFolderInput('  /Users/kumar/app///  ')).toBe('/Users/kumar/app');
+    expect(normalizeProjectFolderInput('/')).toBe('/');
+    expect(normalizeProjectFolderInput('   ')).toBeNull();
+    expect(normalizeProjectFolderInput(null)).toBeNull();
+  });
+
+  it('normalizes common GitHub repo input shapes', () => {
+    expect(normalizeGithubRepoInput('owner/repo')).toBe('owner/repo');
+    expect(normalizeGithubRepoInput('https://github.com/owner/repo')).toBe('owner/repo');
+    expect(normalizeGithubRepoInput('https://github.com/owner/repo.git')).toBe('owner/repo');
+    expect(normalizeGithubRepoInput('https://github.com/owner/repo/pulls')).toBe('owner/repo');
+    expect(normalizeGithubRepoInput('git@github.com:owner/repo.git')).toBe('owner/repo');
+    expect(normalizeGithubRepoInput('   ')).toBe('');
+  });
+
+  it('normalizes context before prompt inclusion', () => {
+    const session = makeSession({
+      title: 'Context test',
+      projectFolder: ' /Users/kumar/app/// ',
+      githubRepo: 'https://github.com/owner/repo.git',
+    });
+    const prompt = buildSessionPrompt(session);
+    expect(prompt).toContain('Project folder: /Users/kumar/app');
+    expect(prompt).toContain('GitHub repo: owner/repo');
+    expect(prompt).not.toContain('github.com/owner/repo.git');
+  });
+
+  it('normalizes context during persisted-session hydration', () => {
+    const session = normalizePersistedSession({
+      projectFolder: ' /Users/kumar/app/// ',
+      githubRepo: 'git@github.com:owner/repo.git',
+    });
+    expect(session.projectFolder).toBe('/Users/kumar/app');
+    expect(session.githubRepo).toBe('owner/repo');
   });
 });
 

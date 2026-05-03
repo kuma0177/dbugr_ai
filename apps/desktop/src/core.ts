@@ -202,6 +202,22 @@ export function getPendingSessions(sessions: Session[]): Session[] {
   );
 }
 
+export function normalizeProjectFolderInput(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  if (trimmed === '/') return trimmed;
+  return trimmed.replace(/\/+$/g, '');
+}
+
+export function normalizeGithubRepoInput(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed) return '';
+  const httpsMatch = trimmed.match(/github\.com[:/]([^/\s]+\/[^/\s#?]+?)(?:\.git)?(?:[/?#].*)?$/i);
+  const sshMatch = trimmed.match(/^git@github\.com:([^/\s]+\/[^/\s#?]+?)(?:\.git)?$/i);
+  const raw = httpsMatch?.[1] ?? sshMatch?.[1] ?? trimmed;
+  return raw.replace(/\.git$/i, '').replace(/\/+$/g, '');
+}
+
 export function normalizePersistedSession(
   session: Partial<Session>,
   fallbackCreatedAt = new Date().toISOString(),
@@ -214,8 +230,8 @@ export function normalizePersistedSession(
     captures: Array.isArray(session.captures) ? session.captures : [],
     about: session.about ?? '',
     sessionNote: session.sessionNote ?? '',
-    projectFolder: session.projectFolder ?? null,
-    githubRepo: session.githubRepo ?? '',
+    projectFolder: normalizeProjectFolderInput(session.projectFolder),
+    githubRepo: normalizeGithubRepoInput(session.githubRepo),
     submissionFlow: session.submissionFlow === 'team' || session.submissionFlow === 'public' ? session.submissionFlow : 'direct',
     contributions: Array.isArray(session.contributions) ? session.contributions : [],
     collaborationReady: Boolean(session.collaborationReady),
@@ -253,10 +269,12 @@ export function buildSessionPrompt(
 ): string {
   const lines: string[] = [];
   const sessionNote = session.about?.trim() || session.sessionNote?.trim();
+  const projectFolder = normalizeProjectFolderInput(session.projectFolder);
+  const githubRepo = normalizeGithubRepoInput(session.githubRepo);
   lines.push(`# Debugr session: ${session.title}`);
   if (sessionNote) lines.push(`\nSession note: ${sessionNote}`);
-  if (session.projectFolder) lines.push(`\nProject folder: ${session.projectFolder}`);
-  if (session.githubRepo) lines.push(`\nGitHub repo: ${session.githubRepo}`);
+  if (projectFolder) lines.push(`\nProject folder: ${projectFolder}`);
+  if (githubRepo) lines.push(`\nGitHub repo: ${githubRepo}`);
 
   session.captures.forEach((capture, ci) => {
     lines.push(`\n## Capture ${ci + 1}: ${capture.title || 'Untitled'}`);
@@ -312,8 +330,8 @@ export function getPromptDiagnostics(
     acceptedContributionCount: acceptedContributions(session).length,
     screenshotReferenceCount,
     hasSessionNote: Boolean(session.about?.trim() || session.sessionNote?.trim()),
-    hasProjectFolder: Boolean(session.projectFolder?.trim()),
-    hasGithubRepo: Boolean(session.githubRepo?.trim()),
+    hasProjectFolder: Boolean(normalizeProjectFolderInput(session.projectFolder)),
+    hasGithubRepo: Boolean(normalizeGithubRepoInput(session.githubRepo)),
   };
 }
 

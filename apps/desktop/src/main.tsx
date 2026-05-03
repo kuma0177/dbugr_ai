@@ -29,6 +29,8 @@ import {
   getPendingSessions,
   hydratePersistedSessions,
   buildPickerSessionCache,
+  normalizeProjectFolderInput,
+  normalizeGithubRepoInput,
   buildSessionPrompt,
   buildCombinedPrompt,
   getPromptDiagnostics,
@@ -2185,14 +2187,20 @@ function bindSessionActions() {
     }
   });
   folderInput?.addEventListener('input', () => {
-    session.projectFolder = folderInput.value.trim() || null;
-    logUi('workspace_project_folder_input', { sessionId: session.id, projectFolder: session.projectFolder });
+    session.projectFolder = normalizeProjectFolderInput(folderInput.value);
+    logUi('workspace_project_folder_input', {
+      sessionId: session.id,
+      hasProjectFolder: Boolean(session.projectFolder),
+    });
     syncRepoContextChips(session);
     persistAppState();
   });
   repoInput?.addEventListener('input', () => {
     session.githubRepo = normalizeGithubRepoInput(repoInput.value);
-    logUi('workspace_github_repo_input', { sessionId: session.id, githubRepo: session.githubRepo });
+    logUi('workspace_github_repo_input', {
+      sessionId: session.id,
+      hasGithubRepo: Boolean(session.githubRepo),
+    });
     syncRepoContextChips(session);
     persistAppState();
   });
@@ -2217,8 +2225,8 @@ function bindSessionActions() {
       }
       logUi('workspace_folder_picker_result', { sessionId: session.id, picked: picked ?? null });
       if (!picked) return;
-      session.projectFolder = picked;
-      if (folderInput) folderInput.value = picked;
+      session.projectFolder = normalizeProjectFolderInput(picked);
+      if (folderInput) folderInput.value = session.projectFolder ?? '';
       syncRepoContextChips(session);
       persistAppState();
     });
@@ -2231,7 +2239,10 @@ function bindSessionActions() {
   }
   repoChip.addEventListener('click', (event) => {
     event.preventDefault();
-    logUi('workspace_repo_chip_click', { sessionId: session.id, existingRepo: repoInput?.value ?? '' });
+    logUi('workspace_repo_chip_click', {
+      sessionId: session.id,
+      hasExistingRepo: Boolean(repoInput?.value.trim()),
+    });
     if (!repoInput) return;
     if (!repoInput.value.trim()) {
       repoInput.value = 'owner/repo';
@@ -2251,14 +2262,6 @@ function bindSessionActions() {
       });
     });
   });
-}
-
-function normalizeGithubRepoInput(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-  const fromUrl = trimmed.match(/github\.com\/([^/\s]+\/[^/\s#?]+)/i);
-  if (!fromUrl) return trimmed;
-  return fromUrl[1]?.replace(/\.git$/i, '') ?? trimmed;
 }
 
 function syncRepoContextChips(session: Session) {
@@ -2369,8 +2372,8 @@ async function loadSessionsFromApi(options: { force?: boolean } = {}) {
         existing.createdAt = remote.createdAt || existing.createdAt;
         existing.status = remote.status === 'responded' || remote.status === 'sent' ? remote.status : existing.status;
         existing.about = remote.about ?? existing.about;
-        existing.projectFolder = remote.projectFolder ?? remote.project_folder ?? existing.projectFolder ?? null;
-        existing.githubRepo = remote.githubRepo ?? remote.github_repo ?? existing.githubRepo ?? '';
+        existing.projectFolder = normalizeProjectFolderInput(remote.projectFolder ?? remote.project_folder ?? existing.projectFolder ?? null);
+        existing.githubRepo = normalizeGithubRepoInput(remote.githubRepo ?? remote.github_repo ?? existing.githubRepo ?? '');
         continue;
       }
       sessions.push({
@@ -2381,8 +2384,8 @@ async function loadSessionsFromApi(options: { force?: boolean } = {}) {
         captures: [],
         about: remote.about ?? '',
         sessionNote: '',
-        projectFolder: remote.projectFolder ?? remote.project_folder ?? null,
-        githubRepo: remote.githubRepo ?? remote.github_repo ?? '',
+        projectFolder: normalizeProjectFolderInput(remote.projectFolder ?? remote.project_folder ?? null),
+        githubRepo: normalizeGithubRepoInput(remote.githubRepo ?? remote.github_repo ?? ''),
         submissionFlow: 'direct',
         contributions: [],
         collaborationReady: false,
@@ -2459,7 +2462,7 @@ async function pushPendingSessions() {
       promptLength: prompt.length,
       diagnostics,
     });
-    const cwd = pending.find((s) => s.projectFolder?.trim())?.projectFolder?.trim() || '';
+    const cwd = normalizeProjectFolderInput(pending.find((s) => s.projectFolder?.trim())?.projectFolder) || '';
     const titleSuffix = pending.length === 1 ? pending[0]!.title : `${pending.length} pending sessions`;
 
     if (target === 'cursor') {
@@ -2596,7 +2599,7 @@ async function sendSession() {
     promptLength: prompt.length,
     diagnostics: getPromptDiagnostics(session, screenshotPaths),
   });
-  const cwd = session.projectFolder?.trim() || (await invoke<string>('pick_folder').catch(() => '')) || '';
+  const cwd = normalizeProjectFolderInput(session.projectFolder) || normalizeProjectFolderInput(await invoke<string>('pick_folder').catch(() => '')) || '';
   const title = `Debugr → ${providerLabel(target)}: ${session.title}`;
 
   try {
@@ -2688,7 +2691,7 @@ async function listenForAnnotations() {
     const priorActiveSessionId = activeSessionId;
     const payloadTitle = event.payload.newSessionName?.trim() || '';
     const payloadAbout = event.payload.newSessionAbout?.trim() || '';
-    const payloadGithubRepo = event.payload.githubRepo?.trim() || '';
+    const payloadGithubRepo = normalizeGithubRepoInput(event.payload.githubRepo);
     const rawShot = event.payload.screenshotUrl?.trim();
 
     const rawShotKind = !rawShot
@@ -2705,8 +2708,8 @@ async function listenForAnnotations() {
       priorAppMode,
       priorWorkspaceSection,
       priorActiveSessionId,
-      hasLocalFolder: Boolean(event.payload.localFolder),
-      hasGithubRepo: Boolean(event.payload.githubRepo),
+      hasLocalFolder: Boolean(normalizeProjectFolderInput(event.payload.localFolder)),
+      hasGithubRepo: Boolean(payloadGithubRepo),
       hasScreenshot: Boolean(rawShot),
       rawScreenshotKind: rawShotKind,
       rawScreenshotChars: rawShot?.length ?? 0,
@@ -2763,7 +2766,7 @@ async function listenForAnnotations() {
       const session = sessions.find((item) => item.id === targetSessionId)!;
       session.captures.unshift(capture);
       session.about = payloadAbout || (session.about ?? '');
-      session.projectFolder = event.payload.localFolder ?? session.projectFolder ?? null;
+      session.projectFolder = normalizeProjectFolderInput(event.payload.localFolder) ?? session.projectFolder ?? null;
       session.githubRepo = payloadGithubRepo || (session.githubRepo ?? '');
       activeSessionId = session.id;
       activeCaptureId = capture.id;
@@ -2788,7 +2791,7 @@ async function listenForAnnotations() {
         captures: [capture],
         about: payloadAbout,
         sessionNote: '',
-        projectFolder: event.payload.localFolder ?? null,
+        projectFolder: normalizeProjectFolderInput(event.payload.localFolder),
         githubRepo: payloadGithubRepo,
         submissionFlow: 'direct',
         contributions: [],
