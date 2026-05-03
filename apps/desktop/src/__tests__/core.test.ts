@@ -29,6 +29,7 @@ import {
   sectionLabel,
   sortedSessions,
   totalAnnotations,
+  planAnnotationAppend,
   acceptedContributions,
   getPendingSessions,
   hydratePersistedSessions,
@@ -252,6 +253,47 @@ describe('totalAnnotations()', () => {
       ],
     });
     expect(totalAnnotations(session)).toBe(25);
+  });
+});
+
+describe('planAnnotationAppend()', () => {
+  it('allows annotations when the target session has room', () => {
+    expect(planAnnotationAppend(2, 2, 5)).toMatchObject({
+      existingCount: 2,
+      incomingCount: 2,
+      remainingBeforeAppend: 3,
+      acceptedCount: 2,
+      rejectedCount: 0,
+      canAppend: true,
+    });
+  });
+
+  it('clips incoming annotations to the remaining session capacity', () => {
+    expect(planAnnotationAppend(4, 3, 5)).toMatchObject({
+      remainingBeforeAppend: 1,
+      acceptedCount: 1,
+      rejectedCount: 2,
+      canAppend: true,
+    });
+  });
+
+  it('blocks appending when the session is already full', () => {
+    expect(planAnnotationAppend(5, 1, 5)).toMatchObject({
+      remainingBeforeAppend: 0,
+      acceptedCount: 0,
+      rejectedCount: 1,
+      canAppend: false,
+    });
+  });
+
+  it('normalizes negative and fractional inputs defensively', () => {
+    expect(planAnnotationAppend(-2.4, 3.8, 5.9)).toMatchObject({
+      existingCount: 0,
+      incomingCount: 3,
+      maxAnnotations: 5,
+      acceptedCount: 3,
+      rejectedCount: 0,
+    });
   });
 });
 

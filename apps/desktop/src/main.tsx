@@ -31,6 +31,7 @@ import {
   buildPickerSessionCache,
   normalizeProjectFolderInput,
   normalizeGithubRepoInput,
+  planAnnotationAppend,
   buildSessionPrompt,
   buildCombinedPrompt,
   getPromptDiagnostics,
@@ -2677,7 +2678,16 @@ async function listenForAnnotations() {
     githubRepo?: string;
     screenshotUrl?: string;
   }>('annotations-saved', async (event) => {
-    const annotations = (event.payload.annotations ?? []).slice(0, MAX_ANNOTATIONS);
+    const targetSessionId = event.payload.targetSessionId ?? null;
+    const targetSession = targetSessionId
+      ? sessions.find((session) => session.id === targetSessionId)
+      : null;
+    const appendPlan = planAnnotationAppend(
+      targetSession ? totalAnnotations(targetSession) : 0,
+      event.payload.annotations?.length ?? 0,
+      MAX_ANNOTATIONS,
+    );
+    const annotations = (event.payload.annotations ?? []).slice(0, appendPlan.acceptedCount);
     if (annotations.length === 0) return;
     const priorAppMode = appMode;
     const priorWorkspaceSection = workspaceSection;
@@ -2698,6 +2708,9 @@ async function listenForAnnotations() {
     logUi('workspace_annotations_saved_event', {
       targetSessionId: event.payload.targetSessionId ?? null,
       annotationCount: annotations.length,
+      rejectedAnnotationCount: appendPlan.rejectedCount,
+      existingSessionAnnotationCount: appendPlan.existingCount,
+      maxAnnotations: appendPlan.maxAnnotations,
       priorAppMode,
       priorWorkspaceSection,
       priorActiveSessionId,
@@ -2754,9 +2767,8 @@ async function listenForAnnotations() {
       preview_img_usable: Boolean(screenshotImgSrc(screenshotStored)),
     });
 
-    const targetSessionId = event.payload.targetSessionId ?? null;
-    if (targetSessionId && sessions.find((session) => session.id === targetSessionId)) {
-      const session = sessions.find((item) => item.id === targetSessionId)!;
+    if (targetSession) {
+      const session = targetSession;
       session.captures.unshift(capture);
       session.about = payloadAbout || (session.about ?? '');
       session.projectFolder = normalizeProjectFolderInput(event.payload.localFolder) ?? session.projectFolder ?? null;

@@ -82,6 +82,16 @@ export interface PickerSessionCacheItem {
   annotationCount: number;
 }
 
+export interface AnnotationAppendPlan {
+  existingCount: number;
+  incomingCount: number;
+  maxAnnotations: number;
+  remainingBeforeAppend: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  canAppend: boolean;
+}
+
 export interface PromptDiagnostics {
   sessionId: string;
   captureCount: number;
@@ -206,6 +216,27 @@ export function sortedSessions(sessions: Session[]): Session[] {
 
 export function totalAnnotations(session: Session): number {
   return session.captures.reduce((count, capture) => count + capture.annotations.length, 0);
+}
+
+export function planAnnotationAppend(
+  existingCount: number,
+  incomingCount: number,
+  maxAnnotations = 5,
+): AnnotationAppendPlan {
+  const safeExisting = Math.max(0, Math.trunc(existingCount));
+  const safeIncoming = Math.max(0, Math.trunc(incomingCount));
+  const safeMax = Math.max(0, Math.trunc(maxAnnotations));
+  const remainingBeforeAppend = Math.max(0, safeMax - safeExisting);
+  const acceptedCount = Math.min(safeIncoming, remainingBeforeAppend);
+  return {
+    existingCount: safeExisting,
+    incomingCount: safeIncoming,
+    maxAnnotations: safeMax,
+    remainingBeforeAppend,
+    acceptedCount,
+    rejectedCount: safeIncoming - acceptedCount,
+    canAppend: acceptedCount > 0,
+  };
 }
 
 export function acceptedContributions(session: Session): Contribution[] {
