@@ -35,6 +35,7 @@ import {
   buildCombinedPrompt,
   getPromptDiagnostics,
   getCombinedPromptDiagnostics,
+  buildAiCliCommand,
 } from './core';
 
 /** True when `screenshotUrl` was persisted by Rust under screenshots/ (absolute path), not an inline data URL. */
@@ -2537,16 +2538,8 @@ async function saveScreenshots(capturesToSave: Array<{ id: string; screenshotUrl
 
 /** Build the shell command string for launching the AI CLI with auth guidance. */
 function buildCliCommand(cliName: 'claude' | 'codex', prompt: string): string {
-  const escaped = prompt.replace(/'/g, "'\\''");
-  if (cliName === 'codex' && codexApiKey) {
-    const escapedKey = codexApiKey.replace(/'/g, "'\\''");
-    return `OPENAI_API_KEY='${escapedKey}' codex '${escaped}'`;
-  }
-  if (cliName === 'claude' && claudeApiKey) {
-    const escapedKey = claudeApiKey.replace(/'/g, "'\\''");
-    return `ANTHROPIC_API_KEY='${escapedKey}' claude '${escaped}'`;
-  }
-  return `${cliName} '${escaped}'`;
+  const apiKey = cliName === 'codex' ? codexApiKey : claudeApiKey;
+  return buildAiCliCommand(cliName, prompt, apiKey);
 }
 
 async function sendSession() {

@@ -169,6 +169,22 @@ export function providerConnectionReadyCopy(
   return 'No login needed. Debugr will open your project folder directly in Cursor and copy the session prompt so you can paste it into chat.';
 }
 
+export function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+export function buildAiCliCommand(
+  cliName: 'claude' | 'codex',
+  prompt: string,
+  apiKey = '',
+): string {
+  const promptArg = shellSingleQuote(prompt);
+  const trimmedKey = apiKey.trim();
+  if (!trimmedKey) return `${cliName} ${promptArg}`;
+  const envName = cliName === 'codex' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
+  return `${envName}=${shellSingleQuote(trimmedKey)} ${cliName} ${promptArg}`;
+}
+
 export function flowLabel(flow: SubmissionFlow): string {
   if (flow === 'team') return 'Team review';
   if (flow === 'public') return 'Public feed';

@@ -23,6 +23,8 @@ import {
   providerConnectionPendingCopy,
   providerConnectionReadyCopy,
   isProviderConnected,
+  shellSingleQuote,
+  buildAiCliCommand,
   flowLabel,
   sectionLabel,
   sortedSessions,
@@ -133,6 +135,30 @@ describe('provider connection helpers', () => {
     expect(providerConnectionMethodLabel('oauth')).toBe('browser login');
     expect(providerConnectionMethodLabel('api_key')).toBe('API key');
     expect(providerConnectionMethodLabel('installed')).toBe('installed app');
+  });
+});
+
+describe('CLI command helpers', () => {
+  it('single-quotes shell arguments and escapes embedded quotes', () => {
+    expect(shellSingleQuote("don't miss this")).toBe("'don'\\''t miss this'");
+  });
+
+  it('builds Claude CLI command without an API key', () => {
+    expect(buildAiCliCommand('claude', 'Fix the CTA')).toBe("claude 'Fix the CTA'");
+  });
+
+  it('builds Codex CLI command without an API key', () => {
+    expect(buildAiCliCommand('codex', 'Fix the CTA')).toBe("codex 'Fix the CTA'");
+  });
+
+  it('adds provider-specific environment variable when a local key exists', () => {
+    expect(buildAiCliCommand('claude', 'Fix', 'anthropic-key')).toBe("ANTHROPIC_API_KEY='anthropic-key' claude 'Fix'");
+    expect(buildAiCliCommand('codex', 'Fix', 'openai-key')).toBe("OPENAI_API_KEY='openai-key' codex 'Fix'");
+  });
+
+  it('escapes prompt and API key values independently', () => {
+    const command = buildAiCliCommand('codex', "Don't skip screenshot paths", "sk-'quoted'");
+    expect(command).toBe("OPENAI_API_KEY='sk-'\\''quoted'\\''' codex 'Don'\\''t skip screenshot paths'");
   });
 });
 
