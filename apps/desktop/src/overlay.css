@@ -47,14 +47,222 @@ html, body {
   cursor: crosshair;
 }
 
-/* Screenshot fills the whole background */
+/* Snapshot letterboxed — annotations use the same client ↔ image-pixel mapping */
 #screenshot-bg {
   position: fixed; inset: 0;
-  background-size: cover;
-  background-position: top left;
-  background-repeat: no-repeat;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background-color: transparent;
   z-index: 0;
+  pointer-events: none;
+}
+
+#screenshot-img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: none;
+  vertical-align: middle;
+}
+
+.capture-list {
+  max-height: min(52vh, 520px);
+  overflow-y: auto;
+  margin-top: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.capture-mode-bar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.capture-mode-btn {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.capture-mode-btn:hover {
+  border-color: rgba(23, 77, 255, 0.35);
+  background: rgba(23, 77, 255, 0.05);
+}
+
+.capture-mode-btn.active {
+  border-color: var(--blue);
+  background: rgba(23, 77, 255, 0.08);
+  color: var(--blue);
+}
+
+.capture-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+}
+
+.capture-row:last-child {
+  border-bottom: none;
+}
+
+.capture-row:hover {
+  background: var(--blue-soft);
+}
+
+.capture-row-kind {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.capture-row-label {
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.capture-row-meta {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.capture-perm-panel {
+  padding: 14px 16px 16px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.capture-perm-lead {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.capture-perm-detail,
+.capture-perm-tip {
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.capture-perm-tip {
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+
+.capture-perm-tip code {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(6, 27, 49, 0.06);
+}
+
+.capture-perm-diag {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  line-height: 1.45;
+}
+
+.capture-perm-diag-path {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  word-break: break-all;
+  color: var(--text);
+}
+
+.capture-perm-diag-meta {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  opacity: 0.9;
+}
+
+.capture-perm-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.capture-perm-primary {
+  display: block;
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: none;
+  background: var(--blue);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.capture-perm-primary:hover {
+  background: var(--blue-hover);
+}
+
+.capture-perm-secondary {
+  display: block;
+  width: 100%;
+  padding: 9px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.capture-perm-secondary:hover {
+  background: var(--blue-soft);
+}
+
+.capture-error-generic {
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.capture-error-line {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.capture-error-detail {
+  color: var(--text-secondary);
+  font-size: 12px;
+  word-break: break-word;
+  margin-bottom: 10px;
+}
+
+.capture-error-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-bottom: 12px;
 }
 
 /* Subtle dim over screenshot */

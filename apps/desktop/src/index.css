@@ -830,8 +830,8 @@ kbd {
 
 .push-pending-btn {
   display: flex;
-  align-items: center;
-  gap: 5px;
+  align-items: flex-start;
+  gap: 8px;
   margin-top: 8px;
   width: 100%;
   padding: 8px 10px;
@@ -860,6 +860,28 @@ kbd {
   font-size: 14px;
   line-height: 1;
   flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.push-pending-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.push-pending-copy strong {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.push-pending-copy span {
+  color: rgba(23, 77, 255, 0.8);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 .sidebar-empty {

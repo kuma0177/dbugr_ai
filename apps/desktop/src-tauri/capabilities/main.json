@@ -15,6 +15,7 @@
     "core:window:allow-set-resizable",
     "core:window:allow-center",
     "core:window:allow-is-visible",
-    "global-shortcut:default"
+    "global-shortcut:default",
+    "macos-permissions:default"
   ]
 }

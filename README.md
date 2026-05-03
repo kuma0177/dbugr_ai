@@ -73,12 +73,14 @@ pnpm db:seed
 
 ## Product Flow
 
-1. Open the DMG app on macOS.
-2. Start a capture by opening the target browser page or pointing Debugr at another app or experience on screen.
-3. Confirm the screen or window in the macOS picker and freeze the screenshot.
-4. Debugr asks the user to confirm that the screenshot belongs to the current Claude/Codex work and linked GitHub repo.
-5. The user chooses to submit feedback to Claude Code or Codex.
-6. Debugr returns an immediate feedback response with task context and next steps, and stores the session for later review in the web dashboard.
+1. Open the macOS app and start a new annotation or append to an existing session.
+2. Capture the content on screen, freeze it, and add annotation notes to the screenshot.
+3. Choose an existing session or create a new one if needed.
+4. When creating a new session, attach the GitHub repo or local project folder that the work belongs to.
+5. Save the notes into the session and show a clear confirmation with next actions.
+6. Choose whether to submit the saved session to Claude, Codex, or Cursor.
+7. On first submission, complete the provider connection flow if the target is not yet linked.
+8. Show the prompt summary that is being handed off, then show the immediate provider response or handoff result.
 
 ## MCP Server
 
@@ -104,6 +106,10 @@ Tools:
 - [x] MCP server for Claude/Codex-style agent access
 - [x] Repo-aware confirmation step before sending to Claude or Codex
 - [x] Immediate handoff feedback returned to the user after submit
+
+## Native macOS Migration
+
+Debugr is moving toward a macOS-native-first desktop app. See [Native macOS Migration Guide](docs/native-macos-migration.md) for the migration context, target user flow, capture UX decisions, and milestone plan.
 
 ## Remaining Work
 

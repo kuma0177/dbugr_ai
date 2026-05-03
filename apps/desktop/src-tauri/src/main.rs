@@ -1,7 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
 use std::{
     ffi::{c_char, c_void, CStr},
     fs::{self, OpenOptions},
@@ -41,18 +40,19 @@ fn macos_activate() {}
 /// tray clicks while the capture pipeline briefly hides the overlay.
 static OVERLAY_HIDDEN_FOR_SCREENSHOT: AtomicBool = AtomicBool::new(false);
 
-/// WKWebView `window.screenX/Y` does not match macOS `screencapture -R` global space.
-/// We snapshot `inner_position` + scale **before** hiding the overlay for capture.
-#[derive(Clone)]
-struct OverlayCaptureLayout {
-    inner_phys_x: i32,
-    inner_phys_y: i32,
-    scale_factor: f64,
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureSourceItem {
+    kind: String,
+    id: u64,
+    label: String,
 }
 
-fn overlay_capture_layout_cell() -> &'static Mutex<Option<OverlayCaptureLayout>> {
-    static CELL: OnceLock<Mutex<Option<OverlayCaptureLayout>>> = OnceLock::new();
-    CELL.get_or_init(|| Mutex::new(None))
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureSourceList {
+    displays: Vec<CaptureSourceItem>,
+    windows: Vec<CaptureSourceItem>,
 }
 
 #[derive(Clone, Default, serde::Deserialize, serde::Serialize)]
@@ -66,6 +66,14 @@ struct OverlayLaunchPayload {
     skip_picker: Option<bool>,
 }
 
+#[derive(Clone, Default, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PickerSessionCacheItem {
+    id: String,
+    title: String,
+    created_at: String,
+}
+
 // ── CoreGraphics for screen-capture permissions ───────────────────────────────
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -76,16 +84,20 @@ unsafe extern "C" {
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-    fn debugr_capture_region_png_points(
-        x: f64,
-        y: f64,
-        width: f64,
-        height: f64,
+    fn debugr_capture_region_png_free(ptr: *mut c_void);
+    fn debugr_list_capture_sources_json(out_json: *mut *mut c_char, out_error: *mut *mut c_char) -> bool;
+    fn debugr_capture_display_full_png(
+        display_id: u32,
         out_bytes: *mut *mut u8,
         out_len: *mut usize,
         out_error: *mut *mut c_char,
     ) -> bool;
-    fn debugr_capture_region_png_free(ptr: *mut c_void);
+    fn debugr_capture_window_full_png(
+        window_id: u32,
+        out_bytes: *mut *mut u8,
+        out_len: *mut usize,
+        out_error: *mut *mut c_char,
+    ) -> bool;
 }
 
 fn temp_capture_path() -> PathBuf {
@@ -114,6 +126,10 @@ fn debugr_root_dir() -> PathBuf {
 
 fn overlay_session_log_path() -> PathBuf {
     debugr_root_dir().join("logs").join("overlay-session.log")
+}
+
+fn picker_sessions_cache_path() -> PathBuf {
+    debugr_root_dir().join("picker-sessions-cache.json")
 }
 
 fn sanitize_log_line(s: &str) -> String {
@@ -575,28 +591,12 @@ fn encode_png_bytes_to_data_url(bytes: &[u8]) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn capture_screencapturekit_png_bytes_in_points(
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
+unsafe fn macos_decode_png_capture_output(
+    ok: bool,
+    out_bytes: *mut u8,
+    out_len: usize,
+    out_error: *mut c_char,
 ) -> Result<Vec<u8>, String> {
-    let mut out_bytes: *mut u8 = std::ptr::null_mut();
-    let mut out_len: usize = 0;
-    let mut out_error: *mut c_char = std::ptr::null_mut();
-
-    let ok = unsafe {
-        debugr_capture_region_png_points(
-            x,
-            y,
-            width,
-            height,
-            &mut out_bytes,
-            &mut out_len,
-            &mut out_error,
-        )
-    };
-
     let error = if out_error.is_null() {
         None
     } else {
@@ -620,6 +620,28 @@ fn capture_screencapturekit_png_bytes_in_points(
     let bytes = unsafe { std::slice::from_raw_parts(out_bytes, out_len) }.to_vec();
     unsafe { debugr_capture_region_png_free(out_bytes as *mut c_void) };
     Ok(bytes)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_capture_display_full_png_bytes(display_id: u32) -> Result<Vec<u8>, String> {
+    let mut out_bytes: *mut u8 = std::ptr::null_mut();
+    let mut out_len: usize = 0;
+    let mut out_error: *mut c_char = std::ptr::null_mut();
+    let ok = unsafe {
+        debugr_capture_display_full_png(display_id, &mut out_bytes, &mut out_len, &mut out_error)
+    };
+    unsafe { macos_decode_png_capture_output(ok, out_bytes, out_len, out_error) }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_capture_window_full_png_bytes(window_id: u32) -> Result<Vec<u8>, String> {
+    let mut out_bytes: *mut u8 = std::ptr::null_mut();
+    let mut out_len: usize = 0;
+    let mut out_error: *mut c_char = std::ptr::null_mut();
+    let ok = unsafe {
+        debugr_capture_window_full_png(window_id, &mut out_bytes, &mut out_len, &mut out_error)
+    };
+    unsafe { macos_decode_png_capture_output(ok, out_bytes, out_len, out_error) }
 }
 
 fn capture_native_png_bytes() -> Result<Vec<u8>, String> {
@@ -954,93 +976,117 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("overlay") {
         let _ = win.hide();
     }
-    // Restore main window when overlay is cancelled.
-    if let Some(main) = app.get_webview_window("main") {
-        main.show().map_err(|e| e.to_string())?;
-        let _ = main.set_focus();
-    }
+    // Do not call main.show() / set_focus here. Cancelling the overlay should return the user to
+    // whatever was under the fullscreen overlay (browser, IDE, etc.). Forcing the workspace
+    // forward matches tray "Open Debugr" behavior and steals focus from the app they were
+    // annotating. Users can open the workspace from the menu bar tray when needed.
     Ok(())
 }
 
+/// Lists displays and windows available for full-frame ScreenCaptureKit snapshots (picker UX).
+/// Runs ScreenCaptureKit off the async/WebView thread via `spawn_blocking` so main-run-loop callbacks can complete.
 #[tauri::command]
-fn capture_screenshot_for_annotation(
-    _app: AppHandle,
-    viewport_left: f64,
-    viewport_top: f64,
-    width: f64,
-    height: f64,
-) -> Result<String, String> {
-    let layout = overlay_capture_layout_cell()
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or_else(|| {
-            log_backend(
-                "overlay.capture.no_layout",
-                "call suspend_overlay_for_capture before capture (cached inner_position missing)",
-            );
-            "Overlay capture layout missing — internal ordering bug".to_string()
-        })?;
+async fn list_capture_sources() -> Result<CaptureSourceList, String> {
+    #[cfg(target_os = "macos")]
+    {
+        tokio::task::spawn_blocking(list_capture_sources_sync)
+            .await
+            .map_err(|e| format!("list_capture_sources: {e}"))?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Capture source listing is only available on macOS.".into())
+    }
+}
 
-    let crop_x = (layout.inner_phys_x as f64 + viewport_left * layout.scale_factor)
-        .floor()
-        .max(0.0) as u32;
-    let crop_y = (layout.inner_phys_y as f64 + viewport_top * layout.scale_factor)
-        .floor()
-        .max(0.0) as u32;
-    let crop_width = (width * layout.scale_factor).floor().max(1.0) as u32;
-    let crop_height = (height * layout.scale_factor).floor().max(1.0) as u32;
-    let global_left_points = layout.inner_phys_x as f64 / layout.scale_factor + viewport_left;
-    let global_top_points = layout.inner_phys_y as f64 / layout.scale_factor + viewport_top;
-
+#[cfg(target_os = "macos")]
+fn list_capture_sources_sync() -> Result<CaptureSourceList, String> {
+    let mut json_ptr: *mut c_char = std::ptr::null_mut();
+    let mut err_ptr: *mut c_char = std::ptr::null_mut();
+    let ok = unsafe { debugr_list_capture_sources_json(&mut json_ptr, &mut err_ptr) };
+    let err_msg = if !err_ptr.is_null() {
+        let m = unsafe { CStr::from_ptr(err_ptr) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { debugr_capture_region_png_free(err_ptr as *mut c_void) };
+        Some(m)
+    } else {
+        None
+    };
+    if !ok {
+        return Err(err_msg.unwrap_or_else(|| "Could not list capture sources.".into()));
+    }
+    if json_ptr.is_null() {
+        return Err("Empty capture source list.".into());
+    }
+    let json_str = unsafe { CStr::from_ptr(json_ptr) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { debugr_capture_region_png_free(json_ptr as *mut c_void) };
+    let parsed: CaptureSourceList =
+        serde_json::from_str(&json_str).map_err(|e| format!("Parse capture sources: {e}"))?;
     log_backend(
-        "overlay.capture.params",
+        "overlay.capture_sources.counts",
         format!(
-            "viewport_left={viewport_left} viewport_top={viewport_top} width={width} height={height} inner_phys=({}, {}) sf={} global_points=({}, {}) size_points=({width}, {height}) global_phys_xy=({}, {}) wh_phys=({}, {})",
-            layout.inner_phys_x,
-            layout.inner_phys_y,
-            layout.scale_factor,
-            global_left_points,
-            global_top_points,
-            crop_x,
-            crop_y,
-            crop_width,
-            crop_height,
+            "displays={} windows={}",
+            parsed.displays.len(),
+            parsed.windows.len()
         ),
     );
-    log_backend("overlay.capture.user_ready", "capturing_on_demand");
-
-    #[cfg(target_os = "macos")]
-    let capture_result =
-        capture_screencapturekit_png_bytes_in_points(global_left_points, global_top_points, width, height);
-
-    #[cfg(not(target_os = "macos"))]
-    let capture_result = take_silent_screenshot_cropped(
-        Some(crop_x),
-        Some(crop_y),
-        Some(crop_width),
-        Some(crop_height),
-    )
-    .map(|data_url| decode_png_or_jpeg_data_url(&data_url).unwrap_or_default());
-
-    let png_bytes = capture_result.map_err(|e| {
-        log_backend(
-            "overlay.capture.failed",
-            format!(
-                "error={e} viewport_left={viewport_left} viewport_top={viewport_top} crop_points=({global_left_points},{global_top_points},{width}x{height}) crop_phys=({crop_x},{crop_y},{crop_width}x{crop_height}) inner_phys=({}, {}) sf={}",
-                layout.inner_phys_x,
-                layout.inner_phys_y,
-                layout.scale_factor
-            ),
+    if parsed.displays.is_empty() && parsed.windows.is_empty() {
+        return Err(
+            "ScreenCaptureKit returned no displays or windows. macOS may still be withholding screen capture for this running process — verify CGPreflight in diagnostics matches the binary you enabled in System Settings."
+                .into(),
         );
-        e
-    })?;
-    let data_url = encode_png_bytes_to_data_url(&png_bytes);
+    }
+    Ok(parsed)
+}
+
+/// Captures an entire display or a single window, then the overlay crops in image space (no global rect math).
+#[tauri::command]
+async fn capture_selected_source(app: AppHandle, kind: String, source_id: u64) -> Result<String, String> {
+    let sid_u32 = u32::try_from(source_id).map_err(|_| "Invalid source id".to_string())?;
+
+    OVERLAY_HIDDEN_FOR_SCREENSHOT.store(true, Ordering::SeqCst);
+    if let Some(ov) = app.get_webview_window("overlay") {
+        let _ = ov.hide();
+    }
+    tokio::time::sleep(Duration::from_millis(180)).await;
+
+    let kind_blocking = kind.clone();
+    let png_result: Result<Vec<u8>, String> = tokio::task::spawn_blocking(move || {
+        #[cfg(target_os = "macos")]
+        {
+            match kind_blocking.as_str() {
+                "display" => macos_capture_display_full_png_bytes(sid_u32),
+                "window" => macos_capture_window_full_png_bytes(sid_u32),
+                _ => Err(r#"kind must be "display" or "window""#.into()),
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = sid_u32;
+            Err("Full-frame capture is only available on macOS.".into())
+        }
+    })
+    .await
+    .map_err(|e| format!("capture_selected_source: {e}"))?;
+
+    if let Some(ov) = app.get_webview_window("overlay") {
+        let _ = ov.show();
+    }
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    OVERLAY_HIDDEN_FOR_SCREENSHOT.store(false, Ordering::SeqCst);
+
+    let png_bytes = png_result?;
     log_backend(
-        "overlay.capture.success",
-        format!("mode=screencapturekit data_url_len={} png_bytes={}", data_url.len(), png_bytes.len()),
+        "overlay.capture.full_source",
+        format!(
+            "kind={kind} source_id={source_id} png_bytes={}",
+            png_bytes.len()
+        ),
     );
-    Ok(data_url)
+    Ok(encode_png_bytes_to_data_url(&png_bytes))
 }
 
 #[tauri::command]
@@ -1055,61 +1101,6 @@ fn suspend_overlay(app: AppHandle) -> Result<(), String> {
     } else {
         log_backend("overlay.suspend.not_found", "overlay window not found");
     }
-    std::thread::sleep(Duration::from_millis(120));
-    Ok(())
-}
-
-#[tauri::command]
-fn suspend_overlay_for_capture(app: AppHandle) -> Result<(), String> {
-    let visible_before = app
-        .get_webview_window("overlay")
-        .and_then(|w| w.is_visible().ok());
-    log_backend(
-        "overlay.suspend.start",
-        format!("reason=capture overlay_visible_before_hide={visible_before:?}"),
-    );
-
-    *overlay_capture_layout_cell().lock().unwrap() = None;
-
-    let hide_result = if let Some(win) = app.get_webview_window("overlay") {
-        let inner = win.inner_position().map_err(|e| {
-            log_backend("overlay.suspend.inner_position_failed", e.to_string());
-            e.to_string()
-        })?;
-        let sf = win.scale_factor().unwrap_or(1.0);
-        *overlay_capture_layout_cell().lock().unwrap() = Some(OverlayCaptureLayout {
-            inner_phys_x: inner.x,
-            inner_phys_y: inner.y,
-            scale_factor: sf,
-        });
-        log_backend(
-            "overlay.suspend.capture_layout",
-            format!(
-                "inner_phys=({}, {}) scale_factor={sf}",
-                inner.x, inner.y
-            ),
-        );
-
-        // Only block overlay triggers once layout is known and we're about to hide.
-        OVERLAY_HIDDEN_FOR_SCREENSHOT.store(true, Ordering::SeqCst);
-
-        win.hide().map_err(|e| {
-            log_backend("overlay.suspend.failed", e.to_string());
-            *overlay_capture_layout_cell().lock().unwrap() = None;
-            OVERLAY_HIDDEN_FOR_SCREENSHOT.store(false, Ordering::SeqCst);
-            e.to_string()
-        })
-    } else {
-        OVERLAY_HIDDEN_FOR_SCREENSHOT.store(false, Ordering::SeqCst);
-        log_backend("overlay.suspend.not_found", "overlay window not found");
-        Err("overlay window not found".into())
-    };
-
-    if hide_result.is_err() {
-        return hide_result;
-    }
-
-    log_backend("overlay.suspend.success", "window hidden for capture");
     std::thread::sleep(Duration::from_millis(120));
     Ok(())
 }
@@ -1145,21 +1136,6 @@ fn resume_overlay(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Clears the overlay screenshot guard after JS finishes restoring note UI (see suspend_overlay_for_capture).
-#[tauri::command]
-fn clear_annotation_capture_overlay() -> Result<(), String> {
-    *overlay_capture_layout_cell().lock().unwrap() = None;
-    log_backend(
-        "overlay.capture_guard.clear",
-        format!(
-            "setting_OVERLAY_HIDDEN_FOR_SCREENSHOT=false (was {})",
-            OVERLAY_HIDDEN_FOR_SCREENSHOT.load(Ordering::SeqCst)
-        ),
-    );
-    OVERLAY_HIDDEN_FOR_SCREENSHOT.store(false, Ordering::SeqCst);
-    Ok(())
-}
-
 #[tauri::command]
 fn append_overlay_debug_log(scope: String, message: String) -> Result<(), String> {
     let scope: String = scope.trim().chars().take(48).collect();
@@ -1175,9 +1151,24 @@ fn get_overlay_session_log_path() -> String {
 
 #[tauri::command]
 fn show_session_window(app: AppHandle) -> Result<(), String> {
+    macos_activate();
     if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unminimize();
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
+        win.emit("enter-session-mode", ()).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn show_home_window(app: AppHandle) -> Result<(), String> {
+    macos_activate();
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unminimize();
+        win.show().map_err(|e| e.to_string())?;
+        win.set_focus().map_err(|e| e.to_string())?;
+        win.emit("go-home", ()).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -1188,6 +1179,30 @@ fn hide_main_window(app: AppHandle) -> Result<(), String> {
         win.hide().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[tauri::command]
+fn save_picker_sessions_cache(sessions: Vec<PickerSessionCacheItem>) -> Result<(), String> {
+    let path = picker_sessions_cache_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Create picker cache dir: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(&sessions)
+        .map_err(|e| format!("Serialize picker cache: {e}"))?;
+    fs::write(&path, json).map_err(|e| format!("Write picker cache: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn load_picker_sessions_cache() -> Result<Vec<PickerSessionCacheItem>, String> {
+    let path = picker_sessions_cache_path();
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| format!("Read picker cache: {e}"))?;
+    let parsed = serde_json::from_str::<Vec<PickerSessionCacheItem>>(&raw)
+        .map_err(|e| format!("Parse picker cache: {e}"))?;
+    Ok(parsed)
 }
 
 fn debugr_screenshots_dir() -> PathBuf {
@@ -1327,6 +1342,60 @@ fn save_screenshot(capture_id: String, data_url: String) -> Result<String, Strin
     );
 
     Ok(path.to_string_lossy().to_string())
+}
+
+/// Load a persisted screenshot file back into a data URL for reliable WebView rendering.
+/// This avoids relying on file/asset URL behavior in the frontend when a capture already
+/// lives on disk under Debugr's screenshots directory.
+#[tauri::command]
+fn load_screenshot_data_url(path: String) -> Result<String, String> {
+    let base = debugr_screenshots_dir();
+    fs::create_dir_all(&base).map_err(|e| format!("Failed to create screenshots dir: {e}"))?;
+    let base_canon = base
+        .canonicalize()
+        .map_err(|e| format!("Screenshots directory unavailable: {e}"))?;
+
+    let incoming = PathBuf::from(path.trim());
+    let incoming_canon = incoming
+        .canonicalize()
+        .map_err(|e| format!("Screenshot not found: {e}"))?;
+
+    if !incoming_canon.starts_with(&base_canon) {
+        log_backend(
+            "workspace.screenshot.load_outside_root",
+            format!(
+                "incoming={} base={}",
+                incoming_canon.display(),
+                base_canon.display(),
+            ),
+        );
+        return Err("Screenshot path is outside the Debugr screenshots folder".into());
+    }
+
+    let bytes = fs::read(&incoming_canon).map_err(|e| format!("Failed to read screenshot: {e}"))?;
+    let mime = match incoming_canon
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        _ => "image/png",
+    };
+
+    use base64::Engine as _;
+    let body = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let data_url = format!("data:{mime};base64,{body}");
+    log_backend(
+        "workspace.screenshot.load_data_url",
+        format!(
+            "path={} bytes={} data_url_chars={}",
+            incoming_canon.display(),
+            bytes.len(),
+            data_url.len()
+        ),
+    );
+    Ok(data_url)
 }
 
 /// Persist desktop sessions to disk so the local MCP server can read them.
@@ -1533,10 +1602,8 @@ fn trigger_overlay(app: &AppHandle, source: &str, launch: Option<OverlayLaunchPa
         log_backend("overlay.window.missing", "label=overlay");
     }
 
-    // Hide main window so user sees their desktop/apps in background
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.hide();
-    }
+    // Keep the main workspace window visible in the stack so annotation captures can target it
+    // (do not hide — fullscreen overlay still covers it while annotating).
 
     // Show overlay window for picker UI
     // NOTE: This is transparent and doesn't call set_focus to keep other apps interactive
@@ -1566,6 +1633,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_screenshots::init())
+        .plugin(tauri_plugin_macos_permissions::init())
         .setup(|app| {
             log_backend(
                 "session_log.ready",
@@ -1597,21 +1665,11 @@ fn main() {
                 .tooltip("Debugr — ⌃⌘Z to annotate")
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "home" => {
-                        if let Some(win) = app.get_webview_window("main") {
-                            macos_activate();
-                            let _ = win.emit("go-home", ());
-                            let _ = win.show();
-                            let _ = win.set_focus();
-                        }
+                        let _ = show_home_window(app.clone());
                     }
                     "annotate"  => trigger_overlay(app, "tray", None),
                     "sessions"  => {
-                        if let Some(win) = app.get_webview_window("main") {
-                            macos_activate();
-                            let _ = win.emit("enter-session-mode", ());
-                            let _ = win.show();
-                            let _ = win.set_focus();
-                        }
+                        let _ = show_session_window(app.clone());
                     }
                     "quit" => app.exit(0),
                     _ => {}
@@ -1624,12 +1682,7 @@ fn main() {
                         ..
                     } = event {
                         let app = tray.app_handle();
-                        if let Some(win) = app.get_webview_window("main") {
-                            macos_activate();
-                            let _ = win.emit("go-home", ());
-                            let _ = win.show();
-                            let _ = win.set_focus();
-                        }
+                        let _ = show_home_window(app.clone());
                     }
                 })
                 .build(app)?;
@@ -1660,15 +1713,17 @@ fn main() {
             finish_annotations,
             show_overlay,
             hide_overlay,
-            capture_screenshot_for_annotation,
+            list_capture_sources,
+            capture_selected_source,
             suspend_overlay,
-            suspend_overlay_for_capture,
             resume_overlay,
-            clear_annotation_capture_overlay,
             append_overlay_debug_log,
             get_overlay_session_log_path,
+            show_home_window,
             show_session_window,
             hide_main_window,
+            save_picker_sessions_cache,
+            load_picker_sessions_cache,
             pick_folder,
             open_in_cursor,
             copy_to_clipboard,
@@ -1676,6 +1731,7 @@ fn main() {
             persist_annotation_screenshot,
             finalize_capture_screenshot,
             save_screenshot,
+            load_screenshot_data_url,
             open_url,
             save_provider_config,
             get_provider_config,

@@ -57,6 +57,10 @@ export async function injectTauriMock(page: Page, overrides: InvokeOverrides = {
         }
         // Defaults that keep the app from crashing
         switch (cmd) {
+          case 'plugin:macos-permissions|check_screen_recording_permission':
+            return true;
+          case 'plugin:macos-permissions|request_screen_recording_permission':
+            return null;
           case 'get_screen_capture_permission': return true;
           case 'request_screen_capture_permission': return true;
           case 'get_screen_capture_diagnostics':
@@ -67,6 +71,12 @@ export async function injectTauriMock(page: Page, overrides: InvokeOverrides = {
               bundle_identifier: 'com.feedbackagent.desktop',
               executable_path: '/Users/kumar/debugr/apps/desktop/src-tauri/target/debug/feedbackagent-desktop',
             };
+          case 'list_capture_sources':
+            return { displays: [], windows: [] };
+          case 'open_screen_capture_settings':
+            return null;
+          case 'capture_selected_source':
+            return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
           case 'save_sessions_to_disk': return null;
           case 'hide_main_window': return null;
           case 'show_session_window': return null;

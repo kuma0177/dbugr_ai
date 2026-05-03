@@ -1,5 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
+import {
+  checkScreenRecordingPermission,
+  requestScreenRecordingPermission,
+} from 'tauri-plugin-macos-permissions-api';
 import './overlay.css';
 
 declare const __DEBUGR_BUILD_STAMP__: string;
@@ -31,6 +35,14 @@ interface OverlayLaunchPayload {
   skipPicker?: boolean;
 }
 
+interface ScreenCaptureDiagnosticsPayload {
+  preflight: boolean;
+  probe: boolean;
+  granted: boolean;
+  bundle_identifier: string;
+  executable_path: string;
+}
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_ANNOTATIONS = 5;
@@ -42,11 +54,13 @@ const FINISH_TOOL_LABEL = 'Add to session';
 
 // ── State ────────────────────────────────────────────────────────────────────
 
-type OverlayStep = 'picking' | 'setup' | 'annotating';
+type OverlayStep = 'picking' | 'setup' | 'capture-source' | 'annotating';
+type CaptureSourceMode = 'screen' | 'browser' | 'app';
 
 let step: OverlayStep = 'picking';
+let captureSourceMode: CaptureSourceMode = 'screen';
 let annotations: Annotation[] = [];
-let activeTool: 'select' | 'pin' | 'region' = 'region';
+let activeTool: 'pin' | 'region' = 'region';
 let selectedId: string | null = null;
 let screenshotCaptured = false;
 let captureInProgress = false;
@@ -104,6 +118,12 @@ let newSessionAbout = '';
 let localFolder: string | null = null;
 let githubRepo = '';
 let currentScreenshotDataUrl = '';
+/** Full-frame PNG from ScreenCaptureKit (display or window); cropping is done in this overlay. */
+let sourceFrameDataUrl: string | null = null;
+/** Where capture-source should return when the user taps Back. */
+let pendingCaptureBackStep: OverlayStep = 'annotating';
+let pickerLoadingToken = 0;
+let pickerLoadingTimer: number | null = null;
 
 // region-drag state
 let dragging = false;
@@ -121,7 +141,7 @@ let moveState: {
 const root = document.getElementById('overlay-root')!;
 
 root.innerHTML = `
-  <div id="screenshot-bg"></div>
+  <div id="screenshot-bg"><img id="screenshot-img" alt="" crossorigin="anonymous" /></div>
   <div id="dim-layer"></div>
 
   <div id="annotation-ui" style="display:none;">
@@ -190,6 +210,23 @@ root.innerHTML = `
       </div>
     </div>
 
+    <div class="hud-popover" id="hud-capture" style="display:none;">
+      <div class="step-card step-card-hud" id="step-capture">
+        <div class="step-card-title">Choose screen or window</div>
+        <div class="step-card-sub" id="capture-step-sub">Capture what you're looking at first. Use browser or app filters only when you need something more specific.</div>
+        <div class="capture-mode-bar" id="capture-mode-bar" role="tablist" aria-label="Capture source type">
+          <button type="button" class="capture-mode-btn active" id="capture-mode-screen" data-capture-mode="screen" aria-selected="true">Current screen</button>
+          <button type="button" class="capture-mode-btn" id="capture-mode-browser" data-capture-mode="browser" aria-selected="false">Browser tabs/pages</button>
+          <button type="button" class="capture-mode-btn" id="capture-mode-app" data-capture-mode="app" aria-selected="false">Other apps</button>
+        </div>
+        <button type="button" class="picker-cancel-btn" id="capture-refresh" style="margin-top:8px;">Refresh list</button>
+        <div class="capture-list" id="capture-list"><div class="picker-loading">Loading…</div></div>
+        <div class="picker-actions" style="margin-top:12px;">
+          <button type="button" class="picker-cancel-btn" id="capture-back">← Back</button>
+        </div>
+      </div>
+    </div>
+
     <!-- SVG connectors -->
     <svg class="ann-connector" id="connectors" xmlns="http://www.w3.org/2000/svg"></svg>
 
@@ -203,9 +240,6 @@ root.innerHTML = `
       </button>
       <button class="tool-btn" id="tool-region" title="Region">
         ▢<div class="tool-label">Region</div>
-      </button>
-      <button class="tool-btn" id="tool-select" title="Select">
-        ↖<div class="tool-label">Select</div>
       </button>
       <div class="toolbar-divider"></div>
       <button class="tool-btn cancel" id="tool-cancel">Esc</button>
@@ -233,6 +267,11 @@ root.innerHTML = `
 // ── DOM refs ─────────────────────────────────────────────────────────────────
 
 const screenshotBg   = document.getElementById('screenshot-bg')!;
+const screenshotImgEl = document.getElementById('screenshot-img') as HTMLImageElement;
+const hudCaptureEl   = document.getElementById('hud-capture')!;
+const captureListEl  = document.getElementById('capture-list')!;
+const captureStepSubEl = document.getElementById('capture-step-sub')!;
+const captureModeBarEl = document.getElementById('capture-mode-bar')!;
 const pickerListEl   = document.getElementById('picker-list')!;
 const hudPickerEl    = document.getElementById('hud-picker')!;
 const hudSetupEl     = document.getElementById('hud-setup')!;
@@ -255,11 +294,31 @@ const setupAboutEl   = document.getElementById('setup-about') as HTMLTextAreaEle
 const setupAboutCount = document.getElementById('setup-about-count')!;
 const setupGithubEl  = document.getElementById('setup-github') as HTMLInputElement;
 
+function applySourceFrameDisplay(dataUrl: string) {
+  sourceFrameDataUrl = dataUrl || null;
+  if (sourceFrameDataUrl) {
+    screenshotImgEl.src = sourceFrameDataUrl;
+    screenshotImgEl.style.display = 'block';
+    screenshotBg.style.backgroundImage = '';
+  } else {
+    screenshotImgEl.removeAttribute('src');
+    screenshotImgEl.style.display = 'none';
+    screenshotBg.style.backgroundImage = '';
+  }
+}
+
 function applyScreenshotDataUrl(dataUrl: string) {
   currentScreenshotDataUrl = dataUrl || '';
-  screenshotBg.style.backgroundImage = currentScreenshotDataUrl
-    ? `url("${currentScreenshotDataUrl}")`
-    : '';
+  if (currentScreenshotDataUrl.startsWith('data:image/')) {
+    applySourceFrameDisplay(currentScreenshotDataUrl);
+  } else {
+    screenshotImgEl.removeAttribute('src');
+    screenshotImgEl.style.display = 'none';
+    screenshotBg.style.backgroundImage = currentScreenshotDataUrl
+      ? `url("${currentScreenshotDataUrl}")`
+      : '';
+    sourceFrameDataUrl = currentScreenshotDataUrl || null;
+  }
   const d = describeScreenshotRef(currentScreenshotDataUrl);
   logAnnotationPipeline('screenshot_applied_to_overlay', {
     kind: d.kind,
@@ -280,17 +339,18 @@ function showStep(s: OverlayStep) {
   annotationUiEl.style.display = 'block';
   hudPickerEl.style.display = s === 'picking' ? 'block' : 'none';
   hudSetupEl.style.display = s === 'setup' ? 'block' : 'none';
+  hudCaptureEl.style.display = s === 'capture-source' ? 'block' : 'none';
   stepPickerEl.style.display = s === 'picking' ? 'flex' : 'none';
   stepSetupEl.style.display = s === 'setup' ? 'flex' : 'none';
-  root.classList.toggle('cursor-annotating', true);
+  root.classList.toggle('cursor-annotating', s === 'annotating');
 
   // During picker/setup phases, allow clicks to pass through to apps behind overlay.
   // During annotation phase, capture mouse events for drawing annotations.
-  if (s === 'picking' || s === 'setup') {
+  if (s === 'picking' || s === 'setup' || s === 'capture-source') {
     // Make overlay transparent to mouse events (clicks pass through to apps)
     root.style.pointerEvents = 'none';
     // But allow interaction with picker/setup UI by setting pointer-events on interactive elements
-    const interactiveEls = root.querySelectorAll('button, input, select, .step-picker, .step-setup');
+    const interactiveEls = root.querySelectorAll('button, input, select, .step-picker, .step-setup, #hud-capture button, #hud-capture .capture-list');
     interactiveEls.forEach(el => {
       (el as HTMLElement).style.pointerEvents = 'auto';
     });
@@ -310,14 +370,524 @@ function showStep(s: OverlayStep) {
 
 function clamp(v: number, lo: number, hi: number) { return Math.min(Math.max(v, lo), hi); }
 
+/** Bounding rect of the letterboxed snapshot image in client coordinates (or full window). */
+function snapshotImgClientRect(): DOMRect | null {
+  if (!screenshotImgEl.naturalWidth || screenshotImgEl.style.display === 'none') return null;
+  return screenshotImgEl.getBoundingClientRect();
+}
+
 function clampBox(b: { left: number; top: number; width: number; height: number }) {
+  const ir = snapshotImgClientRect();
+  if (ir && ir.width > 0 && ir.height > 0) {
+    const maxW = ir.width - 4;
+    const maxH = ir.height - 4;
+    const w = clamp(b.width, MIN_REGION, maxW);
+    const h = clamp(b.height, MIN_REGION, maxH);
+    return {
+      left: clamp(b.left, ir.left + 2, ir.right - w - 2),
+      top: clamp(b.top, ir.top + 2, ir.bottom - h - 2),
+      width: w,
+      height: h,
+    };
+  }
   const w = clamp(b.width, MIN_REGION, window.innerWidth - 8);
   const h = clamp(b.height, MIN_REGION, window.innerHeight - 8);
   return {
     left: clamp(b.left, 4, window.innerWidth - w - 4),
-    top:  clamp(b.top,  4, window.innerHeight - h - 4),
-    width: w, height: h,
+    top: clamp(b.top, 4, window.innerHeight - h - 4),
+    width: w,
+    height: h,
   };
+}
+
+function cropImageDataUrl(
+  dataUrl: string,
+  sx: number,
+  sy: number,
+  sw: number,
+  sh: number,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const ox = clamp(Math.floor(sx), 0, Math.max(0, img.naturalWidth - 1));
+      const oy = clamp(Math.floor(sy), 0, Math.max(0, img.naturalHeight - 1));
+      const cw = Math.max(1, Math.min(Math.ceil(sw), img.naturalWidth - ox));
+      const ch = Math.max(1, Math.min(Math.ceil(sh), img.naturalHeight - oy));
+      const canvas = document.createElement('canvas');
+      canvas.width = cw;
+      canvas.height = ch;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('2d context unavailable'));
+        return;
+      }
+      ctx.drawImage(img, ox, oy, cw, ch, 0, 0, cw, ch);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => reject(new Error('Image load failed'));
+    img.src = dataUrl;
+  });
+}
+
+/** Map client coords to natural pixels of #screenshot-img. */
+function clientRectToImageRect(left: number, top: number, width: number, height: number) {
+  const img = screenshotImgEl;
+  if (!img.naturalWidth) {
+    return { sx: 0, sy: 0, sw: 1, sh: 1 };
+  }
+  const r = img.getBoundingClientRect();
+  const scaleX = img.naturalWidth / r.width;
+  const scaleY = img.naturalHeight / r.height;
+  const x1 = (Math.min(left, left + width) - r.left) * scaleX;
+  const y1 = (Math.min(top, top + height) - r.top) * scaleY;
+  const x2 = (Math.max(left, left + width) - r.left) * scaleX;
+  const y2 = (Math.max(top, top + height) - r.top) * scaleY;
+  let ix1 = Math.round(x1);
+  let iy1 = Math.round(y1);
+  let ix2 = Math.round(x2);
+  let iy2 = Math.round(y2);
+  ix1 = clamp(ix1, 0, img.naturalWidth - 1);
+  iy1 = clamp(iy1, 0, img.naturalHeight - 1);
+  ix2 = clamp(ix2, ix1 + 1, img.naturalWidth);
+  iy2 = clamp(iy2, iy1 + 1, img.naturalHeight);
+  return { sx: ix1, sy: iy1, sw: ix2 - ix1, sh: iy2 - iy1 };
+}
+
+async function showCaptureSourceStep() {
+  if (step !== 'capture-source') {
+    pendingCaptureBackStep =
+      step === 'setup' ? 'setup' : step === 'picking' ? 'picking' : 'annotating';
+  }
+  showStep('capture-source');
+  setToast('Pick a display or window to snapshot.');
+  await loadCaptureSources();
+}
+
+async function ensureScreenshotImgReady(): Promise<void> {
+  if (!sourceFrameDataUrl || !screenshotImgEl.src) {
+    throw new Error('No snapshot');
+  }
+  if (!screenshotImgEl.complete) {
+    await new Promise<void>((resolve, reject) => {
+      const onLoad = () => {
+        cleanup();
+        resolve();
+      };
+      const onErr = () => {
+        cleanup();
+        reject(new Error('Snapshot failed to load'));
+      };
+      const cleanup = () => {
+        screenshotImgEl.removeEventListener('load', onLoad);
+        screenshotImgEl.removeEventListener('error', onErr);
+      };
+      screenshotImgEl.addEventListener('load', onLoad);
+      screenshotImgEl.addEventListener('error', onErr);
+    });
+  }
+  await screenshotImgEl.decode().catch(() => {});
+}
+
+/** macOS ScreenCaptureKit / TCC messages — user-facing copy lives in renderCaptureSourcesError. */
+function isLikelyMacScreenRecordingDenied(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes('tcc') ||
+    (m.includes('declined') && (m.includes('capture') || m.includes('window') || m.includes('display'))) ||
+    m.includes('screen recording') ||
+    (m.includes('not authorized') && m.includes('capture')) ||
+    (m.includes('not permitted') && m.includes('capture'))
+  );
+}
+
+/** macOS plugin API; returns null when unavailable (non-macOS / tests). */
+async function macosPluginScreenRecordingGate(): Promise<boolean | null> {
+  try {
+    return await checkScreenRecordingPermission();
+  } catch {
+    return null;
+  }
+}
+
+function wireCaptureSettingsButtons(root: ParentNode) {
+  root.querySelector('#capture-open-screen-settings')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      await requestScreenRecordingPermission();
+    } catch {
+      await invoke<boolean>('request_screen_capture_permission').catch(() => false);
+    }
+    try {
+      await invoke('open_screen_capture_settings');
+    } catch {
+      setToast('Could not open System Settings. Open Screen Recording manually from Privacy & Security.');
+    }
+  });
+  root.querySelector('#capture-retry-after-perm')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    void loadCaptureSources();
+  });
+}
+
+function attachCaptureRequestAccessHandler(root: ParentNode) {
+  root.querySelector('#capture-request-access')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    setToast('Asking macOS…');
+    try {
+      await requestScreenRecordingPermission();
+    } catch {
+      try {
+        await invoke<boolean>('request_screen_capture_permission');
+      } catch (err) {
+        setToast(`Could not request access: ${String(err)}`);
+        return;
+      }
+    }
+    void loadCaptureSources();
+  });
+}
+
+/** When the macOS permissions plugin says Screen Recording is off — clear, authoritative UI. */
+function renderCaptureSourcesScreenRecordingOff(kind: 'plugin' | 'generic') {
+  const lead =
+    kind === 'plugin'
+      ? 'Screen Recording isn’t authorized for this process.'
+      : 'Screen Recording is turned off for this build.';
+  const detail =
+    kind === 'plugin'
+      ? `<p class="capture-perm-detail">The macOS permission plugin reports <strong>no Screen Recording access</strong> for this binary. Apple does not expose the display/window list until access is granted.</p>
+        <p class="capture-perm-tip"><strong>App missing from the list?</strong> Click <strong>+</strong>, <strong>⌘⇧G</strong>, and pick your dev binary — e.g. <code>…/src-tauri/target/debug/feedbackagent-desktop</code>. After <code>pnpm build</code>, add <code>src-tauri/target/release/bundle/macos/debugr.ai.app</code> (that folder only exists once you’ve built the bundle — it is not created in <code>/Applications</code> unless you copy it there).</p>`
+      : `<p class="capture-perm-detail">macOS won’t list displays or windows until you allow it. Open <strong>System Settings → Privacy &amp; Security → Screen Recording</strong>, enable <strong>debugr.ai</strong>, then return here and tap refresh.</p>
+        <p class="capture-perm-tip">If you run from <code>pnpm</code> / dev, enable the <code>feedbackagent-desktop</code> entry — macOS treats it separately from the .app.</p>
+        <p class="capture-perm-tip"><strong>Don’t see Debugr?</strong> Click <strong>+</strong>, <strong>⌘⇧G</strong>, and select <code>feedbackagent-desktop</code> under <code>target/debug</code>. For a bundled build, use <code>src-tauri/target/release/bundle/macos/debugr.ai.app</code> after <code>pnpm build</code> — copy it to <strong>/Applications</strong> yourself if you want that path.</p>`;
+  captureListEl.innerHTML = `
+      <div class="capture-perm-panel">
+        <p class="capture-perm-lead">${lead}</p>
+        ${detail}
+        <div class="capture-perm-actions">
+          <button type="button" class="capture-perm-primary" id="capture-retry-after-perm">Refresh list</button>
+          <button type="button" class="capture-perm-secondary" id="capture-request-access">Ask macOS for screen capture…</button>
+          <button type="button" class="capture-perm-secondary" id="capture-open-screen-settings">Open Screen Recording settings</button>
+        </div>
+      </div>`;
+  wireCaptureSettingsButtons(captureListEl);
+  attachCaptureRequestAccessHandler(captureListEl);
+}
+
+/** ScreenCaptureKit succeeded JSON-wise but returned zero sources — almost always TCC / wrong executable. */
+function renderCaptureSourcesSckEmptyFailure(
+  diagnostics: ScreenCaptureDiagnosticsPayload | null,
+  pluginScreenRecording: boolean | null,
+) {
+  const pluginLabel =
+    pluginScreenRecording === null ? 'n/a' : pluginScreenRecording ? 'true' : 'false';
+  const diagHtml = diagnostics
+    ? `<p class="capture-perm-diag"><strong>This process</strong><br/><code class="capture-perm-diag-path">${escapeHtml(
+        diagnostics.executable_path,
+      )}</code><span class="capture-perm-diag-meta">CGPreflight=${diagnostics.preflight} · probe=${diagnostics.probe} · plugin screen-recording=${pluginLabel}</span></p>`
+    : '';
+  captureListEl.innerHTML = `
+      <div class="capture-perm-panel">
+        <p class="capture-perm-lead">ScreenCaptureKit returned no displays or windows.</p>
+        ${diagHtml}
+        <p class="capture-perm-detail">Enabling a row in System Settings only helps if it matches <strong>this exact path</strong>. Open <strong>Activity Monitor</strong>, find Debugr, double‑click → <strong>Open Files and Ports</strong> — the path must match the binary you added with <strong>+</strong>.</p>
+        <p class="capture-perm-tip">If <strong>CGPreflight</strong> is still false: quit Debugr (⌘Q), reboot once, or run the bundled <code>debugr.ai.app</code> from <code>target/release/bundle/macos/</code> (after <code>pnpm build</code>) instead of <code>target/debug</code>.</p>
+        <div class="capture-perm-actions">
+          <button type="button" class="capture-perm-primary" id="capture-retry-after-perm">Refresh list</button>
+          <button type="button" class="capture-perm-secondary" id="capture-request-access">Ask macOS for screen capture…</button>
+          <button type="button" class="capture-perm-secondary" id="capture-open-screen-settings">Open Screen Recording settings</button>
+          ${
+            diagnostics?.executable_path
+              ? '<button type="button" class="capture-perm-secondary" id="capture-reveal-binary">Reveal binary in Finder</button>'
+              : ''
+          }
+        </div>
+      </div>`;
+  wireCaptureSettingsButtons(captureListEl);
+  attachCaptureRequestAccessHandler(captureListEl);
+  if (diagnostics?.executable_path) {
+    const p = diagnostics.executable_path;
+    captureListEl.querySelector('#capture-reveal-binary')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      void invoke('reveal_in_finder', { path: p }).catch(() => setToast('Could not reveal in Finder.'));
+    });
+  }
+}
+
+function renderCaptureSourcesError(
+  err: unknown,
+  systemReportsCaptureAllowed = false,
+  diagnostics: ScreenCaptureDiagnosticsPayload | null = null,
+  pluginScreenRecording: boolean | null = null,
+) {
+  const raw = err instanceof Error ? err.message : String(err);
+  const safeDetail = escapeHtml(raw);
+
+  if (raw.includes('ScreenCaptureKit returned no displays')) {
+    renderCaptureSourcesSckEmptyFailure(diagnostics, pluginScreenRecording);
+    return;
+  }
+
+  if (isLikelyMacScreenRecordingDenied(raw)) {
+    if (pluginScreenRecording === false) {
+      renderCaptureSourcesScreenRecordingOff('plugin');
+      return;
+    }
+    if (systemReportsCaptureAllowed) {
+      const diagHtml = diagnostics
+        ? `<p class="capture-perm-diag"><strong>Running binary</strong><br/><code class="capture-perm-diag-path">${escapeHtml(
+            diagnostics.executable_path,
+          )}</code><span class="capture-perm-diag-meta">CGPreflight=${diagnostics.preflight} (ScreenCaptureKit gate) · probe=${diagnostics.probe} (CoreGraphics test) · ${escapeHtml(
+            diagnostics.bundle_identifier,
+          )}</span></p>`
+        : '';
+      const preflightFalseProbeTrue =
+        Boolean(diagnostics && !diagnostics.preflight && diagnostics.probe);
+      const detailHtml = preflightFalseProbeTrue
+        ? `<p class="capture-perm-detail"><strong>CGPreflight</strong> is what ScreenCaptureKit checks; yours is still <strong>false</strong>, so listing screens/windows is blocked. Privacy can show toggles on before this flag updates for <code>target/debug</code> builds.</p>
+           <p class="capture-perm-detail"><strong>Probe</strong> only tests a CoreGraphics display read — it can be true while CGPreflight is still catching up.</p>
+           <p class="capture-perm-tip">Tap <strong>Ask macOS…</strong> (runs Apple’s request API), then <strong>Refresh</strong>. Still stuck? ⌘Q, reopen; toggle <strong>feedbackagent-desktop</strong> off/on in Screen Recording; or reboot once.</p>`
+        : `<p class="capture-perm-detail">Quit Debugr completely (⌘Q), reopen, then Refresh. If CGPreflight is true but this still appears, it may be a non-permission bug — note the error text.</p>`;
+      const lead = preflightFalseProbeTrue
+        ? 'ScreenCaptureKit is waiting on CGPreflight for this binary.'
+        : 'Screen Recording checks passed, but ScreenCaptureKit still refused.';
+      const askMacosBtn = preflightFalseProbeTrue
+        ? `<button type="button" class="capture-perm-secondary" id="capture-request-access">Ask macOS for screen capture…</button>`
+        : '';
+      captureListEl.innerHTML = `
+      <div class="capture-perm-panel">
+        <p class="capture-perm-lead">${lead}</p>
+        ${diagHtml}
+        ${detailHtml}
+        <div class="capture-perm-actions">
+          <button type="button" class="capture-perm-primary" id="capture-retry-after-perm">Refresh list</button>
+          ${askMacosBtn}
+          <button type="button" class="capture-perm-secondary" id="capture-open-screen-settings">Open Screen Recording settings</button>
+        </div>
+      </div>`;
+      wireCaptureSettingsButtons(captureListEl);
+      attachCaptureRequestAccessHandler(captureListEl);
+      return;
+    }
+
+    renderCaptureSourcesScreenRecordingOff('generic');
+    return;
+  }
+
+  captureListEl.innerHTML = `
+    <div class="capture-error-generic">
+      <p class="capture-error-line">Couldn’t load screens and windows.</p>
+      <p class="capture-error-detail">${safeDetail}</p>
+      <p class="capture-error-hint">If this is a permission issue on macOS, use Screen Recording in Privacy &amp; Security, then refresh.</p>
+      <button type="button" class="capture-perm-secondary" id="capture-retry-generic">Try again</button>
+    </div>`;
+  captureListEl.querySelector('#capture-retry-generic')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    void loadCaptureSources();
+  });
+}
+
+async function loadCaptureSources() {
+  captureListEl.innerHTML = '<div class="picker-loading">Loading capture sources…</div>';
+
+  try {
+    const list = await invoke<CaptureSourceListPayload>('list_capture_sources');
+    renderCaptureSourceList(list);
+  } catch (err) {
+    const pluginAfter = await macosPluginScreenRecordingGate();
+    let systemReportsCaptureAllowed = false;
+    try {
+      systemReportsCaptureAllowed = await invoke<boolean>('get_screen_capture_permission');
+    } catch {
+      systemReportsCaptureAllowed = false;
+    }
+    let diagnostics: ScreenCaptureDiagnosticsPayload | null = null;
+    try {
+      diagnostics = await invoke<ScreenCaptureDiagnosticsPayload>('get_screen_capture_diagnostics');
+    } catch {
+      diagnostics = null;
+    }
+    renderCaptureSourcesError(err, systemReportsCaptureAllowed, diagnostics, pluginAfter);
+  }
+}
+
+interface CaptureSourceRow {
+  kind: string;
+  id: number;
+  label: string;
+}
+
+interface CaptureSourceListPayload {
+  displays: CaptureSourceRow[];
+  windows: CaptureSourceRow[];
+}
+
+const BROWSER_APP_NAMES = new Set([
+  'Safari',
+  'Google Chrome',
+  'Arc',
+  'Brave Browser',
+  'Microsoft Edge',
+  'Firefox',
+  'Orion',
+  'Vivaldi',
+]);
+
+const HIDDEN_CAPTURE_LABEL_FRAGMENTS = [
+  'cursoruiviewservice',
+  'feedbackagent-desktop',
+  'debugr annotation',
+  'autofill (google chrome)',
+  'localauthenticationremoteservice',
+];
+
+function setCaptureSourceMode(mode: CaptureSourceMode) {
+  captureSourceMode = mode;
+  captureModeBarEl.querySelectorAll<HTMLButtonElement>('.capture-mode-btn').forEach((btn) => {
+    const active = btn.dataset.captureMode === mode;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  captureStepSubEl.textContent =
+    mode === 'screen'
+      ? "Capture what you're looking at right now. We'll freeze the screen once, then you crop on top of it."
+      : mode === 'browser'
+        ? 'Filter to browser windows using page titles when macOS exposes them. This is the closest available match to tab picking.'
+        : 'Filter to other app windows like Terminal, Cursor, Figma, or another desktop app.';
+}
+
+function parseCaptureWindowLabel(label: string): { appName: string; title: string } {
+  const parts = label.split(' — ');
+  if (parts.length <= 1) {
+    return { appName: label.trim(), title: '' };
+  }
+  return {
+    appName: parts[0]?.trim() || label.trim(),
+    title: parts.slice(1).join(' — ').trim(),
+  };
+}
+
+function shouldHideCaptureWindow(row: CaptureSourceRow): boolean {
+  const text = row.label.toLowerCase();
+  return HIDDEN_CAPTURE_LABEL_FRAGMENTS.some((fragment) => text.includes(fragment));
+}
+
+function isBrowserCaptureWindow(row: CaptureSourceRow): boolean {
+  const { appName } = parseCaptureWindowLabel(row.label);
+  return BROWSER_APP_NAMES.has(appName);
+}
+
+function dedupeCaptureRows(rows: CaptureSourceRow[]): CaptureSourceRow[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const key = `${row.kind}|${row.label.trim()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function captureSourceRow(row: CaptureSourceRow) {
+  const kind = row.kind as 'display' | 'window';
+  const id = Number(row.id);
+  if (!kind || !Number.isFinite(id)) return;
+  captureInProgress = true;
+  setToast('Capturing…');
+  try {
+    const dataUrl = await invoke<string>('capture_selected_source', { kind, sourceId: id });
+    applySourceFrameDisplay(dataUrl);
+    await screenshotImgEl.decode().catch(() => {});
+    screenshotCaptured = false;
+    currentScreenshotDataUrl = '';
+    showStep('annotating');
+    setToast('Draw a region or pin on the snapshot. The saved image uses your crop.');
+    updateCounter();
+  } catch (err) {
+    const msg = String(err);
+    if (isLikelyMacScreenRecordingDenied(msg)) {
+      setToast(
+        'Screen Recording blocked capture. Enable debugr.ai (and the dev binary if needed) in Privacy → Screen Recording, then choose the source again.',
+      );
+    } else {
+      setToast(`Capture failed: ${msg}`);
+    }
+  } finally {
+    captureInProgress = false;
+  }
+}
+
+function renderCaptureSourceList(list: CaptureSourceListPayload) {
+  const displays = dedupeCaptureRows(list.displays);
+  const filteredWindows = dedupeCaptureRows(list.windows.filter((row) => !shouldHideCaptureWindow(row)));
+  const browserWindows = filteredWindows.filter(isBrowserCaptureWindow);
+  const appWindows = filteredWindows.filter((row) => !isBrowserCaptureWindow(row));
+
+  let visibleRows: CaptureSourceRow[] = [];
+  let emptyCopy = 'No matching capture sources found.';
+
+  if (captureSourceMode === 'screen') {
+    visibleRows = displays;
+    emptyCopy = 'No screens were found.';
+  } else if (captureSourceMode === 'browser') {
+    visibleRows = browserWindows;
+    emptyCopy = 'No browser windows were found. Open the page you want, then refresh.';
+  } else {
+    visibleRows = appWindows;
+    emptyCopy = 'No app windows were found after filtering out helper windows.';
+  }
+
+  if (visibleRows.length === 0) {
+    captureListEl.innerHTML = `<div class="picker-empty">${emptyCopy}</div>`;
+    return;
+  }
+
+  const rows = visibleRows.map((row, index) => {
+    const parsed = row.kind === 'window' ? parseCaptureWindowLabel(row.label) : null;
+    const kindLabel =
+      captureSourceMode === 'screen'
+        ? 'Current screen'
+        : captureSourceMode === 'browser'
+          ? 'Browser'
+          : parsed?.appName || 'App';
+    const titleLabel =
+      captureSourceMode === 'screen'
+        ? 'Capture the full screen you are looking at'
+        : parsed?.title || row.label;
+    const metaLabel =
+      captureSourceMode === 'browser'
+        ? (parsed?.appName || 'Browser window')
+        : row.kind === 'display'
+          ? row.label
+          : parsed?.appName && parsed?.title
+            ? `${parsed.appName} window`
+            : 'Desktop window';
+    return `
+      <button type="button" class="capture-row capture-row-${captureSourceMode}" data-index="${index}">
+        <div class="capture-row-kind">${escapeHtml(kindLabel)}</div>
+        <div class="capture-row-label">${escapeHtml(titleLabel)}</div>
+        <div class="capture-row-meta">${escapeHtml(metaLabel)}</div>
+      </button>`;
+  });
+
+  captureListEl.innerHTML = rows.join('');
+  captureListEl.querySelectorAll<HTMLButtonElement>('.capture-row').forEach((btn) => {
+    btn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const index = Number(btn.dataset.index);
+      const row = visibleRows[index];
+      if (!row) return;
+      await captureSourceRow(row);
+    });
+  });
+}
+
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 function boxOf(ann: Annotation) {
@@ -341,9 +911,13 @@ function updateAnnotatingHints() {
 
 function updateCounter() {
   const n = annotations.length;
-  setToast(n > 0
-    ? `${n} annotation${n > 1 ? 's' : ''} — save each note, then tap Finish below.`
-    : 'Click anywhere to add an annotation. Right-drag to draw a region.');
+  if (step === 'annotating' && n === 0 && !sourceFrameDataUrl) {
+    setToast('Choose a screen or window to snapshot before annotating (capture step).');
+  } else if (n > 0) {
+    setToast(`${n} annotation${n > 1 ? 's' : ''} — save each note, then tap Finish below.`);
+  } else {
+    setToast('Click anywhere to add an annotation. Right-drag to draw a region.');
+  }
   updateAnnotatingHints();
 }
 
@@ -381,12 +955,43 @@ function readCachedPickerSessions(): PickerSession[] {
   }
 }
 
+function clearPickerLoadingTimer() {
+  if (pickerLoadingTimer !== null) {
+    window.clearTimeout(pickerLoadingTimer);
+    pickerLoadingTimer = null;
+  }
+}
+
+async function hydratePickerSessionsFromBackend() {
+  try {
+    const cached = await invoke<PickerSession[]>('load_picker_sessions_cache');
+    if (!Array.isArray(cached) || cached.length === 0) return;
+    try {
+      localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(cached));
+    } catch {
+      // Ignore cache write failures.
+    }
+    renderPickerSessions(cached);
+  } catch {
+    // Ignore backend cache failures and wait for the live event path.
+  }
+}
+
 function setPickerLoading() {
+  pickerLoadingToken += 1;
+  const token = pickerLoadingToken;
+  clearPickerLoadingTimer();
   const cached = readCachedPickerSessions();
   if (cached.length > 0) {
     renderPickerSessions(cached);
   } else {
     pickerListEl.innerHTML = '<div class="picker-loading">Loading sessions…</div>';
+    void hydratePickerSessionsFromBackend();
+    pickerLoadingTimer = window.setTimeout(() => {
+      if (token !== pickerLoadingToken) return;
+      const refreshedCached = readCachedPickerSessions();
+      renderPickerSessions(refreshedCached);
+    }, 1200);
   }
 }
 
@@ -396,10 +1001,9 @@ function startPreparedSession(payload: OverlayLaunchPayload) {
   newSessionAbout = payload.newSessionAbout ?? '';
   localFolder = payload.localFolder ?? null;
   githubRepo = payload.githubRepo ?? '';
-  showStep('annotating');
   setTool('region', false);
   updateSessionModeChrome();
-  updateCounter();
+  void showCaptureSourceStep();
 }
 
 function clearAnnotationDOM() {
@@ -442,6 +1046,7 @@ function deleteAnnotation(id: string) {
 // ── Step 1: Picker ────────────────────────────────────────────────────────────
 
 function renderPickerSessions(list: Array<{ id: string; title: string; createdAt: string }>) {
+  clearPickerLoadingTimer();
   if (list.length === 0) {
     pickerListEl.innerHTML = '<div class="picker-empty">No past sessions yet. Start a new one to create your first list item.</div>';
     return;
@@ -498,13 +1103,13 @@ document.getElementById('picker-new')!.addEventListener('click', e => {
 
 document.getElementById('picker-cancel')!.addEventListener('click', e => {
   e.stopPropagation();
-  showStep('annotating');
+  void cancelOverlay();
 });
 
 sessionModeAppendBtn.addEventListener('click', e => {
   e.stopPropagation();
   if (step === 'picking') {
-    showStep('annotating');
+    void showCaptureSourceStep();
     return;
   }
   showStep('picking');
@@ -536,7 +1141,9 @@ sessionModeNewBtn.addEventListener('click', e => {
 
 document.getElementById('setup-back')!.addEventListener('click', e => {
   e.stopPropagation();
-  showStep('annotating');
+  showStep('picking');
+  setPickerLoading();
+  void emit('request-sessions');
 });
 
 setupFolderBtn.addEventListener('click', async e => {
@@ -567,6 +1174,30 @@ setupGithubEl.addEventListener('input', e => {
   updateSetupState();
 });
 
+document.getElementById('capture-refresh')!.addEventListener('click', e => {
+  e.stopPropagation();
+  void loadCaptureSources();
+});
+captureModeBarEl.querySelectorAll<HTMLButtonElement>('.capture-mode-btn').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const nextMode = btn.dataset.captureMode as CaptureSourceMode | undefined;
+    if (!nextMode) return;
+    setCaptureSourceMode(nextMode);
+    void loadCaptureSources();
+  });
+});
+
+document.getElementById('capture-back')!.addEventListener('click', e => {
+  e.stopPropagation();
+  showStep(pendingCaptureBackStep);
+  if (pendingCaptureBackStep === 'picking') {
+    setPickerLoading();
+    void emit('request-sessions');
+  }
+  updateCounter();
+});
+
 document.getElementById('setup-start')!.addEventListener('click', e => {
   e.stopPropagation();
   void enterAnnotating();
@@ -593,30 +1224,28 @@ function enterAnnotating() {
     newSessionAbout = '';
   }
 
-  // Show blank overlay - user will draw a region first
-  showStep('annotating');
   setTool('region', false);
-  updateCounter();
-  setToast('Draw a region or point on the screen to start. The screenshot will appear once you make a selection.');
+  void showCaptureSourceStep();
 }
 
 // ── Tool selection ────────────────────────────────────────────────────────────
 
 function setTool(t: typeof activeTool, markActive = true) {
   activeTool = t;
-  (['pin', 'region', 'select'] as const).forEach(id => {
+  (['pin', 'region'] as const).forEach(id => {
     document.getElementById(`tool-${id}`)?.classList.toggle('active', markActive && id === t);
   });
-  root.style.cursor = t === 'pin' ? 'crosshair' : t === 'region' ? 'cell' : 'default';
+  root.style.cursor = t === 'pin' ? 'crosshair' : 'cell';
 }
 
 document.getElementById('tool-pin')?.addEventListener('click',    e => { e.stopPropagation(); setTool('pin'); });
 document.getElementById('tool-region')?.addEventListener('click', e => { e.stopPropagation(); setTool('region'); });
-document.getElementById('tool-select')?.addEventListener('click', e => { e.stopPropagation(); setTool('select'); });
 
 // ── Cancel / Escape ───────────────────────────────────────────────────────────
 
 async function cancelOverlay() {
+  // hide_overlay used to restore + focus main; avoid racing that during screenshot capture.
+  if (captureInProgress) return;
   await invoke('hide_overlay');
   setTimeout(resetState, 300);
 }
@@ -628,7 +1257,10 @@ document.getElementById('note-close')?.addEventListener('click', e => {
   e.stopPropagation(); deselectAnnotation();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') void cancelOverlay();
+  if (e.key === 'Escape') {
+    if (captureInProgress) return;
+    void cancelOverlay();
+  }
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') void saveAll();
 });
 
@@ -783,12 +1415,19 @@ async function placePin(x: number, y: number) {
     timestamp: new Date().toISOString(),
   };
 
-  // Capture screenshot on first annotation (cropped to area around pin)
+  // First annotation: crop from the picked snapshot (image pixel space)
   if (!screenshotCaptured) {
     captureInProgress = true;
-    setToast('Capturing screen...');
+    setToast('Preparing crop…');
     let dataUrl: string | null = null;
     try {
+      if (!sourceFrameDataUrl) {
+        setToast('Choose a screen or window before annotating.');
+        captureInProgress = false;
+        void showCaptureSourceStep();
+        return;
+      }
+      await ensureScreenshotImgReady();
       const layout = viewportLayoutSnapshot();
       logAnnotationPipeline('place_pin_capture_start', {
         ann_id: ann.id,
@@ -796,35 +1435,34 @@ async function placePin(x: number, y: number) {
         pin_y: y,
         ...layout,
       });
-      await invoke('suspend_overlay_for_capture');
       const cropBox = clampBox({ left: x - 60, top: y - 30, width: 120, height: 60 });
+      const { sx, sy, sw, sh } = clientRectToImageRect(
+        cropBox.left,
+        cropBox.top,
+        cropBox.width,
+        cropBox.height,
+      );
       logAnnotationPipeline('place_pin_crop_box', {
         left: cropBox.left,
         top: cropBox.top,
         width: cropBox.width,
         height: cropBox.height,
+        img_sx: sx,
+        img_sy: sy,
+        img_sw: sw,
+        img_sh: sh,
       });
-      addDebugLog(`placePin: requesting screenshot viewport(${cropBox.left}, ${cropBox.top}, ${cropBox.width}, ${cropBox.height})`);
-      dataUrl = await invoke<string>('capture_screenshot_for_annotation', {
-        viewportLeft: cropBox.left,
-        viewportTop: cropBox.top,
-        width: cropBox.width,
-        height: cropBox.height,
-      });
+      dataUrl = await cropImageDataUrl(sourceFrameDataUrl, sx, sy, sw, sh);
       const got = describeScreenshotRef(dataUrl);
       logAnnotationPipeline('place_pin_capture_ok', { data_kind: got.kind, data_len: got.len });
-      addDebugLog(`placePin: screenshot captured len=${dataUrl.length}`);
     } catch (err) {
       logAnnotationPipeline('place_pin_capture_failed', { error: String(err).slice(0, 300) });
-      addDebugLog(`placePin capture failed: ${err}`);
       setToast(`Screenshot unavailable — you can still add your note. (${err})`);
     } finally {
-      await invoke('clear_annotation_capture_overlay').catch(() => {});
-      logAnnotationPipeline('place_pin_capture_cleared', {});
       captureInProgress = false;
     }
     if (dataUrl) {
-      applyScreenshotDataUrl(dataUrl);
+      currentScreenshotDataUrl = dataUrl;
       screenshotCaptured = true;
     }
     logAnnotationPipeline('annotation_created', {
@@ -865,12 +1503,18 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
     timestamp: new Date().toISOString(),
   };
 
-  // Capture screenshot on first annotation (cropped to region)
   if (!screenshotCaptured) {
     captureInProgress = true;
-    setToast('Capturing screen...');
+    setToast('Preparing crop…');
     let dataUrl: string | null = null;
     try {
+      if (!sourceFrameDataUrl) {
+        setToast('Choose a screen or window before annotating.');
+        captureInProgress = false;
+        void showCaptureSourceStep();
+        return;
+      }
+      await ensureScreenshotImgReady();
       const layout = viewportLayoutSnapshot();
       logAnnotationPipeline('place_region_capture_start', {
         ann_id: ann.id,
@@ -880,36 +1524,28 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
         raw_h: h,
         ...layout,
       });
-      addDebugLog('placeRegion: suspending overlay');
-      await invoke('suspend_overlay_for_capture');
-
+      const { sx, sy, sw, sh } = clientRectToImageRect(box.left, box.top, box.width, box.height);
       logAnnotationPipeline('place_region_crop_box', {
         left: box.left,
         top: box.top,
         width: box.width,
         height: box.height,
+        img_sx: sx,
+        img_sy: sy,
+        img_sw: sw,
+        img_sh: sh,
       });
-      addDebugLog(`placeRegion: requesting screenshot viewport(${box.left}, ${box.top}, ${box.width}, ${box.height})`);
-      dataUrl = await invoke<string>('capture_screenshot_for_annotation', {
-        viewportLeft: box.left,
-        viewportTop: box.top,
-        width: box.width,
-        height: box.height,
-      });
+      dataUrl = await cropImageDataUrl(sourceFrameDataUrl, sx, sy, sw, sh);
       const got = describeScreenshotRef(dataUrl);
       logAnnotationPipeline('place_region_capture_ok', { data_kind: got.kind, data_len: got.len });
-      addDebugLog(`placeRegion: screenshot captured len=${dataUrl.length}`);
     } catch (err) {
       logAnnotationPipeline('place_region_capture_failed', { error: String(err).slice(0, 300) });
-      addDebugLog(`placeRegion capture failed: ${err}`);
       setToast(`Screenshot unavailable — you can still add your note. (${err})`);
     } finally {
-      await invoke('clear_annotation_capture_overlay').catch(() => {});
-      logAnnotationPipeline('place_region_capture_cleared', {});
       captureInProgress = false;
     }
     if (dataUrl) {
-      applyScreenshotDataUrl(dataUrl);
+      currentScreenshotDataUrl = dataUrl;
       screenshotCaptured = true;
     }
     logAnnotationPipeline('annotation_created', {
@@ -1263,8 +1899,6 @@ root.addEventListener('pointerdown', e => {
   if (e.button === 0) {
     if (activeTool === 'pin') {
       void placePin(e.clientX, e.clientY);
-    } else if (activeTool === 'select') {
-      deselectAnnotation();
     } else if (activeTool === 'region') {
       dragging = true;
       dragStart = { x: e.clientX, y: e.clientY };
@@ -1400,6 +2034,7 @@ async function initializeEventListeners() {
     }
     updateSetupState();
     // Don't capture screenshot yet - wait for user to select session
+    setCaptureSourceMode('screen');
     showStep('picking');
     setPickerLoading();
     void emit('request-sessions');
@@ -1412,6 +2047,8 @@ function applyDockOffset() {
 }
 
 function resetState() {
+  pickerLoadingToken += 1;
+  clearPickerLoadingTimer();
   root.querySelectorAll('.ann-pin, .ann-highlight').forEach(el => el.remove());
   connectorsEl.innerHTML = '';
   annotations = [];
@@ -1427,6 +2064,7 @@ function resetState() {
   selRectEl.style.display = 'none';
   currentScreenshotDataUrl = '';
   screenshotBg.style.backgroundImage = '';
+  applySourceFrameDisplay('');
   notePanelEl.style.display = 'none';
   sessionBannerEl.style.display = 'none';
   toastEl.removeAttribute('title');
@@ -1441,6 +2079,7 @@ function resetState() {
   setupFolderBtn.textContent = 'Choose folder…';
   setupAboutCount.textContent = '0 / 200';
   setupStartBtn.disabled = true;
+  setCaptureSourceMode('screen');
   showStep('annotating');
 }
 

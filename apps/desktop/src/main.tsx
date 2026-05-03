@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { requestScreenRecordingPermission } from 'tauri-plugin-macos-permissions-api';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import { listen, emit } from '@tauri-apps/api/event';
 import './index.css';
@@ -42,7 +43,12 @@ function screenshotImgSrc(ref?: string): string | undefined {
   const trimmed = ref?.trim();
   if (!trimmed) return undefined;
   if (trimmed.startsWith('data:image/')) return trimmed;
-  if (isAbsoluteFilesystemScreenshotRef(trimmed)) return convertFileSrc(trimmed);
+  if (isAbsoluteFilesystemScreenshotRef(trimmed)) {
+    const cached = screenshotFileDataUrlCache.get(trimmed);
+    if (cached) return cached;
+    void ensureScreenshotFileDataUrl(trimmed);
+    return undefined;
+  }
   return trimmed;
 }
 
@@ -68,6 +74,12 @@ interface PersistedState {
   authState: AuthState;
   providerConnections: Record<Target, ProviderConnectionState>;
   target: Target;
+}
+
+interface PickerSessionCacheItem {
+  id: string;
+  title: string;
+  createdAt: string;
 }
 
 const API = 'http://127.0.0.1:3001/api';
@@ -107,6 +119,9 @@ let cursorInstalled = false;
 /** Verification error shown below the connect card */
 let connectVerifyError = '';
 let providerRecheckError = '';
+const screenshotFileDataUrlCache = new Map<string, string>();
+const screenshotFileLoadsInFlight = new Set<string>();
+let screenshotCacheRefreshQueued = false;
 let authState: AuthState = {
   authenticated: false,
   profileInitialized: false,
@@ -124,6 +139,41 @@ let providerConnections: Record<Target, ProviderConnectionState> = {
 
 const win = getCurrentWindow();
 const app = document.querySelector<HTMLDivElement>('#app')!;
+
+function scheduleScreenshotCacheRefresh() {
+  if (screenshotCacheRefreshQueued) return;
+  screenshotCacheRefreshQueued = true;
+  queueMicrotask(() => {
+    screenshotCacheRefreshQueued = false;
+    render();
+  });
+}
+
+async function ensureScreenshotFileDataUrl(path: string) {
+  const trimmed = path.trim();
+  if (!trimmed || screenshotFileDataUrlCache.has(trimmed) || screenshotFileLoadsInFlight.has(trimmed)) return;
+  screenshotFileLoadsInFlight.add(trimmed);
+  try {
+    const dataUrl = await invoke<string>('load_screenshot_data_url', { path: trimmed });
+    screenshotFileDataUrlCache.set(trimmed, dataUrl);
+    logUi('workspace_screenshot_file_loaded', {
+      pathChars: trimmed.length,
+      dataUrlChars: dataUrl.length,
+    });
+    scheduleScreenshotCacheRefresh();
+  } catch (error) {
+    const fallback = convertFileSrc(trimmed);
+    screenshotFileDataUrlCache.set(trimmed, fallback);
+    logUi('workspace_screenshot_file_load_failed', {
+      pathChars: trimmed.length,
+      error: String(error).slice(0, 300),
+      fallbackChars: fallback.length,
+    });
+    scheduleScreenshotCacheRefresh();
+  } finally {
+    screenshotFileLoadsInFlight.delete(trimmed);
+  }
+}
 
 function logUi(event: string, details: Record<string, unknown> = {}) {
   const stamp = new Date().toISOString();
@@ -283,6 +333,15 @@ function persistAppState() {
   invoke('save_sessions_to_disk', { payload: { sessions } }).catch(() => {
     // silently ignore — disk write is best-effort
   });
+  invoke('save_picker_sessions_cache', {
+    sessions: sortedSessions().map((session): PickerSessionCacheItem => ({
+      id: session.id,
+      title: session.title,
+      createdAt: session.createdAt,
+    })),
+  }).catch(() => {
+    // silently ignore — picker cache is best-effort
+  });
 }
 
 function hydrateAppState() {
@@ -348,8 +407,17 @@ function welcomeWindowSize(): [number, number] {
   return [width, height];
 }
 
+function pushPendingButtonText() {
+  return 'Send pending sessions';
+}
+
+function pushPendingButtonSubtext(currentTarget: Target) {
+  return `Current target: ${providerLabel(currentTarget)}. Switch between Claude, Codex, or Cursor in Submit.`;
+}
+
 async function fitWindowToContent() {
   await new Promise((resolve) => requestAnimationFrame(resolve));
+  if (appMode !== 'confirmation') return;
   const card = document.querySelector<HTMLElement>('.welcome-card');
   if (!card) return;
   const maxHeight = Math.round(window.screen.availHeight * 0.9);
@@ -358,20 +426,29 @@ async function fitWindowToContent() {
 }
 
 async function fitWelcomeWindow() {
+  if (appMode !== 'welcome') return;
   const [width, height] = welcomeWindowSize();
   await win.setSize(new LogicalSize(width, height));
+  if (appMode !== 'welcome') return;
   await win.setResizable(true);
+  if (appMode !== 'welcome') return;
   await win.center();
 }
 
-async function enterSessionMode(section: WorkspaceSection = 'notes') {
+async function enterSessionMode(
+  section: WorkspaceSection = 'notes',
+  options: { preserveWindowFrame?: boolean } = {},
+) {
   appMode = 'session';
   workspaceSection = section;
+  render();
+  await win.setResizable(true);
+  if (options.preserveWindowFrame) {
+    return;
+  }
   const [width, height] = sessionWindowSize();
   await win.setSize(new LogicalSize(width, height));
-  await win.setResizable(true);
   await win.center();
-  render();
 }
 
 function connectedProviderCount() {
@@ -689,7 +766,7 @@ function renderWelcome() {
     activeCaptureId = null;
     activeAnnotationId = null;
     persistAppState();
-    void enterSessionMode('notes');
+    void enterSessionMode('notes', { preserveWindowFrame: true });
   });
 
   document.getElementById('wc-claude-mode-oauth')?.addEventListener('click', () => {
@@ -835,7 +912,7 @@ function renderWelcome() {
       activeCaptureId = firstCapture?.id ?? null;
       activeAnnotationId = firstCapture?.annotations[0]?.id ?? null;
       feedback = null;
-      void enterSessionMode('notes');
+      void enterSessionMode('notes', { preserveWindowFrame: true });
     });
   });
 
@@ -868,6 +945,7 @@ function renderConfirmation() {
   `;
 
   document.getElementById('confirm-more-btn')?.addEventListener('click', async () => {
+    await invoke('hide_main_window').catch(() => {});
     await invoke('show_overlay');
   });
 
@@ -930,9 +1008,12 @@ function renderSession() {
           <div class="sidebar-helper">Choose a saved session, refresh from the API, or start a new capture.</div>
           <div id="session-list"></div>
           <button class="view-all-link" id="view-all-sessions-btn">Refresh sessions ↻</button>
-          <button class="push-pending-btn" id="push-pending-btn" title="Find all unsent sessions and open them in your chosen AI CLI">
+          <button class="push-pending-btn" id="push-pending-btn" title="Send every unsent session to your currently selected AI target. Change the target in Submit.">
             <span class="push-pending-icon">↗</span>
-            Push pending to ${providerLabel(target)}
+            <span class="push-pending-copy">
+              <strong>${pushPendingButtonText()}</strong>
+              <span>${pushPendingButtonSubtext(target)}</span>
+            </span>
           </button>
           <div class="perm-note" id="perm-note">Checking permissions…</div>
         </aside>
@@ -1107,15 +1188,8 @@ function renderSessionList() {
       });
       row.querySelector<HTMLButtonElement>('[data-delete-session]')?.addEventListener('click', (event) => {
         event.stopPropagation();
-        const btn = event.currentTarget as HTMLButtonElement;
-        if (btn.dataset.confirming) {
-          deleteSession(session.id);
-          renderSession();
-        } else {
-          btn.dataset.confirming = '1';
-          btn.textContent = 'Sure?';
-          setTimeout(() => { if (btn.dataset.confirming) { delete btn.dataset.confirming; btn.textContent = 'Delete'; } }, 2500);
-        }
+        deleteSession(session.id);
+        renderSession();
       });
       list.appendChild(row);
     });
@@ -1184,15 +1258,8 @@ function renderCaptureList(session: Session) {
     });
     card.querySelector<HTMLButtonElement>('[data-delete-capture]')?.addEventListener('click', (event) => {
       event.stopPropagation();
-      const btn = event.currentTarget as HTMLButtonElement;
-      if (btn.dataset.confirming) {
-        deleteCaptureFromSession(session, capture.id);
-        renderSession();
-      } else {
-        btn.dataset.confirming = '1';
-        btn.textContent = 'Sure?';
-        setTimeout(() => { if (btn.dataset.confirming) { delete btn.dataset.confirming; btn.textContent = 'Delete'; } }, 2500);
-      }
+      deleteCaptureFromSession(session, capture.id);
+      renderSession();
     });
     card.querySelector<HTMLButtonElement>('[data-open-capture-preview]')?.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -1349,15 +1416,9 @@ function renderCapturePayload(session: Session) {
       event.stopPropagation();
       const annotationId = button.getAttribute('data-delete-annotation');
       if (!annotationId) return;
-      if (button.dataset.confirming) {
-        deleteAnnotationFromCapture(session, capture.id, annotationId);
-        renderCaptureList(session);
-        renderCapturePayload(session);
-      } else {
-        button.dataset.confirming = '1';
-        button.textContent = 'Sure?';
-        setTimeout(() => { if (button.dataset.confirming) { delete button.dataset.confirming; button.textContent = 'Delete'; } }, 2500);
-      }
+      deleteAnnotationFromCapture(session, capture.id, annotationId);
+      renderCaptureList(session);
+      renderCapturePayload(session);
     });
   });
 
@@ -1897,6 +1958,7 @@ function bindSessionActions() {
   });
   document.getElementById('new-ann-btn')?.addEventListener('click', async () => {
     logUi('workspace_new_capture_click', { sessionId: session?.id ?? null });
+    await invoke('hide_main_window').catch(() => {});
     await invoke('show_overlay', {
       launch: session
         ? {
@@ -1938,15 +2000,8 @@ function bindSessionActions() {
   });
   document.getElementById('delete-session-btn')?.addEventListener('click', (event) => {
     logUi('workspace_delete_session_click', { sessionId: session.id });
-    const btn = event.currentTarget as HTMLButtonElement;
-    if (btn.dataset.confirming) {
-      deleteSession(session.id);
-      renderSession();
-    } else {
-      btn.dataset.confirming = '1';
-      btn.textContent = 'Sure?';
-      setTimeout(() => { if (btn.dataset.confirming) { delete btn.dataset.confirming; btn.textContent = 'Delete session'; } }, 2500);
-    }
+    deleteSession(session.id);
+    renderSession();
   });
   const headerTitleInput = document.getElementById('header-title-input') as HTMLInputElement | null;
   headerTitleInput?.addEventListener('input', () => {
@@ -2099,13 +2154,15 @@ async function checkPermission() {
     note.innerHTML = `
       <strong>Screen capture blocked</strong>
       <span>Debugr still cannot capture screenshots in this runtime.</span>
-      ${isDevRuntime ? '<span><strong>Why two apps appear:</strong> you are running the dev binary <code>feedbackagent-desktop</code> and the bundled app <code>debugr.ai.app</code>. macOS tracks those separately for Screen Recording.</span>' : ''}
+      ${isDevRuntime ? '<span><strong>Why two entries:</strong> macOS treats the dev binary (<code>target/debug/feedbackagent-desktop</code>) separately from the bundled <code>.app</code> under <code>target/release/bundle/macos/</code> after you build.</span>' : ''}
       <span><strong>ID:</strong> ${escapeHtml(diagnostics.bundle_identifier)}<br /><strong>Binary:</strong> ${escapeHtml(diagnostics.executable_path)}</span>
+      <span><strong>Not in the list?</strong> Click <strong>+</strong>, <strong>⌘⇧G</strong>, and select this binary. The bundled app lives under <code>src-tauri/target/release/bundle/macos/debugr.ai.app</code> after <code>pnpm build</code> — only <code>/Applications</code> if you copy it there.</span>
       <button type="button" class="perm-note-action" id="open-screen-settings-btn">Open Screen Recording settings</button>
       <button type="button" class="perm-note-action" id="reveal-runtime-btn">Reveal current runtime in Finder</button>
     `;
     note.className = 'perm-note warn';
     document.getElementById('open-screen-settings-btn')?.addEventListener('click', async () => {
+      await requestScreenRecordingPermission().catch(() => {});
       await invoke('request_screen_capture_permission').catch(() => false);
       await invoke('open_screen_capture_settings').catch(() => {});
     });
@@ -2202,15 +2259,21 @@ async function pushPendingSessions() {
 
   if (pending.length === 0) {
     if (btn) {
-      const orig = btn.textContent ?? '';
-      btn.textContent = 'No pending sessions';
+      const orig = btn.innerHTML;
+      btn.innerHTML = '<span class="push-pending-copy"><strong>No pending sessions</strong><span>Every saved session has already been routed.</span></span>';
       btn.disabled = true;
-      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000);
+      setTimeout(() => {
+        btn.innerHTML = orig;
+        btn.disabled = false;
+      }, 2000);
     }
     return;
   }
 
-  if (btn) { btn.disabled = true; btn.textContent = `Opening ${pending.length} session${pending.length > 1 ? 's' : ''}…`; }
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="push-pending-copy"><strong>Opening ${pending.length} session${pending.length > 1 ? 's' : ''}…</strong><span>Preparing the prompt and handing it to ${providerLabel(target)}.</span></span>`;
+  }
 
   // Save sessions + screenshots to disk before the CLI reads them
   await invoke('save_sessions_to_disk', { payload: { sessions } }).catch(() => {});
@@ -2245,11 +2308,11 @@ async function pushPendingSessions() {
       : 'Go to Submit tab → Connect Claude to log in';
     if (btn) {
       btn.title = hint;
-      btn.textContent = `CLI error — see terminal`;
+      btn.innerHTML = `<span class="push-pending-copy"><strong>Could not open ${providerLabel(target)}</strong><span>See the terminal, then reconnect or retry from Submit.</span></span>`;
       setTimeout(() => {
         btn.disabled = false;
         btn.title = '';
-        btn.innerHTML = `<span class="push-pending-icon">↗</span> Push pending to ${providerLabel(target)}`;
+        btn.innerHTML = `<span class="push-pending-icon">↗</span><span class="push-pending-copy"><strong>${pushPendingButtonText()}</strong><span>${pushPendingButtonSubtext(target)}</span></span>`;
       }, 4000);
       return;
     }
@@ -2257,7 +2320,7 @@ async function pushPendingSessions() {
 
   if (btn) {
     btn.disabled = false;
-    btn.innerHTML = `<span class="push-pending-icon">↗</span> Push pending to ${providerLabel(target)}`;
+    btn.innerHTML = `<span class="push-pending-icon">↗</span><span class="push-pending-copy"><strong>${pushPendingButtonText()}</strong><span>${pushPendingButtonSubtext(target)}</span></span>`;
   }
 }
 
@@ -2683,9 +2746,14 @@ async function saveProviderConfig() {
 
 async function init() {
   hydrateAppState();
+  void invoke('save_picker_sessions_cache', {
+    sessions: sortedSessions().map((session): PickerSessionCacheItem => ({
+      id: session.id,
+      title: session.title,
+      createdAt: session.createdAt,
+    })),
+  }).catch(() => {});
   await loadProviderConfig();
-  // Register the app in TCC on every launch so it appears in Screen Recording
-  // settings without the user having to find and click a button first.
   invoke('request_screen_capture_permission').catch(() => {});
   // Check Cursor installation without blocking render
   invoke<boolean>('check_cursor_installed').then((installed) => {

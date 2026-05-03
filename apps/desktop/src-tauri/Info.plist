@@ -4,6 +4,9 @@
 <dict>
   <key>CFBundleIdentifier</key>
   <string>com.feedbackagent.desktop</string>
+  <!-- Required for ScreenCaptureKit / TCC screen capture prompts -->
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Debugr captures only the display or window you pick so you can crop and annotate feedback.</string>
   <!-- Hide the Dock icon — Debugr lives exclusively in the menu bar -->
   <key>LSUIElement</key>
   <true/>
