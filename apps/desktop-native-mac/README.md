@@ -15,6 +15,10 @@ Terminal smoke test:
 swift run debugr-native-mac --capture-smoke
 ```
 
+This is the Phase 1 macOS capture gate. The older Tauri `DEBUGR_CAPTURE_SMOKE=1`
+CoreGraphics probe is retained only as a deprecated legacy diagnostic while the
+product moves capture and overlay ownership into Swift/AppKit.
+
 The app saves capture debug artifacts to:
 
 ```text

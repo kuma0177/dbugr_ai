@@ -1659,6 +1659,9 @@ fn trigger_overlay(app: &AppHandle, source: &str, launch: Option<OverlayLaunchPa
 
 fn main() {
     if std::env::var("DEBUGR_CAPTURE_SMOKE").ok().as_deref() == Some("1") {
+        eprintln!(
+            "debugr_capture_smoke_legacy_deprecated This CoreGraphics smoke is retained only as a legacy diagnostic. Phase 1 capture validation now uses apps/desktop-native-mac: swift run debugr-native-mac --capture-smoke."
+        );
         match capture_native_png_bytes() {
             Ok(bytes) => {
                 println!("debugr_capture_smoke_ok bytes={}", bytes.len());

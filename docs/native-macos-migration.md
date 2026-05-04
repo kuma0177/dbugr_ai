@@ -234,6 +234,8 @@ Current verified behavior:
 - The native prototype now persists local sessions under `~/Library/Application Support/debugr/native-workspace/`.
 - A captured frame can now be reviewed, annotated with note text, and saved into an existing or new native session.
 - The native app now includes a first-pass workspace panel with session summary, provider target chooser, prompt preview, and immediate handoff-status copy.
+- Phase 1 capture validation now uses this native Swift/AppKit smoke path as the macOS capture gate.
+- The old Tauri `DEBUGR_CAPTURE_SMOKE=1` CoreGraphics probe is deprecated legacy diagnostic coverage and should not block the native migration.
 
 Latest verified smoke output shape:
 
@@ -272,6 +274,12 @@ Success criteria:
 - The picker no longer looks like a raw OS debugger list.
 - A user can capture what they are already looking at without understanding macOS window internals.
 
+Status update:
+
+- Complete enough for Phase 1 capture gating.
+- The native app now has `Visible area`, `Full screen`, and `App window` modes.
+- The capture smoke writes PNG + JSON artifacts and rejects invalid captures through validation.
+
 ### Milestone 3: Native annotation overlay
 
 - Freeze the captured frame.
@@ -300,6 +308,29 @@ Status update:
 - `Choose existing session or create a new one` is now started in the Swift prototype.
 - Repo/folder fields, provider target selection, prompt preview, and immediate response copy all exist in first-pass native form.
 - Real provider connection plumbing and real send execution still need to be implemented.
+
+## Native Parity Checklist
+
+Use this checklist to continue migration without destabilizing `apps/desktop`:
+
+- [x] Native ScreenCaptureKit source listing.
+- [x] Native visible-screen capture smoke with PNG/JSON debug artifacts.
+- [x] Native blank/transparent capture validation.
+- [x] Native simple capture chooser: visible area, full screen, app window.
+- [x] Native note-based annotation draft state.
+- [x] Native save to existing or new session.
+- [x] Native durable screenshot asset persistence.
+- [x] Native session summary and prompt preview.
+- [x] Native provider target chooser for Claude, Codex, and Cursor.
+- [ ] Native frozen-frame visual annotation overlay with pin/region geometry.
+- [ ] Native annotation edit/delete directly on the frozen frame.
+- [ ] Native session browser with capture thumbnails and detail drill-in.
+- [ ] Native provider credential storage and verification.
+- [ ] Native Claude CLI handoff execution.
+- [ ] Native Codex CLI handoff execution.
+- [ ] Native Cursor open/copy handoff execution.
+- [ ] Native post-send confirmation and response artifact capture.
+- [ ] Native packaging, signing, and notarization.
 
 ## Capture Validation Requirements
 
