@@ -61,6 +61,7 @@ export interface Organization {
   id: string;
   name: string;
   slug: string;
+  logoUrl?: string | null;
   createdByUserId?: string | null;
   defaultVisibility?: FeedbackVisibility;
   allowPublicSharing?: boolean;

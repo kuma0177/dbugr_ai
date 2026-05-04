@@ -71,6 +71,7 @@ export const api = {
       email?: string;
       name: string;
       organizationName: string;
+      organizationLogoUrl?: string;
       role?: string;
       teamName?: string;
       inviteEmails: string[];

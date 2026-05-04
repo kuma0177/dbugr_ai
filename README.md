@@ -266,6 +266,7 @@ The Phase 2 web collaboration layer is designed to deploy on Railway as separate
 Deployment guide:
 
 - [docs/railway-deployment.md](/Users/kumar/debugr/docs/railway-deployment.md:1)
+- Railway API deploys should use the repo start command `pnpm railway:api:start`, which auto-runs Prisma schema sync before boot so new organization fields like `logoUrl` work in Railway too.
 
 Important default:
 

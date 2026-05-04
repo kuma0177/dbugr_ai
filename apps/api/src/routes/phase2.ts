@@ -80,9 +80,10 @@ const onboardingSchema = z.object({
   email: z.string().email().optional(),
   name: z.string().min(1),
   organizationName: z.string().min(1),
+  organizationLogoUrl: z.string().max(2_000_000).optional(),
   role: z.string().optional(),
   teamName: z.string().optional(),
-  inviteEmails: z.array(z.string().email()).default([]),
+  inviteEmails: z.array(z.string().email()).max(10, 'You can invite up to 10 teammates during onboarding.').default([]),
   defaultVisibility: z.enum(['private', 'org', 'public']).default('private'),
 });
 
@@ -342,11 +343,13 @@ phase2Router.post('/phase2/onboarding', async (req: Request, res: Response) => {
     where: { slug },
     update: {
       name: parsed.data.organizationName,
+      logoUrl: parsed.data.organizationLogoUrl ?? null,
       defaultVisibility: parsed.data.defaultVisibility,
     },
     create: {
       name: parsed.data.organizationName,
       slug,
+      logoUrl: parsed.data.organizationLogoUrl ?? null,
       createdByUserId: user.id,
       defaultVisibility: parsed.data.defaultVisibility,
     },

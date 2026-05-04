@@ -1,11 +1,13 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 import { clearOnboardingState, readOnboardingState, writeOnboardingState } from '@/lib/onboarding';
 
 type OnboardingStep = 'sign-in' | 'workspace' | 'link';
+const MAX_INVITE_EMAILS = 10;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function OnboardingPage() {
   const [name, setName] = useState('Demo User');
@@ -13,8 +15,11 @@ export default function OnboardingPage() {
   const [organizationName, setOrganizationName] = useState('Demo Organization');
   const [role, setRole] = useState('Founder');
   const [teamName, setTeamName] = useState('Product');
-  const [inviteEmails, setInviteEmails] = useState('reviewer@example.com');
+  const [inviteEmails, setInviteEmails] = useState<string[]>([]);
+  const [inviteEmailDraft, setInviteEmailDraft] = useState('');
   const [defaultVisibility, setDefaultVisibility] = useState<'private' | 'org' | 'public'>('private');
+  const [organizationLogoPreview, setOrganizationLogoPreview] = useState<string | null>(null);
+  const [organizationLogoName, setOrganizationLogoName] = useState('');
   const [authMethod, setAuthMethod] = useState<'google' | 'email' | null>(null);
   const [identityConnected, setIdentityConnected] = useState(false);
   const [emailCodeSent, setEmailCodeSent] = useState(false);
@@ -51,9 +56,11 @@ export default function OnboardingPage() {
       setName(localState.userName);
       setEmail(localState.userEmail);
       setOrganizationName(localState.organizationName);
+      setOrganizationLogoPreview(localState.organizationLogoUrl ?? null);
+      setOrganizationLogoName(localState.organizationLogoUrl ? 'Selected logo' : '');
       setRole(localState.role ?? '');
       setTeamName(localState.teamName ?? '');
-      setInviteEmails(localState.inviteEmails.join(', '));
+      setInviteEmails(localState.inviteEmails);
       setDefaultVisibility(localState.defaultVisibility);
       setAuthMethod((current) => current ?? 'google');
       setIdentityConnected(true);
@@ -69,6 +76,8 @@ export default function OnboardingPage() {
           setName(data.user.name);
           setEmail(data.user.email);
           setOrganizationName(data.organization.name);
+          setOrganizationLogoPreview(data.organization.logoUrl ?? null);
+          setOrganizationLogoName(data.organization.logoUrl ? 'Saved logo' : '');
           setDefaultVisibility((data.organization.defaultVisibility as 'private' | 'org' | 'public') ?? 'private');
         }
         console.info('[phase2-web] onboarding.bootstrap.completed', {
@@ -82,6 +91,58 @@ export default function OnboardingPage() {
         console.warn('[phase2-web] onboarding.bootstrap.failed', { message: error instanceof Error ? error.message : String(error) });
       });
   }, []);
+
+  function normalizeInviteEmail(raw: string) {
+    return raw.trim().toLowerCase().replace(/,$/, '');
+  }
+
+  function addInviteEmail(rawEmail: string) {
+    const normalizedEmail = normalizeInviteEmail(rawEmail);
+    if (!normalizedEmail) return;
+    if (!EMAIL_PATTERN.test(normalizedEmail)) {
+      setStatus('Enter a valid teammate email before adding it.');
+      return;
+    }
+    if (inviteEmails.includes(normalizedEmail)) {
+      setStatus(`${normalizedEmail} is already in the invite list.`);
+      return;
+    }
+    if (inviteEmails.length >= MAX_INVITE_EMAILS) {
+      setStatus(`You can invite up to ${MAX_INVITE_EMAILS} teammates during onboarding.`);
+      return;
+    }
+    setInviteEmails((current) => [...current, normalizedEmail]);
+    setInviteEmailDraft('');
+    setStatus(`Added ${normalizedEmail}. Existing Dbugr users will join with their current account; new users will receive a pending invite.`);
+  }
+
+  function removeInviteEmail(emailToRemove: string) {
+    setInviteEmails((current) => current.filter((currentEmail) => currentEmail !== emailToRemove));
+  }
+
+  function handleInviteKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter' || event.key === ',') {
+      event.preventDefault();
+      addInviteEmail(inviteEmailDraft);
+    }
+  }
+
+  function handleOrganizationLogoChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setStatus('Choose a PNG, JPG, SVG, or other image file for your organization logo.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : null;
+      setOrganizationLogoPreview(result);
+      setOrganizationLogoName(file.name);
+      setStatus(`Added ${file.name} as the organization logo preview.`);
+    };
+    reader.readAsDataURL(file);
+  }
 
   function connectGooglePreview() {
     setAuthMethod('google');
@@ -180,6 +241,10 @@ export default function OnboardingPage() {
     setInviteLinks([]);
     setCurrentStep('sign-in');
     setStatus('Sign up with Google or email first, then create your organization workspace.');
+    setOrganizationLogoPreview(null);
+    setOrganizationLogoName('');
+    setInviteEmails([]);
+    setInviteEmailDraft('');
   }
 
   async function createDesktopLink() {
@@ -232,7 +297,7 @@ export default function OnboardingPage() {
     setStatus('Creating workspace, owner role, team, invites, and audit event...');
     console.info('[phase2-web] onboarding.submit.started', {
       organizationName,
-      inviteCount: inviteEmails.split(',').map((email) => email.trim()).filter(Boolean).length,
+      inviteCount: inviteEmails.length,
       defaultVisibility,
     });
     try {
@@ -240,10 +305,11 @@ export default function OnboardingPage() {
         email,
         name,
         organizationName,
+        organizationLogoUrl: organizationLogoPreview ?? undefined,
         role,
         teamName,
         defaultVisibility,
-        inviteEmails: inviteEmails.split(',').map((email) => email.trim()).filter(Boolean),
+        inviteEmails,
       });
       setStatus(`Workspace ready: ${result.organization.name}. ${result.invites.length} invite(s) staged.`);
       setInviteLinks(result.invites.flatMap((invite) => invite.acceptUrl ? [{ email: invite.email, acceptUrl: invite.acceptUrl }] : []));
@@ -251,10 +317,11 @@ export default function OnboardingPage() {
         userName: name,
         userEmail: email,
         organizationName: result.organization.name,
+        organizationLogoUrl: result.organization.logoUrl ?? organizationLogoPreview ?? undefined,
         role,
         teamName,
         defaultVisibility,
-        inviteEmails: inviteEmails.split(',').map((email) => email.trim()).filter(Boolean),
+        inviteEmails,
         completedAt: new Date().toISOString(),
       });
       setWorkspaceReady(true);
@@ -450,25 +517,73 @@ export default function OnboardingPage() {
           <div className="onboarding-field-grid three-up">
             <label className="field-block">
               <span>Role optional</span>
-            <input className="input" value={role} onChange={(event) => setRole(event.target.value)} />
+              <input className="input" value={role} onChange={(event) => setRole(event.target.value)} />
             </label>
             <label className="field-block">
               <span>Team optional</span>
-            <input className="input" value={teamName} onChange={(event) => setTeamName(event.target.value)} />
+              <input className="input" value={teamName} onChange={(event) => setTeamName(event.target.value)} />
             </label>
             <label className="field-block">
               <span>Default visibility</span>
-            <select className="select" value={defaultVisibility} onChange={(event) => setDefaultVisibility(event.target.value as typeof defaultVisibility)}>
-              <option value="private">Private</option>
-              <option value="org">Organization</option>
-              <option value="public">Public</option>
-            </select>
+              <select className="select" value={defaultVisibility} onChange={(event) => setDefaultVisibility(event.target.value as typeof defaultVisibility)}>
+                <option value="private">Private</option>
+                <option value="org">Organization</option>
+                <option value="public">Public</option>
+              </select>
+              <p className="field-helper">
+                This is the starting audience for new sessions in this workspace. You can still change visibility on each individual session later before sharing, review, or AI handoff.
+              </p>
             </label>
           </div>
-          <label className="field-block">
-            <span>Invite teammates</span>
-            <input className="input" value={inviteEmails} onChange={(event) => setInviteEmails(event.target.value)} placeholder="sarah@company.com, mike@company.com" />
-          </label>
+          <div className="onboarding-field-grid">
+            <div className="field-block">
+              <span>Organization logo optional</span>
+              <label className="logo-upload-card">
+                <input className="logo-upload-input" type="file" accept="image/*" onChange={handleOrganizationLogoChange} />
+                {organizationLogoPreview ? (
+                  <img alt="Organization logo preview" className="logo-upload-preview" src={organizationLogoPreview} />
+                ) : (
+                  <div className="logo-upload-placeholder">Add logo</div>
+                )}
+                <div className="logo-upload-copy">
+                  <strong>{organizationLogoName || 'Upload PNG, JPG, or SVG'}</strong>
+                  <p>Use this to brand the workspace for your team. It is saved with the organization now and can be replaced later in workspace settings.</p>
+                </div>
+              </label>
+            </div>
+            <div className="field-block">
+              <span>Invite teammates</span>
+              <div className="invite-builder">
+                <div className="invite-builder-row">
+                  <input
+                    className="input"
+                    value={inviteEmailDraft}
+                    onChange={(event) => setInviteEmailDraft(event.target.value)}
+                    onKeyDown={handleInviteKeyDown}
+                    placeholder="sarah@company.com"
+                  />
+                  <button className="btn btn-ghost invite-builder-button" type="button" onClick={() => addInviteEmail(inviteEmailDraft)}>
+                    Add teammate
+                  </button>
+                </div>
+                <p className="field-helper">
+                  Add up to {MAX_INVITE_EMAILS} teammates. If someone already has a Dbugr account, the invite attaches to that existing account when they sign in with the same email. Otherwise, the invite stays pending until they create one.
+                </p>
+                <div className="invite-pill-list" aria-live="polite">
+                  {inviteEmails.map((inviteEmail) => (
+                    <div className="invite-pill" key={inviteEmail}>
+                      <span>{inviteEmail}</span>
+                      <button type="button" aria-label={`Remove ${inviteEmail}`} onClick={() => removeInviteEmail(inviteEmail)}>
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  {inviteEmails.length === 0 ? <p className="invite-empty">No teammates added yet. You can still create the workspace first and invite people later.</p> : null}
+                </div>
+                <p className="invite-counter">{inviteEmails.length}/{MAX_INVITE_EMAILS} teammate invites added</p>
+              </div>
+            </div>
+          </div>
           <button className="btn btn-primary onboarding-submit" disabled={loading || !identityConnected}>{loading ? 'Creating workspace...' : 'Create workspace and stage invites'}</button>
         </section>
         ) : null}

@@ -10,7 +10,9 @@
     "db:push": "pnpm --filter @feedbackagent/db db:push",
     "db:seed": "pnpm --filter @feedbackagent/api seed",
     "db:setup": "pnpm db:generate && pnpm db:push && pnpm db:seed",
-    "db:migrate": "pnpm --filter @feedbackagent/db migrate"
+    "db:migrate": "pnpm --filter @feedbackagent/db migrate",
+    "railway:api:prepare-db": "node scripts/prepare-railway-db.mjs",
+    "railway:api:start": "pnpm railway:api:prepare-db && pnpm --filter @feedbackagent/api start"
   },
   "workspaces": [
     "apps/*",

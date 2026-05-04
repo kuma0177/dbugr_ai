@@ -4,6 +4,7 @@ export interface OnboardingState {
   userName: string;
   userEmail: string;
   organizationName: string;
+  organizationLogoUrl?: string;
   role?: string;
   teamName?: string;
   inviteEmails: string[];

@@ -60,7 +60,7 @@ pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter @feedbackage
 Start command:
 
 ```bash
-pnpm --filter @feedbackagent/api start
+pnpm railway:api:start
 ```
 
 Attach a Railway volume mounted at:
@@ -75,6 +75,14 @@ Then initialize the database once from the Railway shell:
 pnpm db:push
 pnpm db:seed
 ```
+
+After that first initialization, ongoing API deploys should rely on the start command above. It runs:
+
+```bash
+pnpm railway:api:prepare-db
+```
+
+before starting the API, so schema additions like `organization.logoUrl` are applied automatically against the Railway `DATABASE_URL`.
 
 ## Web Service
 
@@ -118,5 +126,6 @@ Before inviting real public users:
 - [ ] Add production session/cookie security.
 - [ ] Add invitation email sending.
 - [ ] Add public redaction confirmation UI.
+- [ ] Move organization logo storage from inline/data URLs to blob/object storage while keeping `organization.logoUrl` as the API contract.
 - [ ] Add rate limiting and report/moderation workflow for public feed.
 - [ ] Confirm audit events exist for invites, visibility changes, curation, and preflight.
