@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 function loadLocalEnv() {
   const candidatePaths = [
@@ -46,6 +47,29 @@ async function main() {
   app.use(cors());
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
+  app.use((req, res, next) => {
+    const requestId = crypto.randomUUID();
+    const startedAt = Date.now();
+    res.setHeader('x-dbugr-request-id', requestId);
+
+    console.info('[api] request.start', {
+      requestId,
+      method: req.method,
+      path: req.originalUrl,
+    });
+
+    res.on('finish', () => {
+      console.info('[api] request.finish', {
+        requestId,
+        method: req.method,
+        path: req.originalUrl,
+        statusCode: res.statusCode,
+        durationMs: Date.now() - startedAt,
+      });
+    });
+
+    next();
+  });
 
   const [{ feedbackSessionRouter }, { commentsRouter }, { tasksRouter }, { integrationsRouter }, { systemRouter }, { phase2Router }] =
     await Promise.all([

@@ -169,15 +169,15 @@ export default function SessionsPage() {
       <div style={{
         marginBottom: 32,
         padding: '18px 20px',
-        borderRadius: 12,
-        background: 'linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)',
-        border: '1px solid #dbeafe',
-        color: '#0f172a',
+        borderRadius: 10,
+        background: 'var(--surface)',
+        boxShadow: 'inset 0 0 0 1px var(--stone)',
+        color: 'var(--text)',
       }}>
-        <div style={{ fontSize: '0.82rem', fontWeight: 800, color: '#2563eb', marginBottom: 6, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+        <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--ash)', marginBottom: 6, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
           Native app first
         </div>
-        <div style={{ fontSize: '0.95rem', lineHeight: 1.8 }}>
+        <div style={{ fontSize: 15, lineHeight: 1.47, color: 'var(--muted)' }}>
           debugr.ai is now Mac app first. Open the DMG app to capture the screen, confirm the linked repo context, and submit to Claude or Codex. This web dashboard is the review surface for saved sessions.
         </div>
       </div>
@@ -198,21 +198,20 @@ export default function SessionsPage() {
         >
           <div
             style={{
-              background: 'linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)',
+              background: 'var(--surface)',
               padding: '32px',
-              borderRadius: '18px',
+              borderRadius: 10,
               width: 'min(720px, calc(100vw - 32px))',
-              boxShadow: '0 30px 90px rgba(15, 23, 42, 0.35)',
-              border: '1px solid rgba(148, 163, 184, 0.25)',
+              boxShadow: 'inset 0 0 0 1px var(--stone)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
               <div>
-                <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#4f46e5', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>
+                <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--ash)', letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 6 }}>
                   New Debug Session
                 </div>
-                <h2 style={{ margin: 0, fontSize: '1.75rem', color: '#0f172a' }}>
+                <h2 style={{ margin: 0, fontSize: 23, lineHeight: 1.2, color: 'var(--text)' }}>
                   {createStep === 1 ? 'Name the feedback first' : createStep === 2 ? 'Pick the tab to debug' : 'Annotate on the real page'}
                 </h2>
               </div>
@@ -226,10 +225,10 @@ export default function SessionsPage() {
                       borderRadius: 999,
                       display: 'grid',
                       placeItems: 'center',
-                      background: createStep === step ? '#0f172a' : step < createStep ? '#6366f1' : '#cbd5e1',
-                      color: createStep === step || step < createStep ? '#f8fafc' : '#475569',
+                      background: createStep === step ? 'var(--blue)' : step < createStep ? 'rgba(0, 202, 72, 0.12)' : 'var(--stone)',
+                      color: createStep === step ? '#fff' : 'var(--text)',
                       fontSize: step < createStep ? 16 : 13,
-                      fontWeight: 800,
+                      fontWeight: 500,
                     }}
                   >
                     {step < createStep ? '✓' : step}
@@ -242,14 +241,14 @@ export default function SessionsPage() {
               /* ── Step 3: Native desktop app handoff ── */
               <>
                 {/* Success banner */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 12, background: '#f0fdf4', border: '1px solid #86efac', marginBottom: 22 }}>
-                  <span style={{ fontSize: 22 }}>✅</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 10, background: 'rgba(0, 202, 72, 0.08)', boxShadow: 'inset 0 0 0 1px rgba(0, 202, 72, 0.2)', marginBottom: 22 }}>
+                  <span style={{ fontSize: 22, color: 'var(--green)' }}>✓</span>
                   <div>
-                    <div style={{ fontWeight: 700, color: '#166534', fontSize: '0.95rem' }}>Native capture flow ready</div>
-                    <div style={{ color: '#15803d', fontSize: '0.82rem', marginTop: 2 }}>
+                    <div style={{ fontWeight: 500, color: 'var(--text)', fontSize: 15 }}>Native capture flow ready</div>
+                    <div style={{ color: 'var(--muted)', fontSize: 12, marginTop: 2 }}>
                       <strong>{createdSessionTitle}</strong> · Sending to <strong>{handoffTarget === 'codex' ? 'Codex' : 'Claude'}</strong>
                     </div>
-                    <div style={{ color: '#166534', fontSize: '0.78rem', marginTop: 4 }}>
+                    <div style={{ color: 'var(--muted)', fontSize: 12, marginTop: 4 }}>
                       Open the debugr.ai desktop app, freeze the right screenshot, confirm it matches the linked repo, then send it from the native canvas.
                     </div>
                   </div>
@@ -258,26 +257,26 @@ export default function SessionsPage() {
                 {/* Numbered steps */}
                 <div style={{ display: 'grid', gap: 14, marginBottom: 22 }}>
                   {/* Step A: native capture */}
-                  <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '16px 18px', borderRadius: 14, background: '#0f172a', border: '1px solid #1e293b' }}>
-                    <div style={{ width: 30, height: 30, borderRadius: 8, background: '#6366f1', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 13, flexShrink: 0 }}>1</div>
+                  <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '16px 18px', borderRadius: 10, background: 'var(--surface-soft)', boxShadow: 'inset 0 0 0 1px var(--stone)' }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 999, background: 'var(--blue)', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 500, fontSize: 13, flexShrink: 0 }}>1</div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700, color: '#f8fafc', marginBottom: 8, fontSize: '0.92rem' }}>
+                      <div style={{ fontWeight: 500, color: 'var(--text)', marginBottom: 8, fontSize: 15 }}>
                         Open the desktop app
                       </div>
-                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, lineHeight: 1.6 }}>
-                        Open <code style={{ background: '#1e293b', padding: '1px 5px', borderRadius: 4, color: '#93c5fd' }}>debugr.ai</code> on macOS and choose whether to capture a browser page or another app on screen.
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6, lineHeight: 1.58 }}>
+                        Open <code style={{ background: 'var(--stone)', padding: '1px 5px', borderRadius: 4, color: 'var(--text)' }}>debugr.ai</code> on macOS and choose whether to capture a browser page or another app on screen.
                       </div>
                     </div>
                   </div>
 
                   {/* Step B: submit */}
-                  <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '16px 18px', borderRadius: 14, background: '#0f172a', border: '1px solid #1e293b' }}>
-                    <div style={{ width: 30, height: 30, borderRadius: 8, background: '#6366f1', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 800, fontSize: 13, flexShrink: 0 }}>2</div>
+                  <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '16px 18px', borderRadius: 10, background: 'var(--surface-soft)', boxShadow: 'inset 0 0 0 1px var(--stone)' }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 999, background: 'var(--blue)', color: '#fff', display: 'grid', placeItems: 'center', fontWeight: 500, fontSize: 13, flexShrink: 0 }}>2</div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700, color: '#f8fafc', marginBottom: 6, fontSize: '0.92rem' }}>
+                      <div style={{ fontWeight: 500, color: 'var(--text)', marginBottom: 6, fontSize: 15 }}>
                         Confirm repo context, then submit
                       </div>
-                      <div style={{ fontSize: '0.84rem', color: '#94a3b8', lineHeight: 1.6 }}>
+                      <div style={{ fontSize: 15, color: 'var(--muted)', lineHeight: 1.47 }}>
                         After the screenshot is frozen, Debugr asks the user to confirm it belongs to the current Claude or Codex work and linked GitHub repo before sending it.
                       </div>
                     </div>
@@ -302,10 +301,10 @@ export default function SessionsPage() {
               </>
             ) : createStep === 1 ? (
               <>
-                <p style={{ color: '#475569', marginBottom: 20, fontSize: '0.95rem', lineHeight: 1.7 }}>
+                <p style={{ color: 'var(--muted)', marginBottom: 20, fontSize: 15, lineHeight: 1.47 }}>
                   Start with a short title so the session, screenshots, notes, and AI handoff all use the same label.
                 </p>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: 6 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: 'var(--ash)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   Session title
                 </label>
                 <input
@@ -319,7 +318,7 @@ export default function SessionsPage() {
                   autoFocus
                   disabled={creatingSession}
                 />
-                <div style={{ background: '#dbeafe', border: '1px solid #93c5fd', borderRadius: 12, padding: '14px 16px', color: '#1e3a8a', fontSize: '0.9rem', lineHeight: 1.6, marginBottom: 22 }}>
+                <div style={{ background: 'var(--blue-soft)', boxShadow: 'inset 0 0 0 1px rgba(0, 134, 252, 0.2)', borderRadius: 10, padding: '14px 16px', color: 'var(--text)', fontSize: 15, lineHeight: 1.47, marginBottom: 22 }}>
                   Next we’ll ask which browser tab or page you want to debug, then we’ll hand the session to the native desktop app instead of trapping you inside an iframe preview.
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
@@ -338,10 +337,10 @@ export default function SessionsPage() {
               </>
             ) : (
               <>
-                <p style={{ color: '#475569', marginBottom: 20, fontSize: '0.95rem', lineHeight: 1.7 }}>
+                <p style={{ color: 'var(--muted)', marginBottom: 20, fontSize: 15, lineHeight: 1.47 }}>
                   Pick the page you want to debug, then choose whether the handoff should go to Claude or Codex after submit.
                 </p>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: 6 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: 'var(--ash)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   Tab URL
                 </label>
                 <input
@@ -357,7 +356,7 @@ export default function SessionsPage() {
                 />
 
                 <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--ash)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                     Quick picks
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -369,12 +368,13 @@ export default function SessionsPage() {
                         style={{
                           padding: '7px 12px',
                           borderRadius: 999,
-                          border: '1px solid #cbd5e1',
-                          background: '#fff',
-                          color: '#334155',
+                          border: 'none',
+                          boxShadow: 'inset 0 0 0 1px var(--stone)',
+                          background: '#f6f4ef',
+                          color: 'var(--text)',
                           cursor: 'pointer',
                           fontSize: 12,
-                          fontWeight: 600,
+                          fontWeight: 500,
                         }}
                       >
                         {url}
@@ -385,7 +385,7 @@ export default function SessionsPage() {
 
                 <div style={{ marginBottom: 18 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--ash)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                       Open Chrome Tabs
                     </div>
                     <button
@@ -405,22 +405,22 @@ export default function SessionsPage() {
                           setTabsLoading(false);
                         }
                       }}
-                      style={{ border: 'none', background: 'none', color: '#4f46e5', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}
+                      style={{ border: 'none', background: 'none', color: 'var(--blue)', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}
                     >
                       Refresh
                     </button>
                   </div>
                   <div style={{ display: 'grid', gap: 8, maxHeight: 180, overflowY: 'auto', paddingRight: 4 }}>
                     {tabsLoading ? (
-                      <div style={{ padding: '10px 12px', borderRadius: 12, background: '#eef2ff', color: '#475569', fontSize: '0.88rem' }}>
+                      <div style={{ padding: '10px 12px', borderRadius: 10, background: 'var(--surface-soft)', color: 'var(--muted)', fontSize: 15 }}>
                         Reading your open Chrome tabs...
                       </div>
                     ) : tabsError ? (
-                      <div style={{ padding: '10px 12px', borderRadius: 12, background: '#fef2f2', color: '#991b1b', fontSize: '0.88rem', lineHeight: 1.5 }}>
+                      <div style={{ padding: '10px 12px', borderRadius: 10, background: '#fdf1ef', color: 'var(--red)', fontSize: 15, lineHeight: 1.47 }}>
                         {tabsError}
                       </div>
                     ) : chromeTabs.length === 0 ? (
-                      <div style={{ padding: '10px 12px', borderRadius: 12, background: '#f8fafc', color: '#64748b', fontSize: '0.88rem', lineHeight: 1.5 }}>
+                      <div style={{ padding: '10px 12px', borderRadius: 10, background: 'var(--surface-soft)', color: 'var(--muted)', fontSize: 15, lineHeight: 1.47 }}>
                         No Chrome tabs were returned. If Chrome is open, local tab access may be blocked on this machine. You can still paste a URL above and continue with the native desktop flow.
                       </div>
                     ) : chromeTabs.map((tab, index) => (
@@ -432,15 +432,16 @@ export default function SessionsPage() {
                           textAlign: 'left',
                           padding: '10px 12px',
                           borderRadius: 12,
-                          border: targetUrl === tab.url ? '1px solid #6366f1' : '1px solid #cbd5e1',
-                          background: targetUrl === tab.url ? '#eef2ff' : '#fff',
+                          border: 'none',
+                          boxShadow: targetUrl === tab.url ? 'inset 0 0 0 1px var(--blue)' : 'inset 0 0 0 1px var(--stone)',
+                          background: targetUrl === tab.url ? 'var(--blue-soft)' : 'var(--surface)',
                           cursor: 'pointer',
                         }}
                       >
-                        <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#0f172a', marginBottom: 3 }}>
+                        <div style={{ fontSize: 15, fontWeight: 500, color: 'var(--text)', marginBottom: 3 }}>
                           {tab.title}
                         </div>
-                        <div style={{ fontSize: '0.78rem', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <div style={{ fontSize: 12, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {tab.url}
                         </div>
                       </button>
@@ -448,12 +449,12 @@ export default function SessionsPage() {
                   </div>
                 </div>
 
-                <div style={{ marginTop: -4, marginBottom: 18, padding: '12px 14px', borderRadius: 12, background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', fontSize: '0.84rem', lineHeight: 1.6 }}>
+                <div style={{ marginTop: -4, marginBottom: 18, padding: '12px 14px', borderRadius: 10, background: 'rgba(255, 187, 38, 0.12)', boxShadow: 'inset 0 0 0 1px rgba(255, 187, 38, 0.28)', color: 'var(--text)', fontSize: 15, lineHeight: 1.47 }}>
                   Chrome tab picking is only a convenience for finding a page quickly. The product now completes annotation inside the native desktop app.
                 </div>
 
                 <div style={{ marginBottom: 18 }}>
-                  <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--ash)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                     Send after submit
                   </div>
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -468,11 +469,12 @@ export default function SessionsPage() {
                         style={{
                           padding: '10px 16px',
                           borderRadius: 999,
-                          border: handoffTarget === key ? '1px solid #312e81' : '1px solid #cbd5e1',
-                          background: handoffTarget === key ? '#312e81' : '#fff',
-                          color: handoffTarget === key ? '#eef2ff' : '#334155',
+                          border: 'none',
+                          boxShadow: handoffTarget === key ? 'inset 0 0 0 1px var(--blue)' : 'inset 0 0 0 1px var(--stone)',
+                          background: handoffTarget === key ? 'var(--blue)' : '#f6f4ef',
+                          color: handoffTarget === key ? '#fff' : 'var(--text)',
                           cursor: 'pointer',
-                          fontWeight: 700,
+                          fontWeight: 500,
                           fontSize: '0.9rem',
                         }}
                       >
@@ -482,7 +484,7 @@ export default function SessionsPage() {
                   </div>
                 </div>
 
-                <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: 12, padding: '14px 16px', color: '#334155', fontSize: '0.88rem', lineHeight: 1.6, marginBottom: 22 }}>
+                <div style={{ background: 'var(--surface-soft)', boxShadow: 'inset 0 0 0 1px var(--stone)', borderRadius: 10, padding: '14px 16px', color: 'var(--muted)', fontSize: 15, lineHeight: 1.47, marginBottom: 22 }}>
                   We’ll give you a ready-to-use native session that already knows this session title and whether to send it to Claude or Codex.
                 </div>
 
@@ -509,7 +511,7 @@ export default function SessionsPage() {
       {loading ? (
         <p className="muted">Loading sessions…</p>
       ) : sessions.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '60px 24px', color: '#999' }}>
+        <div style={{ textAlign: 'center', padding: '60px 24px', color: 'var(--muted)' }}>
           <p style={{ fontSize: '1.1rem', marginBottom: 16 }}>No debug sessions yet.</p>
           <button className="btn btn-primary" onClick={() => { setShowCreateModal(true); setCreateStep(1); }}>
             Create your first session
@@ -522,17 +524,18 @@ export default function SessionsPage() {
               key={session.id}
               style={{
                 padding: 16,
-                border: '1px solid #e5e7eb',
-                borderRadius: 8,
+                background: 'var(--surface)',
+                boxShadow: 'inset 0 0 0 1px var(--stone)',
+                borderRadius: 10,
                 cursor: 'pointer',
                 transition: 'all 0.2s',
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
+                (e.currentTarget as HTMLElement).style.boxShadow = 'inset 0 0 0 1px rgba(0, 134, 252, 0.24)';
                 (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)';
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.boxShadow = 'none';
+                (e.currentTarget as HTMLElement).style.boxShadow = 'inset 0 0 0 1px var(--stone)';
                 (e.currentTarget as HTMLElement).style.transform = 'none';
               }}
               onClick={() => router.push(`/sessions/${session.id}/summary`)}
@@ -541,10 +544,10 @@ export default function SessionsPage() {
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, flex: 1 }}>{session.title}</h3>
                 <span className={`badge badge-${session.status}`}>{session.status}</span>
               </div>
-              <p style={{ fontSize: '0.8rem', color: '#666', marginBottom: 8 }}>
+              <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>
                 {new Date(session.createdAt).toLocaleDateString()}
               </p>
-              <div style={{ display: 'flex', gap: 8, fontSize: '0.75rem', color: '#999' }}>
+              <div style={{ display: 'flex', gap: 8, fontSize: 12, color: 'var(--muted)' }}>
                 <span>📝 {session.comments?.length || 0} notes</span>
                 <span>✓ {session.tasks?.length || 0} tasks</span>
               </div>

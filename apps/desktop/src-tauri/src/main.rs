@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![allow(unexpected_cfgs)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{

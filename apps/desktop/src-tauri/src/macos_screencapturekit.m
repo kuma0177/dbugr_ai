@@ -484,9 +484,15 @@ bool debugr_capture_display_full_png(
     CGRect df = target.frame;
     CGRect sourceRect = CGRectMake(0, 0, df.size.width, df.size.height);
 
-    SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:target excludingWindows:@[]];
+    if (@available(macOS 14.0, *)) {
+        SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:target excludingWindows:@[]];
+        return debugr_capture_filter_png_sync(filter, target, sourceRect, out_bytes, out_len, out_error);
+    }
 
-    return debugr_capture_filter_png_sync(filter, target, sourceRect, out_bytes, out_len, out_error);
+    if (out_error != NULL) {
+        *out_error = debugr_copy_utf8(@"Display capture unavailable.");
+    }
+    return false;
 }
 
 bool debugr_capture_window_full_png(

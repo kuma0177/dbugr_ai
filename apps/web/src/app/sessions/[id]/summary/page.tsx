@@ -45,8 +45,8 @@ const AI_TARGETS = [
   {
     key: 'claude',
     label: 'Send to Claude Code',
-    color: '#6366f1',
-    hoverColor: '#4f46e5',
+    color: '#0086fc',
+    hoverColor: '#0077e5',
     icon: '⚡',
     what: 'Opens a task in your local Claude Code instance',
     how: [
@@ -59,8 +59,8 @@ const AI_TARGETS = [
   {
     key: 'codex',
     label: 'Send to Codex',
-    color: '#8b5cf6',
-    hoverColor: '#7c3aed',
+    color: '#0086fc',
+    hoverColor: '#0077e5',
     icon: '🤖',
     what: 'Sends the session to OpenAI Codex for code generation',
     how: [
@@ -175,20 +175,20 @@ function SummaryPageInner() {
     const target = AI_TARGETS.find(t => t.key === sent)!;
     return (
       <main style={{ maxWidth: 640, margin: '80px auto', padding: '0 24px', textAlign: 'center' }}>
-        <div style={{ fontSize: '3rem', marginBottom: 16 }}>✅</div>
+        <div style={{ fontSize: '3rem', marginBottom: 16, color: 'var(--green)' }}>✓</div>
         <h1 style={{ marginBottom: 8 }}>Session sent to {target.label.replace('Send to ', '')}!</h1>
-        <p style={{ color: '#666', marginBottom: 32, lineHeight: 1.7 }}>
+        <p style={{ color: 'var(--muted)', marginBottom: 32, lineHeight: 1.47 }}>
           {target.what}. {target.how[0].toLowerCase()}.
         </p>
         {sentData && (
-          <div style={{ textAlign: 'left', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 14, padding: '18px 20px', marginBottom: 28 }}>
-            <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#6366f1', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>
+          <div style={{ textAlign: 'left', background: 'var(--surface)', boxShadow: 'inset 0 0 0 1px var(--stone)', borderRadius: 10, padding: '18px 20px', marginBottom: 28 }}>
+            <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--ash)', letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 10 }}>
               Agent feedback
             </div>
-            <div style={{ color: '#334155', fontSize: '0.92rem', lineHeight: 1.7 }}>
+            <div style={{ color: 'var(--muted)', fontSize: 15, lineHeight: 1.47 }}>
               <div>Task created: <strong>{sentData.taskId}</strong></div>
               <div>Feedback session: <strong>{sentData.feedbackId}</strong></div>
-              <div style={{ marginTop: 10, fontWeight: 700 }}>{sentData.agentFeedback?.title || 'Handoff accepted'}</div>
+              <div style={{ marginTop: 10, fontWeight: 500, color: 'var(--text)' }}>{sentData.agentFeedback?.title || 'Handoff accepted'}</div>
               <div>{sentData.agentFeedback?.summary || sentData.message}</div>
               {sentData.agentFeedback?.next_steps?.length ? (
                 <ol style={{ marginTop: 10 }}>
@@ -278,8 +278,8 @@ function SummaryPageInner() {
                       top: `${Math.min(box.y / (meta.canvasHeight ?? 800) * 160, 120)}px`,
                       width: `${Math.min(box.width / (meta.canvasWidth ?? 1280) * 300, 80)}px`,
                       height: `${Math.min(box.height / (meta.canvasHeight ?? 800) * 160, 60)}px`,
-                      border: '2px solid #6366f1',
-                      background: 'rgba(99,102,241,0.15)',
+                      border: '2px solid #0086fc',
+                      background: 'rgba(0, 134, 252, 0.15)',
                     }} />
                   </div>
                 )}
@@ -287,7 +287,7 @@ function SummaryPageInner() {
                 {/* Card body */}
                 <div style={{ padding: '12px 14px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#111' }}>Annotation #{i + 1}</div>
+                    <div style={{ fontWeight: 500, fontSize: 15, color: 'var(--text)' }}>Annotation #{i + 1}</div>
                     <div style={{ fontSize: '0.75rem', color: '#9ca3af', fontFamily: 'monospace' }}>
                       {Math.round(box.x)},{Math.round(box.y)} · {Math.round(box.width)}×{Math.round(box.height)}
                     </div>
@@ -326,7 +326,7 @@ function SummaryPageInner() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px' }}>
                       <span style={{ fontSize: '1.4rem' }}>{target.icon}</span>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#111' }}>{target.label}</div>
+                        <div style={{ fontWeight: 500, fontSize: 15, color: 'var(--text)' }}>{target.label}</div>
                         <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 2 }}>{target.what}</div>
                       </div>
                       <button
@@ -342,7 +342,7 @@ function SummaryPageInner() {
                           padding: '9px 20px', borderRadius: 8, border: 'none', cursor: sending ? 'not-allowed' : 'pointer',
                           background: sending ? '#e5e7eb' : target.color,
                           color: sending ? '#9ca3af' : '#fff',
-                          fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', flexShrink: 0,
+                          fontWeight: 500, fontSize: 13, whiteSpace: 'nowrap', flexShrink: 0,
                         }}
                       >
                         {sending ? '⏳ Sending…' : `→ ${target.label}`}
@@ -351,7 +351,7 @@ function SummaryPageInner() {
 
                     {expandedTarget === target.key && (
                       <div style={{ background: '#f8fafc', borderTop: '1px solid #e5e7eb', padding: '14px 16px' }}>
-                        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#6b7280', marginBottom: 10, letterSpacing: 0.5 }}>WHAT HAPPENS STEP BY STEP</div>
+                        <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--ash)', marginBottom: 10, letterSpacing: '0.04em' }}>WHAT HAPPENS STEP BY STEP</div>
                         <ol style={{ margin: 0, padding: '0 0 0 18px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                           {target.how.map((step, i) => (
                             <li key={i} style={{ fontSize: '0.85rem', color: '#374151', lineHeight: 1.5 }}>{step}</li>

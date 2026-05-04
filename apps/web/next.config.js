@@ -1,5 +1,13 @@
+const path = require('node:path');
+
+const workspaceRoot = path.resolve(__dirname, '../..');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  outputFileTracingRoot: workspaceRoot,
+  turbopack: {
+    root: workspaceRoot,
+  },
   transpilePackages: ['@feedbackagent/shared'],
   async headers() {
     return [
