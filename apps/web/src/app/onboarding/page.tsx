@@ -287,12 +287,14 @@ export default function OnboardingPage() {
 
       <section className="onboarding-intro">
         <div className="onboarding-copy">
-          <div className="phase2-kicker">Workspace setup</div>
-          <h1>Set up your Dbugr workspace.</h1>
-          <p>
-            Sign in, create an organization, invite reviewers, and link the Mac app without
-            slowing down the local capture flow.
-          </p>
+          <div className="onboarding-copy-main">
+            <div className="phase2-kicker">Workspace setup</div>
+            <h1>Set up your Dbugr workspace.</h1>
+            <p>
+              Sign in, create an organization, invite reviewers, and link the Mac app without
+              slowing down the local capture flow.
+            </p>
+          </div>
           <div className="onboarding-preview-note">
             <span>Local preview</span>
             <p>Google and email sign-up are simulated here until production auth is fully wired.</p>
@@ -323,17 +325,14 @@ export default function OnboardingPage() {
               <p>Use Google for OAuth, or use email to verify with a one-time code.</p>
             </div>
           </div>
-          <label className="field-block">
-            <span>Email</span>
-            <input className="input" value={email} onChange={(event) => setEmail(event.target.value)} aria-label="Sign-up email" />
-          </label>
           <div className="auth-method-grid">
             <div className={`auth-method ${authMethod === 'google' ? 'active' : ''}`}>
               <div>
-                <div className="auth-method-title">Google</div>
+                <div className="auth-method-title">Google OAuth</div>
                 <p className="phase2-muted">Use Google OAuth for identity, team access, and workspace ownership.</p>
               </div>
-              <button className={identityConnected && authMethod === 'google' ? 'btn btn-ghost' : 'btn btn-primary'} type="button" onClick={connectGooglePreview}>
+              <button className="google-oauth-button" type="button" onClick={connectGooglePreview}>
+                <span className="google-mark" aria-hidden="true">G</span>
                 {identityConnected && authMethod === 'google' ? 'Google connected' : 'Sign up with Google'}
               </button>
             </div>
@@ -343,16 +342,25 @@ export default function OnboardingPage() {
                 <p className="phase2-muted">Receive a one-time code by email, then enter it to finish sign-up.</p>
               </div>
               <div className="email-code-grid">
-                <button className="btn btn-ghost" type="button" onClick={requestEmailCodePreview}>
-                  {emailCodeSent ? 'Send new code' : 'Sign up with email'}
-                </button>
+                <div className="email-entry-row">
+                  <label className="field-block email-field">
+                    <span>Email address</span>
+                    <input className="input" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" aria-label="Sign-up email" />
+                  </label>
+                  <button className="btn btn-ghost email-action-button" type="button" onClick={requestEmailCodePreview}>
+                    {emailCodeSent ? 'Send new code' : 'Send code'}
+                  </button>
+                </div>
                 {emailCodeSent ? (
-                  <>
-                    <input className="input" value={emailCode} onChange={(event) => setEmailCode(event.target.value)} inputMode="numeric" placeholder="6-digit code" aria-label="Email sign-up code" />
+                  <div className="email-verify-row">
+                    <label className="field-block">
+                      <span>Verification code</span>
+                      <input className="input" value={emailCode} onChange={(event) => setEmailCode(event.target.value)} inputMode="numeric" placeholder="Enter 6-digit code" aria-label="Email sign-up code" />
+                    </label>
                     <button className={identityConnected && authMethod === 'email' ? 'btn btn-ghost' : 'btn btn-primary'} type="button" onClick={verifyEmailCodePreview}>
                       {identityConnected && authMethod === 'email' ? 'Email verified' : 'Verify code'}
                     </button>
-                  </>
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -367,6 +375,18 @@ export default function OnboardingPage() {
             <div>
               <h2>Create organization workspace</h2>
               <p>This becomes the private review space for sessions, teammates, and curation.</p>
+            </div>
+          </div>
+          <div className="identity-context-card">
+            <div>
+              <span>Signed in as</span>
+              <strong>{name || 'Dbugr user'}</strong>
+              <p>{email}</p>
+            </div>
+            <div>
+              <span>Sign-up method</span>
+              <strong>{authMethod === 'email' ? 'Email code' : 'Google OAuth'}</strong>
+              <p>{authMethod === 'email' ? 'Verified by one-time code' : 'Connected through Google sign-up'}</p>
             </div>
           </div>
           <div className="onboarding-field-grid">
