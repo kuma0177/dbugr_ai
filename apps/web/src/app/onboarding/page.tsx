@@ -250,45 +250,42 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div>
-      <section className="phase2-hero">
-        <div className="phase2-card onboarding-hero-card">
-          <div className="home-eyebrow">Workspace setup</div>
-          <h1 className="phase2-title">Sign up, link your Mac, invite your team.</h1>
-          <p className="phase2-lede">
-            The desktop app stays fast and local. This web workspace adds identity, organization
-            review, teammate comments, public sharing controls, and AI-ready curation.
+    <div className="onboarding-shell">
+      <section className="onboarding-intro">
+        <div className="onboarding-copy">
+          <div className="phase2-kicker">Workspace setup</div>
+          <h1>Set up your Dbugr workspace.</h1>
+          <p>
+            Sign in, create an organization, invite reviewers, and link the Mac app without
+            slowing down the local capture flow.
           </p>
-          <div className="auth-note mt-24">
-            <div className="phase2-kicker">Local preview mode</div>
-            <p className="phase2-muted mt-8">
-              Today this simulates Google OAuth and email code sign-up locally. Production
-              sign-up will use Google OAuth keys, email delivery, and `AUTH_SECRET` on Railway.
-            </p>
+          <div className="onboarding-preview-note">
+            <span>Local preview</span>
+            <p>Google and email sign-up are simulated here until production auth is fully wired.</p>
           </div>
         </div>
-        <div className="phase2-card status-card">
-          <div className="phase2-kicker">Status</div>
-          <p className="phase2-muted mt-16">{loading ? `⌛ ${status}` : status}</p>
+
+        <aside className="onboarding-status-panel" aria-live="polite">
+          <div className="phase2-kicker">Current state</div>
+          <p>{loading ? `Processing... ${status}` : status}</p>
           {desktopLink ? (
-            <div className="phase2-card mt-16" style={{ background: 'var(--surface-soft)' }}>
-              <div className="phase2-kicker">Mac app link</div>
-              <p className="phase2-muted mt-8">Code</p>
-              <div style={{ fontSize: 28, fontWeight: 500, letterSpacing: '0.08em', color: 'var(--text)' }}>{desktopLink.code}</div>
-              <p className="phase2-muted mt-8">{desktopRedeemStatus}</p>
+            <div className="desktop-link-panel">
+              <span>Mac link code</span>
+              <strong>{desktopLink.code}</strong>
+              <p>{desktopRedeemStatus}</p>
             </div>
           ) : null}
-          <div className="row gap-12 mt-24">
+          <div className="onboarding-status-actions">
             {workspaceReady ? <Link className="btn btn-primary" href="/feed">Open review feed</Link> : null}
             <Link className="btn btn-ghost" href="/">Back home</Link>
             {workspaceReady ? <button className="btn btn-ghost" type="button" onClick={resetWorkspace}>Reset preview</button> : null}
           </div>
-        </div>
+        </aside>
       </section>
 
-      <form className="phase2-card onboarding-form stack gap-16" onSubmit={submit}>
+      <form className="onboarding-panel" onSubmit={submit}>
         {inviteToken ? (
-          <div className="phase2-card" style={{ background: 'var(--blue-soft)' }}>
+          <div className="onboarding-callout">
             <div className="phase2-kicker">Workspace invitation</div>
             <h2>Join an existing organization</h2>
             <p className="phase2-muted">
@@ -300,17 +297,19 @@ export default function OnboardingPage() {
             </button>
           </div>
         ) : null}
-        <div className="auth-step">
-          <div className="phase2-kicker">Step 1</div>
-          <h2>Choose how to sign up</h2>
-          <p className="phase2-muted">
-            Google opens the OAuth sign-up path. Email uses a one-time code sent to your inbox.
-          </p>
-          <label className="stack gap-8 mt-16">
-            <span className="phase2-kicker">Email</span>
+        <section className="onboarding-section">
+          <div className="onboarding-section-header">
+            <span className="step-chip">01</span>
+            <div>
+              <h2>Choose how to sign up</h2>
+              <p>Use Google for OAuth, or use email to verify with a one-time code.</p>
+            </div>
+          </div>
+          <label className="field-block">
+            <span>Email</span>
             <input className="input" value={email} onChange={(event) => setEmail(event.target.value)} aria-label="Sign-up email" />
           </label>
-          <div className="auth-method-grid mt-16">
+          <div className="auth-method-grid">
             <div className={`auth-method ${authMethod === 'google' ? 'active' : ''}`}>
               <div>
                 <div className="auth-method-title">Google</div>
@@ -340,46 +339,54 @@ export default function OnboardingPage() {
               </div>
             </div>
           </div>
-        </div>
-        <div>
-          <div className="phase2-kicker">Step 2</div>
-          <h2>Create organization workspace</h2>
-        </div>
-        <label className="stack gap-8">
-          <span className="phase2-kicker">Name</span>
-          <input className="input" value={name} onChange={(event) => setName(event.target.value)} />
-        </label>
-        <label className="stack gap-8">
-          <span className="phase2-kicker">Organization / startup</span>
-          <input className="input" value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} />
-        </label>
-        <div className="phase2-grid">
-          <label className="stack gap-8">
-            <span className="phase2-kicker">Role optional</span>
+        </section>
+
+        <section className="onboarding-section">
+          <div className="onboarding-section-header">
+            <span className="step-chip">02</span>
+            <div>
+              <h2>Create organization workspace</h2>
+              <p>This becomes the private review space for sessions, teammates, and curation.</p>
+            </div>
+          </div>
+          <div className="onboarding-field-grid">
+            <label className="field-block">
+              <span>Name</span>
+              <input className="input" value={name} onChange={(event) => setName(event.target.value)} />
+            </label>
+            <label className="field-block">
+              <span>Organization / startup</span>
+              <input className="input" value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} />
+            </label>
+          </div>
+          <div className="onboarding-field-grid three-up">
+            <label className="field-block">
+              <span>Role optional</span>
             <input className="input" value={role} onChange={(event) => setRole(event.target.value)} />
-          </label>
-          <label className="stack gap-8">
-            <span className="phase2-kicker">Team optional</span>
+            </label>
+            <label className="field-block">
+              <span>Team optional</span>
             <input className="input" value={teamName} onChange={(event) => setTeamName(event.target.value)} />
-          </label>
-          <label className="stack gap-8">
-            <span className="phase2-kicker">Default visibility</span>
+            </label>
+            <label className="field-block">
+              <span>Default visibility</span>
             <select className="select" value={defaultVisibility} onChange={(event) => setDefaultVisibility(event.target.value as typeof defaultVisibility)}>
               <option value="private">Private</option>
               <option value="org">Organization</option>
               <option value="public">Public</option>
             </select>
+            </label>
+          </div>
+          <label className="field-block">
+            <span>Invite teammates</span>
+            <input className="input" value={inviteEmails} onChange={(event) => setInviteEmails(event.target.value)} placeholder="sarah@company.com, mike@company.com" />
           </label>
-        </div>
-        <label className="stack gap-8">
-          <span className="phase2-kicker">Invite teammates</span>
-          <input className="input" value={inviteEmails} onChange={(event) => setInviteEmails(event.target.value)} placeholder="sarah@company.com, mike@company.com" />
-        </label>
-        <button className="btn btn-primary" disabled={loading || !identityConnected}>{loading ? 'Creating workspace...' : 'Create workspace and stage invites'}</button>
+          <button className="btn btn-primary onboarding-submit" disabled={loading || !identityConnected}>{loading ? 'Creating workspace...' : 'Create workspace and stage invites'}</button>
+        </section>
       </form>
 
       {inviteLinks.length > 0 ? (
-        <section className="phase2-card stack gap-12 mt-24">
+        <section className="onboarding-panel invite-links-panel">
           <div>
             <div className="phase2-kicker">Invite links</div>
             <h2>Share these one-time links with teammates.</h2>
@@ -395,9 +402,9 @@ export default function OnboardingPage() {
       ) : null}
 
       {workspaceReady ? (
-        <section className="phase2-card stack gap-16 mt-24">
+        <section className="onboarding-panel mac-link-section">
           <div>
-            <div className="phase2-kicker">Step 3</div>
+            <span className="step-chip">03</span>
             <h2>Link the Mac app</h2>
             <p className="phase2-muted">
               This is the Codex-style handoff: web creates the account and workspace, then the Mac app
