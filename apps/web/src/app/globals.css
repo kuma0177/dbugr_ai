@@ -554,6 +554,86 @@ a:hover { color: var(--blue-hover); }
   margin: 0 auto;
 }
 
+.onboarding-back-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.onboarding-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.onboarding-back-link span:first-child {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-subtle);
+}
+
+.onboarding-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-subtle);
+}
+
+.onboarding-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 14px 0 10px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.onboarding-crumb span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  color: var(--ash);
+  background: var(--surface-soft);
+  font-size: 11px;
+}
+
+.onboarding-crumb.active {
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.onboarding-crumb.active span {
+  color: #fff;
+  background: var(--blue);
+}
+
+.onboarding-crumb.locked {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .onboarding-intro {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
@@ -973,6 +1053,17 @@ a:hover { color: var(--blue-hover); }
     grid-template-columns: 1fr;
   }
 
+  .onboarding-back-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .onboarding-crumbs {
+    width: 100%;
+    overflow-x: auto;
+    border-radius: 22px;
+  }
+
   .onboarding-status-panel {
     min-height: auto;
   }
@@ -1028,6 +1119,22 @@ a:hover { color: var(--blue-hover); }
   .onboarding-status-panel,
   .onboarding-panel {
     padding: 22px;
+  }
+
+  .onboarding-back-row {
+    margin-bottom: 16px;
+  }
+
+  .onboarding-crumbs {
+    gap: 4px;
+    padding: 4px;
+  }
+
+  .onboarding-crumb {
+    flex: 1 0 auto;
+    justify-content: center;
+    min-height: 42px;
+    padding: 0 10px;
   }
 
   .onboarding-copy h1 {

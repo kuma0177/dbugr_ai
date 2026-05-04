@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { api } from '@/lib/api';
 import { clearOnboardingState, readOnboardingState, writeOnboardingState } from '@/lib/onboarding';
 
+type OnboardingStep = 'sign-in' | 'workspace' | 'link';
+
 export default function OnboardingPage() {
   const [name, setName] = useState('Demo User');
   const [email, setEmail] = useState('demo@example.com');
@@ -25,6 +27,7 @@ export default function OnboardingPage() {
   const [inviteLinks, setInviteLinks] = useState<Array<{ email: string; acceptUrl: string }>>([]);
   const [status, setStatus] = useState('Sign up with Google or email first, then create your organization workspace.');
   const [loading, setLoading] = useState(false);
+  const [currentStep, setCurrentStep] = useState<OnboardingStep>('sign-in');
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -55,6 +58,7 @@ export default function OnboardingPage() {
       setAuthMethod((current) => current ?? 'google');
       setIdentityConnected(true);
       setWorkspaceReady(true);
+      setCurrentStep('link');
       setStatus(`Workspace ready: ${localState.organizationName}. ${localState.inviteEmails.length} invite(s) staged.`);
     }
 
@@ -82,6 +86,7 @@ export default function OnboardingPage() {
   function connectGooglePreview() {
     setAuthMethod('google');
     setIdentityConnected(true);
+    setCurrentStep('workspace');
     setStatus(`Google preview connected as ${email}. Production will redirect to Google OAuth when GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are configured.`);
     console.info('[phase2-web] onboarding.google_preview_connected', { email });
   }
@@ -109,6 +114,7 @@ export default function OnboardingPage() {
     }
     setAuthMethod('email');
     setIdentityConnected(true);
+    setCurrentStep('workspace');
     setStatus(`Email verified for ${email}. You can create your organization workspace now.`);
     console.info('[phase2-web] onboarding.email_code_verified', { email });
   }
@@ -121,10 +127,11 @@ export default function OnboardingPage() {
     setExpectedEmailCode('');
     setEmailCode('');
     setWorkspaceReady(false);
-      setDesktopLink(null);
-      setDesktopRedeemStatus('');
-      setInviteLinks([]);
-      setStatus('Sign up with Google or email first, then create your organization workspace.');
+    setDesktopLink(null);
+    setDesktopRedeemStatus('');
+    setInviteLinks([]);
+    setCurrentStep('sign-in');
+    setStatus('Sign up with Google or email first, then create your organization workspace.');
   }
 
   async function createDesktopLink() {
@@ -203,6 +210,7 @@ export default function OnboardingPage() {
         completedAt: new Date().toISOString(),
       });
       setWorkspaceReady(true);
+      setCurrentStep('link');
       await createDesktopLink();
       console.info('[phase2-web] onboarding.submit.completed', {
         organizationId: result.organization.id,
@@ -236,6 +244,7 @@ export default function OnboardingPage() {
       setAuthMethod('google');
       setIdentityConnected(true);
       setWorkspaceReady(true);
+      setCurrentStep('link');
       setStatus(`Joined ${result.organization.name}. You can now open the review feed.`);
       console.info('[phase2-web] invite.accept.completed', {
         organizationId: result.organization.id,
@@ -251,6 +260,31 @@ export default function OnboardingPage() {
 
   return (
     <div className="onboarding-shell">
+      <div className="onboarding-back-row">
+        <Link className="onboarding-back-link" href="/" aria-label="Back to Dbugr home">
+          <span aria-hidden="true">←</span>
+          <span>Home</span>
+        </Link>
+        <nav className="onboarding-crumbs" aria-label="Onboarding progress">
+          {[
+            { id: 'sign-in' as const, label: 'Sign in', unlocked: true },
+            { id: 'workspace' as const, label: 'Workspace', unlocked: identityConnected },
+            { id: 'link' as const, label: 'Mac link', unlocked: workspaceReady },
+          ].map((step, index) => (
+            <button
+              key={step.id}
+              type="button"
+              className={`onboarding-crumb ${currentStep === step.id ? 'active' : ''} ${step.unlocked ? '' : 'locked'}`}
+              disabled={!step.unlocked}
+              onClick={() => setCurrentStep(step.id)}
+            >
+              <span>{String(index + 1).padStart(2, '0')}</span>
+              {step.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
       <section className="onboarding-intro">
         <div className="onboarding-copy">
           <div className="phase2-kicker">Workspace setup</div>
@@ -277,7 +311,6 @@ export default function OnboardingPage() {
           ) : null}
           <div className="onboarding-status-actions">
             {workspaceReady ? <Link className="btn btn-primary" href="/feed">Open review feed</Link> : null}
-            <Link className="btn btn-ghost" href="/">Back home</Link>
             {workspaceReady ? <button className="btn btn-ghost" type="button" onClick={resetWorkspace}>Reset preview</button> : null}
           </div>
         </aside>
@@ -297,6 +330,7 @@ export default function OnboardingPage() {
             </button>
           </div>
         ) : null}
+        {currentStep === 'sign-in' ? (
         <section className="onboarding-section">
           <div className="onboarding-section-header">
             <span className="step-chip">01</span>
@@ -340,7 +374,9 @@ export default function OnboardingPage() {
             </div>
           </div>
         </section>
+        ) : null}
 
+        {currentStep === 'workspace' ? (
         <section className="onboarding-section">
           <div className="onboarding-section-header">
             <span className="step-chip">02</span>
@@ -383,6 +419,26 @@ export default function OnboardingPage() {
           </label>
           <button className="btn btn-primary onboarding-submit" disabled={loading || !identityConnected}>{loading ? 'Creating workspace...' : 'Create workspace and stage invites'}</button>
         </section>
+        ) : null}
+
+        {currentStep === 'link' ? (
+          <section className="onboarding-section mac-link-section">
+            <div>
+              <span className="step-chip">03</span>
+              <h2>Link the Mac app</h2>
+              <p className="phase2-muted">
+                This is the Codex-style handoff: web creates the account and workspace, then the Mac app
+                opens via `dbugr://` and redeems a short-lived link code. The desktop handler is the next
+                native-app task; the API and web link contract are now in place.
+              </p>
+            </div>
+            <div className="row gap-12">
+              <button className="btn btn-primary" type="button" onClick={createDesktopLink}>Create new link code</button>
+              {desktopLink ? <a className="btn btn-ghost" href={desktopLink.deepLinkUrl}>Open Dbugr Mac app</a> : null}
+              {desktopLink ? <button className="btn btn-ghost" type="button" onClick={redeemDesktopLinkPreview}>Preview redeem</button> : null}
+            </div>
+          </section>
+        ) : null}
       </form>
 
       {inviteLinks.length > 0 ? (
@@ -401,24 +457,6 @@ export default function OnboardingPage() {
         </section>
       ) : null}
 
-      {workspaceReady ? (
-        <section className="onboarding-panel mac-link-section">
-          <div>
-            <span className="step-chip">03</span>
-            <h2>Link the Mac app</h2>
-            <p className="phase2-muted">
-              This is the Codex-style handoff: web creates the account and workspace, then the Mac app
-              opens via `dbugr://` and redeems a short-lived link code. The desktop handler is the next
-              native-app task; the API and web link contract are now in place.
-            </p>
-          </div>
-          <div className="row gap-12">
-            <button className="btn btn-primary" type="button" onClick={createDesktopLink}>Create new link code</button>
-            {desktopLink ? <a className="btn btn-ghost" href={desktopLink.deepLinkUrl}>Open Dbugr Mac app</a> : null}
-            {desktopLink ? <button className="btn btn-ghost" type="button" onClick={redeemDesktopLinkPreview}>Preview redeem</button> : null}
-          </div>
-        </section>
-      ) : null}
     </div>
   );
 }
