@@ -134,6 +134,15 @@ let visiblePendingFlowSelection: SubmissionFlow | null = null;
 let pendingFlowSelectionTimer: number | null = null;
 let showSendLoadingIndicator = false;
 let sendLoadingTimer: number | null = null;
+let promptPreviewPreparing = false;
+let promptPreviewState: {
+  sessionId: string;
+  target: Target;
+  fingerprint: string;
+  prompt: string;
+  screenshotPaths: Map<string, string>;
+  generatedAt: string;
+} | null = null;
 let permissionCheckInFlight: Promise<void> | null = null;
 let lastPermissionCheckAt = 0;
 let lastPermissionMarkup = '';
@@ -234,6 +243,49 @@ function activePreviewCapture() {
 
 function sessionLevelNote(session: Session): string {
   return session.about?.trim() || session.sessionNote?.trim() || '';
+}
+
+function promptPreviewFingerprint(session: Session, provider: Target): string {
+  return JSON.stringify({
+    provider,
+    title: session.title,
+    about: session.about ?? '',
+    sessionNote: session.sessionNote ?? '',
+    projectFolder: normalizeProjectFolderInput(session.projectFolder),
+    githubRepo: normalizeGithubRepoInput(session.githubRepo),
+    captures: session.captures.map((capture) => ({
+      id: capture.id,
+      title: capture.title,
+      preview: capture.preview,
+      screenshotUrl: capture.screenshotUrl ?? '',
+      annotations: capture.annotations.map((annotation) => ({
+        id: annotation.id,
+        kind: annotation.kind ?? 'pin',
+        text: annotation.text,
+        tags: annotation.tags,
+      })),
+    })),
+    acceptedContributionIds: acceptedContributions(session).map((item) => item.id),
+  });
+}
+
+function currentPromptPreview(session: Session) {
+  const fingerprint = promptPreviewFingerprint(session, target);
+  if (
+    promptPreviewState?.sessionId === session.id
+    && promptPreviewState.target === target
+    && promptPreviewState.fingerprint === fingerprint
+  ) {
+    return promptPreviewState;
+  }
+  return null;
+}
+
+function invalidatePromptPreview(sessionId?: string) {
+  if (!promptPreviewState) return;
+  if (!sessionId || promptPreviewState.sessionId === sessionId) {
+    promptPreviewState = null;
+  }
 }
 
 function sandclockMarkup(label: string) {
@@ -1784,6 +1836,7 @@ function renderWorkspacePanel() {
         const contribution = session.contributions.find((item) => item.id === checkbox.dataset.contributionId);
         if (!contribution) return;
         contribution.accepted = checkbox.checked;
+        invalidatePromptPreview(session.id);
         persistAppState();
         renderSession();
       });
@@ -1801,6 +1854,7 @@ function renderWorkspacePanel() {
     const isCodexReady = isProviderConnected('codex', providerConnections.codex);
     const isCursorReady = isProviderConnected('cursor', providerConnections.cursor);
     const isReady = target === 'claude' ? isClaudeReady : target === 'codex' ? isCodexReady : isCursorReady;
+    const preview = currentPromptPreview(session);
 
     // ── Connect card for Claude ─────────────────────────────────────────────
     const claudeConnectCard = isClaudeReady ? '' : `
@@ -1866,10 +1920,29 @@ function renderWorkspacePanel() {
 
         ${isReady ? `
           <div class="save-banner">✓ ${escapeHtml(providerConnectionReadyCopy(target, providerConnections[target].method))}</div>
-          <button class="send-btn" id="send-btn" ${isSending ? 'disabled' : ''}>
+          <div class="prompt-preview-card ${preview ? 'ready' : ''}" id="prompt-preview-card">
+            <div class="prompt-preview-head">
+              <div>
+                <div class="prompt-preview-title">Payload preview</div>
+                <div class="prompt-preview-sub">${preview
+                  ? `${preview.screenshotPaths.size} screenshot path${preview.screenshotPaths.size === 1 ? '' : 's'} · ${preview.prompt.length.toLocaleString()} characters`
+                  : 'Review the exact prompt before Debugr opens the provider handoff.'}</div>
+              </div>
+              <button type="button" class="prompt-preview-btn" id="prepare-prompt-preview-btn" ${promptPreviewPreparing || isSending ? 'disabled' : ''}>
+                ${promptPreviewPreparing ? sandclockMarkup('Preparing…') : preview ? 'Refresh preview' : 'Review payload'}
+              </button>
+            </div>
+            ${preview ? `
+              <pre class="prompt-preview-text" id="prompt-preview-text">${escapeHtml(preview.prompt)}</pre>
+              <div class="prompt-preview-foot">Generated ${fmtTime(preview.generatedAt)} for ${providerLabel(target)}. Any edit to the session requires a refreshed preview.</div>
+            ` : `
+              <div class="prompt-preview-empty">No provider will launch until this preview is generated.</div>
+            `}
+          </div>
+          <button class="send-btn" id="send-btn" ${isSending || !preview ? 'disabled' : ''}>
             ${isSending
               ? (showSendLoadingIndicator ? sandclockMarkup('Opening…') : 'Opening…')
-              : `Send to ${providerLabel(target)} ⌘↵`}
+              : preview ? `Send to ${providerLabel(target)} ⌘↵` : `Review payload first`}
           </button>
           <div class="send-tip">${target === 'cursor'
             ? 'Debugr will open Cursor with your project folder and the session prompt ready to paste.'
@@ -1889,11 +1962,16 @@ function renderWorkspacePanel() {
         const newTarget = button.dataset.target as Target | undefined;
         if (!newTarget) return;
         target = newTarget;
+        invalidatePromptPreview(session.id);
         claudeConnecting = false;
         codexConnecting = false;
         persistAppState();
         renderSession();
       });
+    });
+
+    document.getElementById('prepare-prompt-preview-btn')?.addEventListener('click', () => {
+      void preparePromptPreview(session);
     });
 
     // Send
@@ -1902,7 +1980,7 @@ function renderWorkspacePanel() {
     // Add folder
     document.getElementById('add-folder-btn')?.addEventListener('click', async () => {
       const folder = await invoke<string | null>('pick_folder');
-      if (folder) { session.projectFolder = folder; persistAppState(); renderSession(); }
+      if (folder) { session.projectFolder = folder; invalidatePromptPreview(session.id); persistAppState(); renderSession(); }
     });
 
     // ── Claude connect (Submit tab) ─────────────────────────────────────────
@@ -2138,6 +2216,7 @@ function bindSessionActions() {
   const headerTitleInput = document.getElementById('header-title-input') as HTMLInputElement | null;
   headerTitleInput?.addEventListener('input', () => {
     session.title = headerTitleInput.value || 'Untitled session';
+    invalidatePromptPreview(session.id);
     const panelTitle = document.getElementById('session-title-input') as HTMLInputElement | null;
     if (panelTitle) panelTitle.value = session.title;
     logUi('workspace_title_input', { sessionId: session.id, length: session.title.length });
@@ -2151,6 +2230,7 @@ function bindSessionActions() {
 
   titleInput?.addEventListener('input', () => {
     session.title = titleInput.value || 'Untitled session';
+    invalidatePromptPreview(session.id);
     logUi('workspace_title_input', { sessionId: session.id, length: session.title.length });
     persistAppState();
     const h = document.getElementById('header-title-input') as HTMLInputElement | null;
@@ -2159,6 +2239,7 @@ function bindSessionActions() {
   aboutInput?.addEventListener('input', () => {
     session.about = aboutInput.value.slice(0, 200);
     session.sessionNote = '';
+    invalidatePromptPreview(session.id);
     logUi('workspace_about_input', { sessionId: session.id, length: session.about.length });
     const count = document.getElementById('about-count');
     if (count) count.textContent = String(session.about.length);
@@ -2173,6 +2254,7 @@ function bindSessionActions() {
   });
   folderInput?.addEventListener('input', () => {
     session.projectFolder = normalizeProjectFolderInput(folderInput.value);
+    invalidatePromptPreview(session.id);
     logUi('workspace_project_folder_input', {
       sessionId: session.id,
       hasProjectFolder: Boolean(session.projectFolder),
@@ -2182,6 +2264,7 @@ function bindSessionActions() {
   });
   repoInput?.addEventListener('input', () => {
     session.githubRepo = normalizeGithubRepoInput(repoInput.value);
+    invalidatePromptPreview(session.id);
     logUi('workspace_github_repo_input', {
       sessionId: session.id,
       hasGithubRepo: Boolean(session.githubRepo),
@@ -2211,6 +2294,7 @@ function bindSessionActions() {
       logUi('workspace_folder_picker_result', { sessionId: session.id, picked: picked ?? null });
       if (!picked) return;
       session.projectFolder = normalizeProjectFolderInput(picked);
+      invalidatePromptPreview(session.id);
       if (folderInput) folderInput.value = session.projectFolder ?? '';
       syncRepoContextChips(session);
       persistAppState();
@@ -2527,6 +2611,49 @@ function buildCliCommand(cliName: 'claude' | 'codex', prompt: string): string {
   return buildAiCliCommand(cliName, prompt, apiKey);
 }
 
+async function preparePromptPreview(session: Session) {
+  if (promptPreviewPreparing) return;
+  promptPreviewPreparing = true;
+  submitGateError = '';
+  renderSession();
+  logUi('workspace_prompt_preview_start', {
+    sessionId: session.id,
+    target,
+    captureCount: session.captures.length,
+    annotationCount: totalAnnotations(session),
+    acceptedContributionCount: acceptedContributions(session).length,
+  });
+
+  try {
+    const screenshotPaths = await saveScreenshots(session.captures);
+    const prompt = buildSessionPrompt(session, screenshotPaths);
+    promptPreviewState = {
+      sessionId: session.id,
+      target,
+      fingerprint: promptPreviewFingerprint(session, target),
+      prompt,
+      screenshotPaths,
+      generatedAt: new Date().toISOString(),
+    };
+    logUi('workspace_prompt_preview_ready', {
+      sessionId: session.id,
+      target,
+      promptLength: prompt.length,
+      diagnostics: getPromptDiagnostics(session, screenshotPaths),
+    });
+  } catch (error) {
+    submitGateError = `Could not prepare prompt preview: ${error instanceof Error ? error.message : String(error)}`;
+    logUi('workspace_prompt_preview_failed', {
+      sessionId: session.id,
+      target,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    promptPreviewPreparing = false;
+    renderSession();
+  }
+}
+
 async function sendSession() {
   const session = activeSession();
   if (!session) return;
@@ -2538,6 +2665,13 @@ async function sendSession() {
   });
 
   submitGateError = '';
+  const preview = currentPromptPreview(session);
+  if (!preview) {
+    submitGateError = 'Review the payload preview before sending this session.';
+    logUi('workspace_send_blocked_missing_prompt_preview', { sessionId: session.id, target });
+    renderSession();
+    return;
+  }
   if (target === 'claude' || target === 'codex') {
     const verification = await verifyProviderConnection(target);
     logUi('workspace_send_provider_verification', { target, ok: verification.ok, transient: verification.transient ?? false, error: verification.error ?? null });
@@ -2567,10 +2701,9 @@ async function sendSession() {
   persistAppState();
   renderSession();
 
-  // Save screenshots to disk so the CLI can view them
-  const screenshotPaths = await saveScreenshots(session.captures);
+  const screenshotPaths = preview.screenshotPaths;
   logUi('workspace_send_screenshots_saved', { sessionId: session.id, screenshotCount: screenshotPaths.size });
-  const prompt = buildSessionPrompt(session, screenshotPaths);
+  const prompt = preview.prompt;
   logUi('workspace_send_prompt_ready', {
     sessionId: session.id,
     target,

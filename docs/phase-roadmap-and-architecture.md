@@ -255,21 +255,24 @@ Milestone checklist:
 - [x] Stable Claude CLI handoff
 - [x] Stable Codex CLI handoff
 - [x] Stable Cursor handoff
-- [ ] Prompt preview before submission
+- [x] Prompt preview before submission
 - [x] Repo / local-folder context attached to session
 - [x] Local-first persistence for screenshots and notes
-- [ ] Clear local install and run documentation
-- [ ] Native migration direction documented without disrupting the current stable desktop flow
+- [x] Clear local install and run documentation
+- [x] Native migration direction documented without disrupting the current stable desktop flow
 
 Quality-gated status as of 2026-05-03:
 
 - [x] Unit/regression suite passed: `apps/desktop` `pnpm test` returned 74 passing tests.
-- [x] Functional browser suite passed: `apps/desktop` `pnpm test:e2e` returned 29 passing Playwright tests.
+- [x] Functional browser suite passed: `apps/desktop` `pnpm test:e2e` returned 30 passing Playwright tests.
 - [x] Production desktop web build passed: `apps/desktop` `pnpm vite build`.
 - [x] Annotation save/reopen verification includes screenshot payload rendering, append-to-existing-session behavior, delete behavior, no proactive session-board open after save, and local persistence checks.
+- [x] Prompt preview verification includes a required pre-handoff payload review that displays session note, repo/folder context, annotations, provider target, and saved screenshot path references before Send is enabled.
 - [x] Provider handoff verification includes Claude CLI Terminal launch, Codex CLI Terminal launch with local OpenAI key, Cursor app open/copy flow, and saved screenshot path references in the prompt payload.
-- [ ] Live macOS capture smoke verification is still pending because Playwright mocks Tauri capture APIs and cannot prove ScreenCaptureKit/window-focus behavior against the real desktop.
-- [ ] Fresh-clone install verification is still pending because this pass validated the existing checkout, not a clean machine setup.
+- [x] Local setup documentation verification passed: `pnpm db:setup` completed successfully with normal IPC permissions after sandbox-only `tsx` pipe restrictions were ruled out.
+- [x] Native migration isolation verification passed: `apps/desktop-native-mac` `swift build` completed successfully without touching the current Tauri desktop app.
+- [x] Native macOS capture smoke passed: `apps/desktop-native-mac` `swift run debugr-native-mac --capture-smoke` captured a valid `1728x1117` display PNG with `transparent=0.00` and no validation issues.
+- [ ] Current Tauri shell capture smoke remains pending: `apps/desktop/src-tauri` `env DEBUGR_CAPTURE_SMOKE=1 cargo run` still fails through its legacy CoreGraphics probe with `CoreGraphics did not return a display image`, while the product picker path and native prototype use ScreenCaptureKit.
 
 Quality tracker:
 

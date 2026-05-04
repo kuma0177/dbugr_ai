@@ -1971,6 +1971,85 @@ kbd {
   font-weight: 400;
 }
 
+.prompt-preview-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border, #d8d6df);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: var(--shadow-md);
+}
+
+.prompt-preview-card.ready {
+  border-color: rgba(0, 134, 252, 0.24);
+}
+
+.prompt-preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.prompt-preview-title {
+  font-size: 17px;
+  line-height: 1.35;
+  letter-spacing: -0.22px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.prompt-preview-sub,
+.prompt-preview-empty,
+.prompt-preview-foot {
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: -0.14px;
+  color: var(--text-secondary);
+}
+
+.prompt-preview-btn {
+  flex-shrink: 0;
+  padding: 9px 13px;
+  border: none;
+  border-radius: 999px;
+  background: var(--blue);
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.25;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.prompt-preview-btn:hover:not(:disabled) {
+  background: var(--blue-hover);
+}
+
+.prompt-preview-btn:disabled {
+  opacity: 0.64;
+  cursor: not-allowed;
+}
+
+.prompt-preview-text {
+  max-height: 240px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid rgba(52, 52, 51, 0.08);
+  border-radius: 14px;
+  background: #f7f7f4;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: -0.05px;
+}
+
 .target-grid {
   display: flex;
   flex-direction: column;

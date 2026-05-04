@@ -162,8 +162,23 @@ test.describe('07 — AI submission UI', () => {
     expect(appText).toBeTruthy();
   });
 
+  test('payload preview is required before provider handoff', async ({ page }) => {
+    await loadSessionAndNavigateToSubmit(page);
+    await expect(page.locator('#send-btn')).toBeDisabled();
+
+    await page.locator('#prepare-prompt-preview-btn').click();
+    await waitForTauriCall(page, 'save_screenshot');
+
+    await expect(page.locator('#prompt-preview-text')).toContainText('# Debugr session: Submission test session');
+    await expect(page.locator('#prompt-preview-text')).toContainText('Project folder: /Users/kumar/myapp');
+    await expect(page.locator('#prompt-preview-text')).toContainText('Screenshot: /tmp/debugr/capture_1.png');
+    await expect(page.locator('#send-btn')).toBeEnabled();
+  });
+
   test('Claude CLI send opens Terminal with prompt and screenshot reference', async ({ page }) => {
     await loadSessionAndNavigateToSubmit(page);
+    await page.locator('#prepare-prompt-preview-btn').click();
+    await waitForTauriCall(page, 'save_screenshot');
     await page.locator('#send-btn').click();
 
     const terminalCall = await waitForTauriCall(page, 'open_command_in_terminal');
@@ -175,6 +190,8 @@ test.describe('07 — AI submission UI', () => {
   test('Codex CLI send opens Terminal with OpenAI key and prompt', async ({ page }) => {
     await loadSessionAndNavigateToSubmit(page);
     await page.locator('[data-target="codex"]').click();
+    await page.locator('#prepare-prompt-preview-btn').click();
+    await waitForTauriCall(page, 'save_screenshot');
     await page.locator('#send-btn').click();
 
     await waitForTauriCall(page, 'verify_codex_key');
@@ -188,6 +205,8 @@ test.describe('07 — AI submission UI', () => {
   test('Cursor send opens Cursor and copies the session prompt', async ({ page }) => {
     await loadSessionAndNavigateToSubmit(page);
     await page.locator('[data-target="cursor"]').click();
+    await page.locator('#prepare-prompt-preview-btn').click();
+    await waitForTauriCall(page, 'save_screenshot');
     await page.locator('#send-btn').click();
 
     await waitForTauriCall(page, 'open_in_cursor');
