@@ -341,6 +341,8 @@ Implementation status as of 2026-05-03:
 - [x] Railway web/API deployment guide added for the Phase 2 collaboration layer.
 - [ ] Real Google OAuth.
 - [ ] Native desktop-to-web device-link handler `[partial: API/web contract and macOS URL scheme done]`.
+- [ ] Post-onboarding DMG download and `Link this Mac` flow.
+- [ ] Native app account context after linking: signed-in user, email, workspace, role, device name, and workspace switcher.
 - [ ] Real invite email delivery.
 - [ ] Session sync from desktop local storage to web.
 - [ ] Production public-feed redaction and moderation controls.
@@ -351,12 +353,16 @@ Current Phase 2 architecture scaffold:
 ```mermaid
 flowchart LR
   Desktop["Native/Tauri desktop core\ncapture, annotate, save, local CLI handoff"]
-  Web["Railway web app\nonboarding, feeds, curation"]
-  API["Railway API\nIAM, visibility, comments, preflight"]
+  Web["Railway web app\nGoogle/email auth, onboarding, DMG download, link Mac, feeds, curation"]
+  API["Railway API\nIAM, invites, device links, visibility, comments, preflight"]
   DB["Collaboration database\norgs, sessions, comments, audit"]
   LocalKeys["User device\nClaude/Codex/Cursor keys"]
   Providers["Claude CLI / Codex CLI / Cursor"]
+  Keychain["macOS Keychain\nDbugr device token"]
 
+  Web -->|"create one-time link code\nopen dbugr://link"| Desktop
+  Desktop -->|"redeem code\nreceive workspace-scoped device token"| API
+  Desktop --> Keychain
   Desktop -->|"sync session metadata and assets\nfuture milestone"| API
   Desktop -->|"local provider handoff"| Providers
   Desktop --> LocalKeys
@@ -364,6 +370,18 @@ flowchart LR
   API --> DB
   API -->|"preflight prompt snapshot"| DB
 ```
+
+Desktop linking product contract:
+
+- Web owns sign-up, login, organization membership, invite acceptance, and workspace selection.
+- The macOS app should not create a separate local account; it links to a web-authenticated user.
+- After onboarding, web prompts the user to download the macOS DMG or link an already installed app.
+- `Link this Mac` creates a short-lived, one-time code and opens `dbugr://link?code=...`.
+- The native app redeems the code with the API and stores the resulting device token in macOS Keychain.
+- The native app must show `Signed in as`, email, workspace, role, and linked device name before enabling team sharing.
+- Each teammate links their own Mac app; actions sync under that teammate's user, organization, role, and permissions.
+- Users with multiple organizations need a workspace switcher in the native app before sharing or syncing.
+- AI provider keys and local CLI credentials remain on the user's Mac by default.
 
 Quality tracker:
 

@@ -104,10 +104,16 @@ This gives F100 buyers a plausible internal pilot story without forcing the prod
 
 Entry point:
 
-- User opens Dbugr desktop or website.
-- If unauthenticated, desktop opens web login.
-- User signs in on web.
-- Desktop receives a linked session token through a device-code or deep-link flow.
+- User opens the Dbugr website or receives a teammate invite link.
+- User signs in on web with Google OAuth or email one-time code.
+- If the user is new, web asks them to create an organization/workspace.
+- If the user was invited, web accepts the invite after sign-in and joins them to the existing organization.
+- Web prompts the user to download and install the macOS `.dmg` if the Mac app is not installed.
+- Web shows `Link this Mac` after account/workspace membership is ready.
+- Web creates a short-lived, one-time desktop link code.
+- Browser opens `dbugr://link?code=...`.
+- The native macOS app redeems the code with the API and stores a device token in macOS Keychain.
+- Desktop shows the linked identity and workspace before enabling sync or team sharing.
 
 Onboarding asks for:
 
@@ -123,8 +129,28 @@ Expected result:
 - User exists.
 - Organization exists.
 - User is org owner.
-- Desktop is linked to the account.
+- Invited teammates can join an existing org instead of creating a duplicate org.
+- Desktop is linked to the signed-in account and selected workspace.
+- Desktop can show `Signed in as`, email, workspace, role, and available teammates.
 - User can capture locally and sync sessions to the web review hub.
+
+Team-based flow:
+
+- Workspace owner signs up on web.
+- Owner creates an organization and invites teammates by email.
+- Invited teammate signs in with Google or email.
+- If the teammate already has a Dbugr account, accepting the invite attaches a new membership to that existing account.
+- If the teammate is new, accepting the invite creates the account first, then attaches membership.
+- Each teammate downloads and links their own Mac app through the same web deep-link flow.
+- Each linked desktop uses the member's credentials and permissions when syncing sessions, viewing teammates, and sharing for review.
+
+Native app account context:
+
+- The Mac app should never ask users to create a separate local account.
+- Identity is delegated to the web app, similar to Codex linking through ChatGPT.
+- The Mac app should show `Linked as [name] <email>`, `Workspace: [org]`, `Role: [role]`, and `Device: [device name]`.
+- The Mac app should support unlink/logout, relink, and workspace switching if the user belongs to multiple organizations.
+- AI provider credentials remain local by default and are separate from Dbugr web identity.
 
 ### 2. Capture And Annotate On Desktop
 
@@ -653,6 +679,8 @@ Auth and linking:
 - `GET /auth/device/poll`
 - `POST /auth/logout`
 
+Current implementation naming may use `/phase2/desktop-link` style endpoints during scaffolding. The production contract should converge on one concept: web-authenticated device linking with one-time, short-lived, replay-safe codes that redeem into a Keychain-stored desktop device token.
+
 Organizations:
 
 - `POST /orgs`
@@ -775,20 +803,35 @@ Use this checklist when implementing Phase 2. Do not skip ahead unless the earli
 
 - [ ] Add web login route.
 - [ ] Add user session handling on web.
+- [ ] Add post-auth onboarding state that distinguishes new owner, invited new user, invited existing user, and returning member.
+- [ ] Add macOS `.dmg` download step after workspace membership is confirmed.
+- [ ] Add `Link this Mac` web CTA that only appears after web auth and workspace membership are ready.
 - [ ] Add device-link start endpoint.
 - [ ] Add device-link confirmation page.
 - [ ] Add device-link polling endpoint for desktop.
+- [ ] Add `dbugr://link?code=...` deep-link handler in the native macOS app.
+- [ ] Add one-time desktop-link code hashing, expiry, replay prevention, and account/workspace binding.
 - [ ] Add desktop token storage for linked account.
+- [ ] Store linked desktop token in macOS Keychain, not in plain local storage.
+- [ ] Add desktop account context UI: signed-in name, email, workspace, role, and device name.
+- [ ] Add desktop workspace switcher for users who belong to multiple organizations.
 - [ ] Add desktop unlink/logout action.
 - [ ] Add audit event for sign-in.
 - [ ] Add audit event for desktop linking.
+- [ ] Add audit event for desktop unlink/logout.
 - [ ] Verify desktop can show authenticated user/org state.
 
 Exit criteria:
 
 - [ ] User can sign in on web.
-- [ ] Desktop can link to the signed-in account.
+- [ ] New owner can create a workspace, download the DMG, link the Mac app, and see their identity in the Mac app.
+- [ ] Invited existing user can accept a team invite, download/link the Mac app, and see the invited workspace in the Mac app.
+- [ ] Invited new user can create a Dbugr account from the invite, download/link the Mac app, and see the invited workspace in the Mac app.
+- [ ] Desktop can link to the signed-in account and selected workspace.
+- [ ] Desktop can relaunch and remain linked.
 - [ ] Desktop can unlink cleanly.
+- [ ] Expired or reused link codes are rejected.
+- [ ] Logs prove the flow without exposing raw tokens.
 
 ### 2. Organization, Team, Roles, And Invites
 

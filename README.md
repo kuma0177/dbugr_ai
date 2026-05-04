@@ -250,6 +250,15 @@ The current phased scope and architecture plan lives in:
 - [docs/phase-roadmap-and-architecture.md](/Users/kumar/debugr/docs/phase-roadmap-and-architecture.md:1)
 - [docs/phase-2-social-refinement-plan.md](/Users/kumar/debugr/docs/phase-2-social-refinement-plan.md:1)
 
+Phase 2 account-linking rule:
+
+- Web owns Google/email sign-in, organization setup, team invites, and workspace membership.
+- The macOS app should not create a separate local account.
+- After web onboarding, users download the macOS DMG or choose `Link this Mac`.
+- `Link this Mac` opens a short-lived `dbugr://link?code=...` deep link.
+- The native app redeems that code with the API, stores the device token in macOS Keychain, and shows the linked user, email, workspace, role, and device name.
+- Each teammate links their own Mac app and syncs/shares under their own workspace permissions.
+
 ## Railway Web Deployment
 
 The Phase 2 web collaboration layer is designed to deploy on Railway as separate web and API services while the macOS desktop app remains local-first.
