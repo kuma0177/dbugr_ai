@@ -5,6 +5,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "test:phase2": "tsx src/lib/phase2-api-smoke.ts",
     "seed": "tsx src/lib/seed.ts"
   },
   "dependencies": {

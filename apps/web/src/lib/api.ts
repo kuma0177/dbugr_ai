@@ -2,6 +2,11 @@ import type {
   FeedbackSession,
   FeedbackComment,
   ImprovementTask,
+  Organization,
+  OrganizationMembership,
+  Invite,
+  AIReviewSummary,
+  CurationDecision,
   CreateFeedbackSessionRequest,
   CreateCommentRequest,
   CreateTaskRequest,
@@ -20,6 +25,56 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  phase2: {
+    bootstrap: () => apiFetch<{
+      user: { id: string; name: string; email: string };
+      organization: Organization;
+      membership: OrganizationMembership;
+      members: OrganizationMembership[];
+      invites: Invite[];
+      policies: Record<string, unknown>;
+    }>('/phase2/bootstrap'),
+    onboarding: (body: {
+      name: string;
+      organizationName: string;
+      role?: string;
+      teamName?: string;
+      inviteEmails: string[];
+      defaultVisibility: 'private' | 'org' | 'public';
+    }) => apiFetch<{
+      organization: Organization;
+      membership: OrganizationMembership;
+      invites: Invite[];
+    }>('/phase2/onboarding', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+    feed: (scope: 'private' | 'organization' | 'public') =>
+      apiFetch<{ scope: string; sessions: FeedbackSession[] }>(`/phase2/feed?scope=${scope}`),
+    contribute: (sessionId: string, body: {
+      targetType: 'session' | 'capture' | 'annotation';
+      contributionType: 'comment' | 'suggested_edit' | 'question' | 'risk' | 'requirement';
+      body: string;
+      suggestedText?: string;
+      visibility: 'private' | 'org' | 'public';
+    }) => apiFetch<FeedbackComment>(`/phase2/sessions/${sessionId}/contributions`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+    curate: (contributionId: string, body: {
+      decision: 'accepted' | 'rejected' | 'edited' | 'duplicate' | 'needs_clarification';
+      editedText?: string;
+      reason?: string;
+    }) => apiFetch<CurationDecision>(`/phase2/contributions/${contributionId}/curation`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+    preflight: (sessionId: string, providerTarget: 'claude' | 'codex' | 'cursor') =>
+      apiFetch<AIReviewSummary>(`/phase2/sessions/${sessionId}/preflight`, {
+        method: 'POST',
+        body: JSON.stringify({ providerTarget }),
+      }),
+  },
   sessions: {
     list: () => apiFetch<FeedbackSession[]>('/feedback-sessions'),
     get: (id: string) => apiFetch<FeedbackSession>(`/feedback-sessions/${id}`),

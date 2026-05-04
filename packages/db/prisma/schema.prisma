@@ -13,23 +13,89 @@ model User {
   name      String
   avatarUrl String?
   role      String   @default("member")
+  authProvider String @default("demo")
+  lastSeenAt DateTime?
   createdAt DateTime @default(now())
 
   feedbackSessions FeedbackSession[]
   comments         FeedbackComment[]
   votes            FeedbackVote[]
   auditLogs        AuditLog[]
+  memberships      OrganizationMembership[]
+  invitesSent      Invite[] @relation("InvitedBy")
+  curationDecisions CurationDecision[]
+  reviewSummaries  AIReviewSummary[]
+  submissions      Submission[]
 }
 
 model Organization {
   id           String   @id @default(cuid())
   name         String
   slug         String   @unique
+  createdByUserId String?
+  defaultVisibility String @default("private")
+  allowPublicSharing Boolean @default(false)
+  requirePublicApproval Boolean @default(true)
+  allowPersonalProviderKeys Boolean @default(true)
+  allowOrgProviderKeys Boolean @default(true)
+  requireRedactionConfirmation Boolean @default(true)
   createdAt    DateTime @default(now())
 
   projects     Project[]
   integrations Integration[]
   auditLogs    AuditLog[]
+  memberships  OrganizationMembership[]
+  teams        Team[]
+  invites      Invite[]
+  providerCredentials ProviderCredential[]
+}
+
+model Team {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  memberships  OrganizationMembership[]
+  invites      Invite[]
+
+  @@unique([organizationId, slug])
+}
+
+model OrganizationMembership {
+  id             String   @id @default(cuid())
+  organizationId String
+  teamId         String?
+  userId         String
+  role           String   @default("member")
+  status         String   @default("active")
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  team         Team?        @relation(fields: [teamId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@unique([organizationId, userId])
+}
+
+model Invite {
+  id              String   @id @default(cuid())
+  organizationId  String
+  teamId          String?
+  email           String
+  role            String   @default("member")
+  tokenHash       String
+  invitedByUserId String
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  team         Team?        @relation(fields: [teamId], references: [id])
+  invitedBy    User         @relation("InvitedBy", fields: [invitedByUserId], references: [id])
 }
 
 model Project {
@@ -51,12 +117,19 @@ model FeedbackSession {
   id          String   @id @default(cuid())
   projectId   String
   createdBy   String
+  teamId      String?
   title       String
   about       String?
   projectFolder String?
   githubRepo  String?
   status      String   @default("draft")
   visibility  String   @default("private")
+  submissionFlow String @default("direct")
+  reviewStatus String @default("draft")
+  publicPublishedAt DateTime?
+  redactionConfirmedAt DateTime?
+  publicApprovedByUserId String?
+  publicApprovedAt DateTime?
   videoUrl    String?
   audioUrl    String?
   transcript  String?
@@ -71,6 +144,9 @@ model FeedbackSession {
   frames      FeedbackFrame[]
   comments    FeedbackComment[]
   tasks       ImprovementTask[]
+  curationDecisions CurationDecision[]
+  reviewSummaries AIReviewSummary[]
+  submissions Submission[]
 }
 
 model FeedbackFrame {
@@ -95,16 +171,97 @@ model FeedbackComment {
   feedbackSessionId String
   parentCommentId   String?
   authorId          String
+  targetType        String   @default("session")
+  targetId          String?
+  sourceScope       String   @default("team")
+  contributionType  String   @default("comment")
   body              String
+  suggestedText     String?
   visibility        String   @default("public")
   votesCount        Int      @default(0)
   createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   session     FeedbackSession   @relation(fields: [feedbackSessionId], references: [id])
   author      User              @relation(fields: [authorId], references: [id])
   parent      FeedbackComment?  @relation("CommentReplies", fields: [parentCommentId], references: [id])
   replies     FeedbackComment[] @relation("CommentReplies")
   votes       FeedbackVote[]
+  curationDecisions CurationDecision[]
+}
+
+model CurationDecision {
+  id                String   @id @default(cuid())
+  contributionId    String
+  feedbackSessionId String
+  decidedByUserId   String
+  decision          String
+  editedText        String?
+  reason            String?
+  includedInPayload Boolean  @default(false)
+  createdAt         DateTime @default(now())
+
+  contribution FeedbackComment @relation(fields: [contributionId], references: [id])
+  session      FeedbackSession @relation(fields: [feedbackSessionId], references: [id])
+  decidedBy    User            @relation(fields: [decidedByUserId], references: [id])
+}
+
+model AIReviewSummary {
+  id                String   @id @default(cuid())
+  feedbackSessionId String
+  providerTarget    String
+  inputContributionIds String
+  goal              String
+  keyAsksJson       String
+  acceptedFeedbackSummary String
+  conflictsJson     String?
+  doNotChangeJson   String?
+  finalPromptDraft  String
+  createdByUserId   String
+  approvedAt        DateTime?
+  editedPrompt      String?
+  createdAt         DateTime @default(now())
+
+  session   FeedbackSession @relation(fields: [feedbackSessionId], references: [id])
+  createdBy User            @relation(fields: [createdByUserId], references: [id])
+  submissions Submission[]
+}
+
+model ProviderCredential {
+  id             String   @id @default(cuid())
+  ownerUserId    String?
+  organizationId String?
+  provider       String
+  scope          String
+  method         String
+  displayName    String
+  encryptedSecretRef String?
+  createdByUserId String
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+}
+
+model Submission {
+  id                String   @id @default(cuid())
+  feedbackSessionId String
+  submittedByUserId String
+  providerTarget    String
+  credentialScope   String   @default("personal")
+  providerCredentialId String?
+  aiReviewSummaryId String?
+  finalPrompt       String
+  screenshotAssetIdsJson String?
+  status            String   @default("created")
+  providerResponse  String?
+  createdAt         DateTime @default(now())
+  completedAt       DateTime?
+
+  session   FeedbackSession @relation(fields: [feedbackSessionId], references: [id])
+  submittedBy User          @relation(fields: [submittedByUserId], references: [id])
+  aiReviewSummary AIReviewSummary? @relation(fields: [aiReviewSummaryId], references: [id])
 }
 
 model FeedbackVote {

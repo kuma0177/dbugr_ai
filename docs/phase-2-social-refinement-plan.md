@@ -6,6 +6,7 @@ Use it together with:
 
 - [docs/phase-roadmap-and-architecture.md](/Users/kumar/debugr/docs/phase-roadmap-and-architecture.md:1) for overall phase scope and architecture
 - [docs/design-system-dbugr.md](/Users/kumar/debugr/docs/design-system-dbugr.md:1) for product design language
+- [docs/railway-deployment.md](/Users/kumar/debugr/docs/railway-deployment.md:1) for Railway web/API deployment guidance
 
 ## Purpose
 
@@ -14,6 +15,22 @@ Phase 2 turns Dbugr from a solo annotation-to-AI handoff tool into a collaborati
 The desktop app should remain the fastest way to capture and annotate. The web app becomes the social review hub where people sign in, join organizations, comment on sessions, accept or reject suggestions, and prepare a clean AI-ready payload for Claude CLI, Codex CLI, or Cursor.
 
 This plan is a draft for confirmation before implementation.
+
+## Build Status
+
+Current implementation status as of 2026-05-04:
+
+- [x] Phase 2 schema spine exists for IAM, organization policy, social contributions, curation, AI preflight, provider credential metadata, submissions, and audit events.
+- [x] Phase 2 API endpoints exist for demo onboarding, bootstrap, scoped feed loading, contribution creation, curation decisions, and AI preflight prompt generation.
+- [x] Phase 2 web pages exist for onboarding and review feed using the Dbugr design language.
+- [x] Phase 2 endpoint smoke script exists: `pnpm --filter @feedbackagent/api test:phase2`.
+- [x] Railway deployment plan exists for web/API services.
+- [ ] Real Google OAuth is not wired yet.
+- [ ] Desktop-to-web account linking is not wired yet.
+- [ ] Real invite email sending is not wired yet.
+- [ ] Desktop session sync to web is not wired yet.
+- [ ] Public redaction/moderation controls are not production-ready yet.
+- [ ] Railway Postgres migration is still pending before public multi-user launch.
 
 ## Build Rule
 

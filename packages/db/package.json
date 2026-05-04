@@ -7,9 +7,9 @@
     "build": "prisma generate && tsc",
     "dev": "tsc --watch",
     "generate": "prisma generate",
-    "db:push": "DATABASE_URL=\"file:./prisma/dev.db\" prisma db push",
-    "migrate": "DATABASE_URL=\"file:./prisma/dev.db\" prisma migrate dev",
-    "studio": "DATABASE_URL=\"file:./prisma/dev.db\" prisma studio"
+    "db:push": "DATABASE_URL=\"file:./dev.db\" prisma db push",
+    "migrate": "DATABASE_URL=\"file:./dev.db\" prisma migrate dev",
+    "studio": "DATABASE_URL=\"file:./dev.db\" prisma studio"
   },
   "dependencies": {
     "@prisma/client": "^5.13.0"

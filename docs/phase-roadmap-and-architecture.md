@@ -331,6 +331,40 @@ Milestone checklist:
 - [ ] Basic org policy controls for public sharing and credential usage
 - [ ] Audit events for sensitive collaboration and submission actions
 
+Implementation status as of 2026-05-04:
+
+- [x] Phase 2 Prisma schema spine added for organizations, teams, memberships, invites, contributions, curation decisions, AI review summaries, provider credential metadata, submissions, and audit-friendly policy fields.
+- [x] Phase 2 API scaffold added for onboarding, bootstrap, scoped feeds, contributions, curation, and AI preflight summary creation.
+- [x] Phase 2 web scaffold added for onboarding and review feed using the Dbugr design system.
+- [x] Detailed Phase 2 API and web action logging added with token redaction rules.
+- [x] Phase 2 API endpoint smoke script added for onboarding -> feed -> contribution -> curation -> preflight verification.
+- [x] Railway web/API deployment guide added for the Phase 2 collaboration layer.
+- [ ] Real Google OAuth.
+- [ ] Desktop-to-web device linking.
+- [ ] Real invite email delivery.
+- [ ] Session sync from desktop local storage to web.
+- [ ] Production public-feed redaction and moderation controls.
+- [ ] Railway Postgres migration for public multi-user launch.
+
+Current Phase 2 architecture scaffold:
+
+```mermaid
+flowchart LR
+  Desktop["Native/Tauri desktop core\ncapture, annotate, save, local CLI handoff"]
+  Web["Railway web app\nonboarding, feeds, curation"]
+  API["Railway API\nIAM, visibility, comments, preflight"]
+  DB["Collaboration database\norgs, sessions, comments, audit"]
+  LocalKeys["User device\nClaude/Codex/Cursor keys"]
+  Providers["Claude CLI / Codex CLI / Cursor"]
+
+  Desktop -->|"sync session metadata and assets\nfuture milestone"| API
+  Desktop -->|"local provider handoff"| Providers
+  Desktop --> LocalKeys
+  Web -->|"scoped feed and mutations"| API
+  API --> DB
+  API -->|"preflight prompt snapshot"| DB
+```
+
 Quality tracker:
 
 | Milestone | Logging | Unit / component tests | Regression tests | Functional verification | Quality gate |

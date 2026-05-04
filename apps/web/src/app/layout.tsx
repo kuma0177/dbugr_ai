@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Debugr',
-  description: 'Feedback-to-agent orchestration platform',
+  title: 'Dbugr.ai',
+  description: 'Collaborative screenshot review and AI handoff for product teams',
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },
@@ -21,11 +21,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <nav className="nav">
           <a href="/" className="nav-brand" aria-label="Debugr home">
             <img src="/brand/icon-32.png" alt="" className="nav-brand-icon" />
-            <span>Debugr</span>
+            <span>Dbugr.ai</span>
           </a>
           <div className="nav-links">
-            <a href="/">Inbox</a>
-            <a href="/settings">Settings</a>
+            <a href="/onboarding">Onboarding</a>
+            <a href="/feed">Review feed</a>
+            <a href="/sessions">Sessions</a>
           </div>
         </nav>
         <main className="main">{children}</main>

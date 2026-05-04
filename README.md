@@ -250,6 +250,18 @@ The current phased scope and architecture plan lives in:
 - [docs/phase-roadmap-and-architecture.md](/Users/kumar/debugr/docs/phase-roadmap-and-architecture.md:1)
 - [docs/phase-2-social-refinement-plan.md](/Users/kumar/debugr/docs/phase-2-social-refinement-plan.md:1)
 
+## Railway Web Deployment
+
+The Phase 2 web collaboration layer is designed to deploy on Railway as separate web and API services while the macOS desktop app remains local-first.
+
+Deployment guide:
+
+- [docs/railway-deployment.md](/Users/kumar/debugr/docs/railway-deployment.md:1)
+
+Important default:
+
+- Personal Claude, Codex, Cursor, Anthropic, OpenAI, and GitHub user keys should stay local to the user's device unless an organization explicitly enables an org-managed credential path later.
+
 ## Remaining Work
 
 - [ ] Windows and Linux native desktop builds

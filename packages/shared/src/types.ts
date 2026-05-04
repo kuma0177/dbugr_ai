@@ -61,6 +61,38 @@ export interface Organization {
   id: string;
   name: string;
   slug: string;
+  createdByUserId?: string | null;
+  defaultVisibility?: FeedbackVisibility;
+  allowPublicSharing?: boolean;
+  requirePublicApproval?: boolean;
+  allowPersonalProviderKeys?: boolean;
+  allowOrgProviderKeys?: boolean;
+  requireRedactionConfirmation?: boolean;
+  createdAt: string;
+}
+
+export type OrganizationRole = 'owner' | 'admin' | 'member' | 'reviewer' | 'guest';
+
+export interface OrganizationMembership {
+  id: string;
+  organizationId: string;
+  teamId?: string | null;
+  userId: string;
+  role: OrganizationRole;
+  status: 'active' | 'invited' | 'revoked';
+  createdAt: string;
+  user?: User;
+}
+
+export interface Invite {
+  id: string;
+  organizationId: string;
+  teamId?: string | null;
+  email: string;
+  role: OrganizationRole;
+  expiresAt: string;
+  acceptedAt?: string | null;
+  revokedAt?: string | null;
   createdAt: string;
 }
 
@@ -104,11 +136,18 @@ export interface FeedbackComment {
   parentCommentId?: string;
   authorId: string;
   author?: User;
+  targetType?: ContributionTargetType;
+  targetId?: string | null;
+  sourceScope?: 'owner' | 'team' | 'public' | 'system';
+  contributionType?: ContributionType;
   body: string;
+  suggestedText?: string | null;
   visibility: FeedbackVisibility;
   votesCount: number;
   createdAt: string;
+  updatedAt?: string;
   replies?: FeedbackComment[];
+  curationDecisions?: CurationDecision[];
 }
 
 export interface FeedbackVote {
@@ -155,6 +194,10 @@ export interface FeedbackSession {
   githubRepo?: string | null;
   status: FeedbackStatus;
   visibility: FeedbackVisibility;
+  submissionFlow?: 'direct' | 'internal_review' | 'public_feed';
+  reviewStatus?: 'draft' | 'collecting_feedback' | 'curating' | 'ready_to_submit' | 'submitted';
+  publicPublishedAt?: string | null;
+  redactionConfirmedAt?: string | null;
   videoUrl?: string;
   audioUrl?: string;
   transcript?: string;
@@ -166,6 +209,39 @@ export interface FeedbackSession {
   frames?: FeedbackFrame[];
   comments?: FeedbackComment[];
   tasks?: ImprovementTask[];
+}
+
+export type ContributionTargetType = 'session' | 'capture' | 'annotation';
+export type ContributionType = 'comment' | 'suggested_edit' | 'question' | 'risk' | 'requirement';
+export type CurationDecisionValue = 'accepted' | 'rejected' | 'edited' | 'duplicate' | 'needs_clarification';
+
+export interface CurationDecision {
+  id: string;
+  contributionId: string;
+  feedbackSessionId: string;
+  decidedByUserId: string;
+  decision: CurationDecisionValue;
+  editedText?: string | null;
+  reason?: string | null;
+  includedInPayload: boolean;
+  createdAt: string;
+}
+
+export interface AIReviewSummary {
+  id: string;
+  feedbackSessionId: string;
+  providerTarget: 'claude' | 'codex' | 'cursor';
+  inputContributionIds: string;
+  goal: string;
+  keyAsksJson: string;
+  acceptedFeedbackSummary: string;
+  conflictsJson?: string | null;
+  doNotChangeJson?: string | null;
+  finalPromptDraft: string;
+  createdByUserId: string;
+  approvedAt?: string | null;
+  editedPrompt?: string | null;
+  createdAt: string;
 }
 
 export interface Integration {
