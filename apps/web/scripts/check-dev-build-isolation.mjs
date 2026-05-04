@@ -1,4 +1,4 @@
-import { rm } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
@@ -8,6 +8,7 @@ const devPort = 3010;
 const devDistDir = '.next-dev-regression';
 const buildDistDir = '.next-build-regression';
 const devUrl = `http://127.0.0.1:${devPort}`;
+const nextEnvPath = path.join(webDir, 'next-env.d.ts');
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -71,6 +72,8 @@ async function runBuild() {
 }
 
 async function main() {
+  const originalNextEnv = await readFile(nextEnvPath, 'utf8').catch(() => null);
+
   await rm(path.join(webDir, devDistDir), { recursive: true, force: true });
   await rm(path.join(webDir, buildDistDir), { recursive: true, force: true });
 
@@ -92,6 +95,9 @@ async function main() {
     await sleep(1000);
     if (!devServer.killed) {
       devServer.kill('SIGKILL');
+    }
+    if (originalNextEnv !== null) {
+      await writeFile(nextEnvPath, originalNextEnv);
     }
   }
 }
