@@ -1,3 +1,24 @@
+import type { Metadata } from 'next';
+import { JourneyInfographic } from './journey-infographic';
+
+export const metadata: Metadata = {
+  title: 'Dbugr.ai | From screenshot to shippable prompt',
+  description:
+    'Dbugr.ai helps product teams capture screenshots, review feedback, and turn approved changes into AI-ready prompts for Claude, Codex, and Cursor.',
+  openGraph: {
+    title: 'Dbugr.ai | From screenshot to shippable prompt',
+    description:
+      'Capture visual feedback, review it together, and send approved product changes to Claude, Codex, or Cursor.',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Dbugr.ai | From screenshot to shippable prompt',
+    description:
+      'Capture visual feedback, review it together, and send approved product changes to Claude, Codex, or Cursor.',
+  },
+};
+
 export default function HomePage() {
   return (
     <div className="marketing-shell">
@@ -10,13 +31,17 @@ export default function HomePage() {
             turn approved comments into clean instructions for Claude, Codex, and Cursor through MCP.
           </p>
           <form className="signup-strip" action="/onboarding" aria-label="Sign up options">
-            <input className="signup-email" name="email" placeholder="Enter your email" aria-label="Email address" />
-            <div className="signup-actions">
-              <button className="btn btn-primary signup-google" type="submit" name="auth" value="google">
-                Get started with Google
-              </button>
+            <input type="hidden" name="flow" value="sign-up" />
+            <div className="signup-email-row">
+              <input className="signup-email" name="email" placeholder="Enter your email" aria-label="Email address" />
               <button className="btn btn-ghost signup-email-button" type="submit" name="auth" value="email">
-                Continue with email
+                Sign up with email
+              </button>
+            </div>
+            <div className="signup-google-row">
+              <button className="google-oauth-button signup-google" type="submit" name="auth" value="google">
+                <img src="/brand/google-g.svg" alt="" className="google-mark" aria-hidden="true" />
+                Sign up with Google
               </button>
             </div>
           </form>
@@ -91,6 +116,8 @@ export default function HomePage() {
           <p className="phase2-muted">Export clear prompts through MCP to Claude, Codex, or Cursor.</p>
         </div>
       </section>
+
+      <JourneyInfographic className="home-journey" />
     </div>
   );
 }

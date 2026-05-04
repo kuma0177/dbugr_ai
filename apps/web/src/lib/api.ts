@@ -37,8 +37,23 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers,
   });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error ?? 'Request failed');
+  const raw = await res.text();
+  let json: { error?: string; data?: T } | null = null;
+
+  try {
+    json = raw ? JSON.parse(raw) as { error?: string; data?: T } : null;
+  } catch {
+    json = null;
+  }
+
+  if (!res.ok) {
+    throw new Error(json?.error ?? raw ?? 'Request failed');
+  }
+
+  if (!json) {
+    throw new Error('The server returned an empty response.');
+  }
+
   return json.data as T;
 }
 

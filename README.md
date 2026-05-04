@@ -140,6 +140,24 @@ More native-app details live in:
 - [apps/desktop-native-mac/README.md](/Users/kumar/debugr/apps/desktop-native-mac/README.md)
 - [docs/native-macos-migration.md](/Users/kumar/debugr/docs/native-macos-migration.md)
 
+## Download The macOS App
+
+If you want the latest packaged macOS build instead of running from source, download the current DMG here:
+
+- [Download Dbugr for macOS](https://github.com/kuma0177/debgr_ai/releases/download/stable-macos-claude-codex-cli/dbugr-ai-0.0.1-macos-aarch64.dmg)
+
+Install steps:
+
+1. Download the `.dmg` file.
+2. Open it from your Downloads folder.
+3. Drag `Dbugr.ai` into `Applications`.
+4. Open `Applications` and launch `Dbugr.ai`.
+5. If macOS shows a first-run warning, choose `Open`.
+
+If you prefer the release page instead of the direct asset:
+
+- [Latest stable release](https://github.com/kuma0177/debgr_ai/releases/tag/stable-macos-claude-codex-cli)
+
 ## Environment Variables
 
 Start with:

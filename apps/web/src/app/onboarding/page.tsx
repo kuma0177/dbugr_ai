@@ -2,12 +2,15 @@
 
 import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { JourneyInfographic } from '@/app/journey-infographic';
 import { api } from '@/lib/api';
 import { clearOnboardingState, readOnboardingState, writeOnboardingState } from '@/lib/onboarding';
 
 type OnboardingStep = 'sign-in' | 'workspace' | 'link';
+type AuthFlow = 'sign-in' | 'sign-up';
 const MAX_INVITE_EMAILS = 10;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAC_DMG_DOWNLOAD_URL = process.env.NEXT_PUBLIC_MAC_DMG_URL ?? 'https://github.com/kuma0177/debgr_ai/releases/download/stable-macos-claude-codex-cli/dbugr-ai-0.0.1-macos-aarch64.dmg';
 
 export default function OnboardingPage() {
   const [name, setName] = useState('Demo User');
@@ -25,6 +28,7 @@ export default function OnboardingPage() {
   const [emailCodeSent, setEmailCodeSent] = useState(false);
   const [expectedEmailCode, setExpectedEmailCode] = useState('');
   const [emailCode, setEmailCode] = useState('');
+  const [emailCodeError, setEmailCodeError] = useState('');
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [desktopLink, setDesktopLink] = useState<{ code: string; deepLinkUrl: string; expiresAt: string } | null>(null);
   const [desktopRedeemStatus, setDesktopRedeemStatus] = useState('');
@@ -33,21 +37,27 @@ export default function OnboardingPage() {
   const [status, setStatus] = useState('Sign up with Google or email first, then create your organization workspace.');
   const [loading, setLoading] = useState(false);
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('sign-in');
+  const [authFlow, setAuthFlow] = useState<AuthFlow>('sign-up');
+
+  const authAction = authFlow === 'sign-in' ? 'sign in' : 'sign up';
+  const authActionTitle = authFlow === 'sign-in' ? 'Sign in' : 'Sign up';
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const incomingInvite = params.get('invite') ?? '';
     const incomingEmail = params.get('email') ?? '';
     const incomingAuth = params.get('auth');
+    const incomingFlow = params.get('flow') === 'sign-in' ? 'sign-in' : 'sign-up';
+    setAuthFlow(incomingFlow);
     if (incomingAuth === 'google' || incomingAuth === 'email') {
       setAuthMethod(incomingAuth);
       setStatus(incomingAuth === 'google'
-        ? 'Continue to Google sign-up, then create your organization workspace.'
-        : 'Request an email sign-up code, enter it here, then create your organization workspace.');
+        ? `Continue to Google ${incomingFlow === 'sign-in' ? 'sign-in' : 'sign-up'}, then continue to your workspace.`
+        : `Request an email ${incomingFlow === 'sign-in' ? 'sign-in' : 'sign-up'} code, enter it here, then continue to your workspace.`);
     }
     if (incomingInvite) {
       setInviteToken(incomingInvite);
-      setStatus('Invite detected. Sign up with Google or email, then accept the workspace invitation.');
+      setStatus('Invite detected. Sign in or sign up, then accept the workspace invitation.');
     }
     if (incomingEmail) setEmail(incomingEmail);
 
@@ -148,7 +158,7 @@ export default function OnboardingPage() {
     setAuthMethod('google');
     setIdentityConnected(true);
     setCurrentStep('workspace');
-    setStatus(`Google preview connected as ${email}. Production will redirect to Google OAuth when GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are configured.`);
+    setStatus(`Google preview connected as ${email}. Production will redirect to Google OAuth for ${authAction} when GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are configured.`);
     console.info('[phase2-web] onboarding.google_preview_connected', { email });
   }
 
@@ -161,6 +171,7 @@ export default function OnboardingPage() {
 
     setAuthMethod('email');
     setEmailCode('');
+    setEmailCodeError('');
     setIdentityConnected(false);
     setLoading(true);
     console.info('[phase2-web] onboarding.email_code_requested.started', { email: normalizedEmail });
@@ -195,7 +206,7 @@ export default function OnboardingPage() {
 
   function verifyEmailCodePreview() {
     if (!emailCodeSent) {
-      setStatus('Request an email sign-up code first.');
+      setStatus(`Request an email ${authAction} code first.`);
       return;
     }
     setLoading(true);
@@ -204,6 +215,7 @@ export default function OnboardingPage() {
         setAuthMethod('email');
         setIdentityConnected(true);
         setCurrentStep('workspace');
+        setEmailCodeError('');
         setStatus(`Email verified for ${email.trim().toLowerCase()}. You can create your organization workspace now.`);
         console.info('[phase2-web] onboarding.email_code_verified', { email: email.trim().toLowerCase() });
       })
@@ -213,14 +225,17 @@ export default function OnboardingPage() {
           setAuthMethod('email');
           setIdentityConnected(true);
           setCurrentStep('workspace');
+          setEmailCodeError('');
           setStatus(`Email verified for ${email.trim().toLowerCase()}. You can create your organization workspace now.`);
           console.info('[phase2-web] onboarding.email_code_verified.preview_fallback', { email: email.trim().toLowerCase() });
           return;
         }
-        setStatus(error instanceof Error ? error.message : String(error));
+        const message = error instanceof Error ? error.message : String(error);
+        setEmailCodeError(message);
+        setStatus(message);
         console.warn('[phase2-web] onboarding.email_code_failed', {
           email: email.trim().toLowerCase(),
-          message: error instanceof Error ? error.message : String(error),
+          message,
         });
       })
       .finally(() => {
@@ -240,6 +255,7 @@ export default function OnboardingPage() {
     setDesktopRedeemStatus('');
     setInviteLinks([]);
     setCurrentStep('sign-in');
+    setAuthFlow('sign-up');
     setStatus('Sign up with Google or email first, then create your organization workspace.');
     setOrganizationLogoPreview(null);
     setOrganizationLogoName('');
@@ -255,41 +271,37 @@ export default function OnboardingPage() {
         appUrl: window.location.origin,
       });
       setDesktopLink(result);
-      setDesktopRedeemStatus(`Desktop link code ready. Expires at ${new Date(result.expiresAt).toLocaleTimeString()}.`);
+      setDesktopRedeemStatus(`Link code ready. It expires at ${new Date(result.expiresAt).toLocaleTimeString()}.`);
       console.info('[phase2-web] desktop_link.create.completed', {
         linkId: result.linkId,
         expiresAt: result.expiresAt,
       });
+      return result;
     } catch (error) {
       setDesktopRedeemStatus(`Could not create desktop link: ${error instanceof Error ? error.message : String(error)}`);
       console.warn('[phase2-web] desktop_link.create.failed', { message: error instanceof Error ? error.message : String(error) });
+      return null;
     }
   }
 
-  async function redeemDesktopLinkPreview() {
-    if (!desktopLink) return;
-    setDesktopRedeemStatus('Redeeming link as the local Mac app preview...');
-    console.info('[phase2-web] desktop_link.preview_redeem.started');
-    try {
-      const result = await api.phase2.redeemDesktopLink({
-        code: desktopLink.code,
-        desktopDeviceName: 'Local Dbugr Mac preview',
-      });
-      setDesktopRedeemStatus(`Mac app linked. Link status: ${result.desktopLink.status}.`);
-      console.info('[phase2-web] desktop_link.preview_redeem.completed', {
-        desktopLinkId: result.desktopLink.id,
-        status: result.desktopLink.status,
-      });
-    } catch (error) {
-      setDesktopRedeemStatus(`Link redeem failed: ${error instanceof Error ? error.message : String(error)}`);
-      console.warn('[phase2-web] desktop_link.preview_redeem.failed', { message: error instanceof Error ? error.message : String(error) });
+  async function openDesktopLink() {
+    const link = desktopLink ?? await createDesktopLink();
+    if (!link) return;
+    window.location.href = link.deepLinkUrl;
+  }
+
+  async function relinkDesktopApp() {
+    setDesktopLink(null);
+    const link = await createDesktopLink();
+    if (link) {
+      setDesktopRedeemStatus('Fresh link code created. Use it if the Mac app was reinstalled, signed out, or lost its local session.');
     }
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!identityConnected) {
-      setStatus('Please complete Google or email sign-up before creating the workspace.');
+      setStatus(`Please complete Google or email ${authAction} before creating the workspace.`);
       return;
     }
 
@@ -382,18 +394,18 @@ export default function OnboardingPage() {
         </Link>
         <nav className="onboarding-crumbs" aria-label="Onboarding progress">
           {[
-            { id: 'sign-in' as const, label: 'Sign in', unlocked: true },
-            { id: 'workspace' as const, label: 'Workspace', unlocked: identityConnected },
-            { id: 'link' as const, label: 'Mac link', unlocked: workspaceReady },
+            { id: 'sign-in' as const, label: 'Sign in', unlocked: true, completed: identityConnected },
+            { id: 'workspace' as const, label: 'Workspace', unlocked: identityConnected, completed: workspaceReady },
+            { id: 'link' as const, label: 'Mac link', unlocked: workspaceReady, completed: false },
           ].map((step, index) => (
             <button
               key={step.id}
               type="button"
-              className={`onboarding-crumb ${currentStep === step.id ? 'active' : ''} ${step.unlocked ? '' : 'locked'}`}
+              className={`onboarding-crumb ${currentStep === step.id ? 'active' : ''} ${step.completed ? 'completed' : ''} ${step.unlocked ? '' : 'locked'}`}
               disabled={!step.unlocked}
               onClick={() => setCurrentStep(step.id)}
             >
-              <span>{String(index + 1).padStart(2, '0')}</span>
+              <span>{step.completed ? '✓' : String(index + 1).padStart(2, '0')}</span>
               {step.label}
             </button>
           ))}
@@ -412,10 +424,14 @@ export default function OnboardingPage() {
           </div>
           <div className="onboarding-preview-note">
             <span>Local preview</span>
-            <p>Google and email sign-up are simulated here until production auth is fully wired.</p>
+            <p>Google and email {authAction} are simulated here until production auth is fully wired.</p>
           </div>
         </div>
       </section>
+
+      <div className="onboarding-status-banner" role="status" aria-live="polite">
+        {status}
+      </div>
 
       <form className="onboarding-panel" onSubmit={submit}>
         {inviteToken ? (
@@ -436,7 +452,7 @@ export default function OnboardingPage() {
           <div className="onboarding-section-header">
             <span className="step-chip">01</span>
             <div>
-              <h2>Choose how to sign up</h2>
+              <h2>Choose how to {authAction}</h2>
               <p>Use Google for OAuth, or use email to verify with a one-time code.</p>
             </div>
           </div>
@@ -447,20 +463,20 @@ export default function OnboardingPage() {
                 <p className="phase2-muted">Use Google OAuth for identity, team access, and workspace ownership.</p>
               </div>
               <button className="google-oauth-button" type="button" onClick={connectGooglePreview}>
-                <span className="google-mark" aria-hidden="true">G</span>
-                {identityConnected && authMethod === 'google' ? 'Google connected' : 'Sign up with Google'}
+                <img src="/brand/google-g.svg" alt="" className="google-mark" aria-hidden="true" />
+                {identityConnected && authMethod === 'google' ? 'Google connected' : `${authActionTitle} with Google`}
               </button>
             </div>
             <div className={`auth-method ${authMethod === 'email' ? 'active' : ''}`}>
               <div>
                 <div className="auth-method-title">Email code</div>
-                <p className="phase2-muted">Receive a one-time code by email, then enter it to finish sign-up.</p>
+                <p className="phase2-muted">Receive a one-time code by email, then enter it to finish {authAction}.</p>
               </div>
               <div className="email-code-grid">
                 <div className="email-entry-row">
                   <label className="field-block email-field">
                     <span>Email address</span>
-                    <input className="input" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" aria-label="Sign-up email" />
+                    <input className="input" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" aria-label={`${authActionTitle} email`} />
                   </label>
                   <button className="btn btn-ghost email-action-button" type="button" onClick={requestEmailCodePreview}>
                     {emailCodeSent ? 'Send new code' : 'Send code'}
@@ -470,7 +486,19 @@ export default function OnboardingPage() {
                   <div className="email-verify-row">
                     <label className="field-block">
                       <span>Verification code</span>
-                      <input className="input" value={emailCode} onChange={(event) => setEmailCode(event.target.value)} inputMode="numeric" placeholder="Enter 6-digit code" aria-label="Email sign-up code" />
+                      <input
+                        className={`input ${emailCodeError ? 'input-error' : ''}`}
+                        value={emailCode}
+                        onChange={(event) => {
+                          setEmailCode(event.target.value);
+                          if (emailCodeError) setEmailCodeError('');
+                        }}
+                        inputMode="numeric"
+                        placeholder="Enter 6-digit code"
+                        aria-label={`Email ${authAction} code`}
+                        aria-invalid={emailCodeError ? 'true' : 'false'}
+                      />
+                      {emailCodeError ? <p className="field-error" role="alert">{emailCodeError}</p> : null}
                     </label>
                     <button className={identityConnected && authMethod === 'email' ? 'btn btn-ghost' : 'btn btn-primary'} type="button" onClick={verifyEmailCodePreview}>
                       {identityConnected && authMethod === 'email' ? 'Email verified' : 'Verify code'}
@@ -499,9 +527,9 @@ export default function OnboardingPage() {
               <p>{email}</p>
             </div>
             <div>
-              <span>Sign-up method</span>
+              <span>{authActionTitle} method</span>
               <strong>{authMethod === 'email' ? 'Email code' : 'Google OAuth'}</strong>
-              <p>{authMethod === 'email' ? 'Verified by one-time code' : 'Connected through Google sign-up'}</p>
+              <p>{authMethod === 'email' ? 'Verified by one-time code' : `Connected through Google ${authAction}`}</p>
             </div>
           </div>
           <div className="onboarding-field-grid">
@@ -515,15 +543,15 @@ export default function OnboardingPage() {
             </label>
           </div>
           <div className="onboarding-field-grid three-up">
-            <label className="field-block">
-              <span>Role optional</span>
+            <label className="field-block compact-field">
+              <span>Role (optional)</span>
               <input className="input" value={role} onChange={(event) => setRole(event.target.value)} />
             </label>
-            <label className="field-block">
-              <span>Team optional</span>
+            <label className="field-block compact-field">
+              <span>Team (optional)</span>
               <input className="input" value={teamName} onChange={(event) => setTeamName(event.target.value)} />
             </label>
-            <label className="field-block">
+            <label className="field-block compact-field visibility-field">
               <span>Default visibility</span>
               <select className="select" value={defaultVisibility} onChange={(event) => setDefaultVisibility(event.target.value as typeof defaultVisibility)}>
                 <option value="private">Private</option>
@@ -537,7 +565,7 @@ export default function OnboardingPage() {
           </div>
           <div className="onboarding-field-grid">
             <div className="field-block">
-              <span>Organization logo optional</span>
+              <span>Organization logo (optional)</span>
               <label className="logo-upload-card">
                 <input className="logo-upload-input" type="file" accept="image/*" onChange={handleOrganizationLogoChange} />
                 {organizationLogoPreview ? (
@@ -590,25 +618,66 @@ export default function OnboardingPage() {
 
         {currentStep === 'link' ? (
           <section className="onboarding-section mac-link-section">
-            <div>
+            <div className="onboarding-section-header">
               <span className="step-chip">03</span>
-              <h2>Link the Mac app</h2>
-              <p className="phase2-muted">
-                This is the Codex-style handoff: web creates the account and workspace, then the Mac app
-                opens via `dbugr://` and redeems a short-lived link code. The desktop handler is the next
-                native-app task; the API and web link contract are now in place.
-              </p>
+              <div>
+                <h2>Download and link the Mac app</h2>
+                <p>Install Dbugr on this Mac, then link it to {email} and the {organizationName} workspace.</p>
+              </div>
             </div>
-            <div className="row gap-12">
-              <Link className="btn btn-primary" href="/feed">Open review feed</Link>
-              <button className="btn btn-primary" type="button" onClick={createDesktopLink}>Create new link code</button>
-              {desktopLink ? <a className="btn btn-ghost" href={desktopLink.deepLinkUrl}>Open Dbugr Mac app</a> : null}
-              {desktopLink ? <button className="btn btn-ghost" type="button" onClick={redeemDesktopLinkPreview}>Preview redeem</button> : null}
-              <button className="btn btn-ghost" type="button" onClick={resetWorkspace}>Reset preview</button>
+            <div className="mac-link-checklist">
+              <div className="mac-link-step">
+                <span>a</span>
+                <div>
+                  <h3>Download Dbugr for macOS</h3>
+                  <p>Download the Mac installer, open it from Downloads, then drag Dbugr.ai into Applications.</p>
+                  <ul className="mac-link-step-list">
+                    <li>Click <strong>Download macOS DMG</strong>.</li>
+                    <li>Open the downloaded file from your Downloads folder.</li>
+                    <li>Drag <strong>Dbugr.ai</strong> into <strong>Applications</strong>.</li>
+                  </ul>
+                  <a className="btn btn-primary" href={MAC_DMG_DOWNLOAD_URL}>Download macOS DMG</a>
+                </div>
+              </div>
+              <div className="mac-link-step">
+                <span>b</span>
+                <div>
+                  <h3>Open the installed app</h3>
+                  <p>Open Dbugr.ai from Applications. If macOS shows a safety prompt the first time, choose Open.</p>
+                </div>
+              </div>
+              <div className="mac-link-step">
+                <span>c</span>
+                <div>
+                  <h3>Link this MacOS app</h3>
+                  <p>Click the button below, then switch to the Dbugr Mac app to finish connecting this computer to your account.</p>
+                  <div className="row gap-12 mac-link-actions">
+                    <button className="btn btn-primary" type="button" onClick={openDesktopLink}>
+                      Link this MacOS app
+                    </button>
+                    <button className="btn btn-ghost" type="button" onClick={relinkDesktopApp}>
+                      Relink Mac app
+                    </button>
+                  </div>
+                  <div className="mac-link-help-grid">
+                    <div className="mac-link-help-card">
+                      <h4>What happens when I click Link this Mac?</h4>
+                      <p>Dbugr creates a fresh one-time link code in this browser and hands it to the Mac app so this computer connects to your account safely.</p>
+                    </div>
+                    <div className="mac-link-help-card">
+                      <h4>When should I use Relink Mac app?</h4>
+                      <p>Use relink if you reinstalled the app, signed out, moved to a new Mac, or the app stopped recognizing this account.</p>
+                    </div>
+                  </div>
+                  {desktopRedeemStatus ? <p className="mac-link-status">{desktopRedeemStatus}</p> : null}
+                </div>
+              </div>
             </div>
           </section>
         ) : null}
       </form>
+
+      <JourneyInfographic />
 
       {inviteLinks.length > 0 ? (
         <section className="onboarding-panel invite-links-panel">
