@@ -298,22 +298,6 @@ export default function OnboardingPage() {
             <p>Google and email sign-up are simulated here until production auth is fully wired.</p>
           </div>
         </div>
-
-        <aside className="onboarding-status-panel" aria-live="polite">
-          <div className="phase2-kicker">Current state</div>
-          <p>{loading ? `Processing... ${status}` : status}</p>
-          {desktopLink ? (
-            <div className="desktop-link-panel">
-              <span>Mac link code</span>
-              <strong>{desktopLink.code}</strong>
-              <p>{desktopRedeemStatus}</p>
-            </div>
-          ) : null}
-          <div className="onboarding-status-actions">
-            {workspaceReady ? <Link className="btn btn-primary" href="/feed">Open review feed</Link> : null}
-            {workspaceReady ? <button className="btn btn-ghost" type="button" onClick={resetWorkspace}>Reset preview</button> : null}
-          </div>
-        </aside>
       </section>
 
       <form className="onboarding-panel" onSubmit={submit}>
@@ -433,9 +417,11 @@ export default function OnboardingPage() {
               </p>
             </div>
             <div className="row gap-12">
+              <Link className="btn btn-primary" href="/feed">Open review feed</Link>
               <button className="btn btn-primary" type="button" onClick={createDesktopLink}>Create new link code</button>
               {desktopLink ? <a className="btn btn-ghost" href={desktopLink.deepLinkUrl}>Open Dbugr Mac app</a> : null}
               {desktopLink ? <button className="btn btn-ghost" type="button" onClick={redeemDesktopLinkPreview}>Preview redeem</button> : null}
+              <button className="btn btn-ghost" type="button" onClick={resetWorkspace}>Reset preview</button>
             </div>
           </section>
         ) : null}

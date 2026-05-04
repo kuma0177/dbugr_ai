@@ -103,7 +103,7 @@ a:hover { color: var(--blue-hover); }
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
   min-height: 44px; padding: 0 18px; border-radius: 32px; border: none;
-  font-size: 14px; font-weight: 500; letter-spacing: -0.18px; cursor: pointer; transition: opacity 0.15s, background 0.15s;
+  font-size: 15px; font-weight: 500; letter-spacing: 0; cursor: pointer; transition: opacity 0.15s, background 0.15s;
 }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-primary { background: var(--blue); color: #fff; }
@@ -114,22 +114,22 @@ a:hover { color: var(--blue-hover); }
 
 .input {
   width: 100%; background: var(--surface); border: 0; box-shadow: inset 0 0 0 1px var(--stone);
-  border-radius: var(--radius); padding: 8px 12px; color: var(--text);
-  font-size: 0.875rem; outline: none;
+  border-radius: var(--radius); padding: 11px 14px; color: var(--text);
+  font-size: 15px; outline: none;
 }
 .input:focus { box-shadow: inset 0 0 0 1px var(--blue), 0 0 0 3px rgba(0, 134, 252, 0.12); }
 
 .textarea {
   width: 100%; background: var(--surface); border: 0; box-shadow: inset 0 0 0 1px var(--stone);
   border-radius: var(--radius); padding: 8px 12px; color: var(--text);
-  font-size: 0.875rem; outline: none; resize: vertical; min-height: 80px;
+  font-size: 15px; outline: none; resize: vertical; min-height: 80px;
 }
 .textarea:focus { box-shadow: inset 0 0 0 1px var(--blue), 0 0 0 3px rgba(0, 134, 252, 0.12); }
 
 .select {
   background: var(--surface); border: 0; box-shadow: inset 0 0 0 1px var(--stone);
-  border-radius: var(--radius); padding: 8px 12px; color: var(--text);
-  font-size: 0.875rem; outline: none;
+  border-radius: var(--radius); padding: 11px 14px; color: var(--text);
+  font-size: 15px; outline: none;
 }
 .select:focus { box-shadow: inset 0 0 0 1px var(--blue), 0 0 0 3px rgba(0, 134, 252, 0.12); }
 
@@ -226,7 +226,7 @@ a:hover { color: var(--blue-hover); }
 
 .phase2-muted {
   color: var(--muted);
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .phase2-kicker {
@@ -272,9 +272,9 @@ a:hover { color: var(--blue-hover); }
 
 .home-lede {
   max-width: 680px;
-  font-size: 17px;
+  font-size: 19px;
   line-height: 1.58;
-  letter-spacing: -0.22px;
+  letter-spacing: 0;
 }
 
 .signup-strip {
@@ -317,8 +317,8 @@ a:hover { color: var(--blue-hover); }
 .home-note {
   margin-top: 14px;
   color: var(--ash);
-  font-size: 13px;
-  letter-spacing: -0.17px;
+  font-size: 15px;
+  letter-spacing: 0;
 }
 
 .product-card {
@@ -568,7 +568,7 @@ a:hover { color: var(--blue-hover); }
   gap: 8px;
   min-height: 40px;
   color: var(--text);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 500;
 }
 
@@ -602,7 +602,7 @@ a:hover { color: var(--blue-hover); }
   padding: 0 14px 0 10px;
   color: var(--muted);
   background: transparent;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
@@ -635,15 +635,10 @@ a:hover { color: var(--blue-hover); }
 }
 
 .onboarding-intro {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
-  gap: 24px;
-  align-items: stretch;
   margin-bottom: 24px;
 }
 
 .onboarding-copy,
-.onboarding-status-panel,
 .onboarding-panel {
   background: var(--surface);
   border-radius: 10px;
@@ -668,7 +663,7 @@ a:hover { color: var(--blue-hover); }
   max-width: 720px;
   margin-top: 18px;
   color: var(--muted);
-  font-size: 16px;
+  font-size: 18px;
   line-height: 1.62;
 }
 
@@ -695,30 +690,8 @@ a:hover { color: var(--blue-hover); }
 
 .onboarding-preview-note p {
   color: var(--muted);
-  font-size: 14px;
-  line-height: 1.55;
-}
-
-.onboarding-status-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
-  padding: 28px;
-}
-
-.onboarding-status-panel > p {
-  margin-top: 14px;
-  color: var(--muted);
   font-size: 15px;
-  line-height: 1.58;
-}
-
-.onboarding-status-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: auto;
-  padding-top: 24px;
+  line-height: 1.55;
 }
 
 .desktop-link-panel {
@@ -773,7 +746,7 @@ a:hover { color: var(--blue-hover); }
 .invite-links-panel h2,
 .mac-link-section h2 {
   color: var(--text);
-  font-size: 22px;
+  font-size: 25px;
   line-height: 1.25;
   margin-bottom: 6px;
 }
@@ -781,7 +754,7 @@ a:hover { color: var(--blue-hover); }
 .onboarding-section-header p {
   max-width: 720px;
   color: var(--muted);
-  font-size: 15px;
+  font-size: 17px;
   line-height: 1.55;
 }
 
@@ -899,7 +872,7 @@ a:hover { color: var(--blue-hover); }
 
 .auth-method-title {
   color: var(--text);
-  font-size: 21px;
+  font-size: 24px;
   font-weight: 650;
   line-height: 1.22;
   margin-bottom: 8px;
@@ -1049,10 +1022,6 @@ a:hover { color: var(--blue-hover); }
     grid-template-columns: 1fr;
   }
 
-  .onboarding-intro {
-    grid-template-columns: 1fr;
-  }
-
   .onboarding-back-row {
     align-items: flex-start;
     flex-direction: column;
@@ -1062,14 +1031,6 @@ a:hover { color: var(--blue-hover); }
     width: 100%;
     overflow-x: auto;
     border-radius: 22px;
-  }
-
-  .onboarding-status-panel {
-    min-height: auto;
-  }
-
-  .onboarding-status-actions {
-    margin-top: 0;
   }
 
   .onboarding-field-grid,
@@ -1116,7 +1077,6 @@ a:hover { color: var(--blue-hover); }
   }
 
   .onboarding-copy,
-  .onboarding-status-panel,
   .onboarding-panel {
     padding: 22px;
   }
@@ -1143,8 +1103,7 @@ a:hover { color: var(--blue-hover); }
   }
 
   .onboarding-copy > p,
-  .onboarding-section-header p,
-  .onboarding-status-panel > p {
+  .onboarding-section-header p {
     font-size: 14px;
   }
 
@@ -1162,7 +1121,6 @@ a:hover { color: var(--blue-hover); }
   }
 
   .onboarding-submit,
-  .onboarding-status-actions .btn,
   .mac-link-section .btn {
     width: 100%;
     min-width: 0;
