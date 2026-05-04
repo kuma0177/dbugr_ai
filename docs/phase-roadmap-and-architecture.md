@@ -250,16 +250,26 @@ Exit criteria:
 Milestone checklist:
 
 - [ ] Stable macOS capture flow
-- [ ] Stable annotation and session-save flow
-- [ ] Stable session history and reopen flow
-- [ ] Stable Claude CLI handoff
-- [ ] Stable Codex CLI handoff
-- [ ] Stable Cursor handoff
+- [x] Stable annotation and session-save flow
+- [x] Stable session history and reopen flow
+- [x] Stable Claude CLI handoff
+- [x] Stable Codex CLI handoff
+- [x] Stable Cursor handoff
 - [ ] Prompt preview before submission
-- [ ] Repo / local-folder context attached to session
-- [ ] Local-first persistence for screenshots and notes
+- [x] Repo / local-folder context attached to session
+- [x] Local-first persistence for screenshots and notes
 - [ ] Clear local install and run documentation
 - [ ] Native migration direction documented without disrupting the current stable desktop flow
+
+Quality-gated status as of 2026-05-03:
+
+- [x] Unit/regression suite passed: `apps/desktop` `pnpm test` returned 74 passing tests.
+- [x] Functional browser suite passed: `apps/desktop` `pnpm test:e2e` returned 29 passing Playwright tests.
+- [x] Production desktop web build passed: `apps/desktop` `pnpm vite build`.
+- [x] Annotation save/reopen verification includes screenshot payload rendering, append-to-existing-session behavior, delete behavior, no proactive session-board open after save, and local persistence checks.
+- [x] Provider handoff verification includes Claude CLI Terminal launch, Codex CLI Terminal launch with local OpenAI key, Cursor app open/copy flow, and saved screenshot path references in the prompt payload.
+- [ ] Live macOS capture smoke verification is still pending because Playwright mocks Tauri capture APIs and cannot prove ScreenCaptureKit/window-focus behavior against the real desktop.
+- [ ] Fresh-clone install verification is still pending because this pass validated the existing checkout, not a clean machine setup.
 
 Quality tracker:
 

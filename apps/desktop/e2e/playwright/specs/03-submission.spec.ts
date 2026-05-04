@@ -27,6 +27,8 @@ const ONE_SESSION_WITH_ANNOTATIONS = {
           id: 'capture_1',
           title: 'Screen 1',
           preview: 'Button text is misleading',
+          screenshotUrl:
+            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn8x7cAAAAASUVORK5CYII=',
           annotations: [
             {
               id: 'ann_1', number: 1, x: 100, y: 200, width: 300, height: 150,
@@ -85,15 +87,39 @@ async function loadSessionAndNavigateToSubmit(page: Page) {
   }
 }
 
+async function getTauriCalls(page: Page) {
+  return page.evaluate(() => (
+    window as unknown as {
+      __TAURI_MOCK_CALLS__?: Array<{ cmd: string; args: Record<string, unknown> }>;
+    }
+  ).__TAURI_MOCK_CALLS__ ?? []);
+}
+
+async function waitForTauriCall(page: Page, command: string) {
+  await expect.poll(async () => {
+    const calls = await getTauriCalls(page);
+    return calls.some((call) => call.cmd === command);
+  }, { timeout: 5000 }).toBe(true);
+
+  const calls = await getTauriCalls(page);
+  return calls.find((call) => call.cmd === command);
+}
+
 test.describe('07 — AI submission UI', () => {
   test.beforeEach(async ({ page }) => {
-    const invokedCommands: string[] = [];
-
     await injectTauriMock(page, {
-      open_command_in_terminal: (...args: unknown[]) => {
-        invokedCommands.push('open_command_in_terminal');
-        return null;
+      open_command_in_terminal: null,
+      get_provider_config: {
+        claude_connected: true,
+        claude_connection_method: 'oauth',
+        codex_api_key: 'sk-test-codex',
       },
+      verify_claude_auth: 'claude-cli 1.0.0',
+      verify_codex_key: 'codex-cli 1.0.0',
+      check_cursor_installed: true,
+      save_screenshot: '/tmp/debugr/capture_1.png',
+      copy_to_clipboard: null,
+      open_in_cursor: null,
       save_sessions_to_disk: null,
       pick_folder: '/Users/kumar/myapp',
     });
@@ -134,6 +160,42 @@ test.describe('07 — AI submission UI', () => {
     // The session note should appear somewhere in the UI (notes tab or cards)
     const appText = await page.locator('#app').textContent();
     expect(appText).toBeTruthy();
+  });
+
+  test('Claude CLI send opens Terminal with prompt and screenshot reference', async ({ page }) => {
+    await loadSessionAndNavigateToSubmit(page);
+    await page.locator('#send-btn').click();
+
+    const terminalCall = await waitForTauriCall(page, 'open_command_in_terminal');
+    expect(String(terminalCall?.args.title ?? '')).toContain('Claude CLI');
+    expect(String(terminalCall?.args.command ?? '')).toContain('claude');
+    expect(String(terminalCall?.args.command ?? '')).toContain('Screenshot: /tmp/debugr/capture_1.png');
+  });
+
+  test('Codex CLI send opens Terminal with OpenAI key and prompt', async ({ page }) => {
+    await loadSessionAndNavigateToSubmit(page);
+    await page.locator('[data-target="codex"]').click();
+    await page.locator('#send-btn').click();
+
+    await waitForTauriCall(page, 'verify_codex_key');
+    const terminalCall = await waitForTauriCall(page, 'open_command_in_terminal');
+    expect(String(terminalCall?.args.title ?? '')).toContain('Codex CLI');
+    expect(String(terminalCall?.args.command ?? '')).toContain('OPENAI_API_KEY');
+    expect(String(terminalCall?.args.command ?? '')).toContain('codex');
+    expect(String(terminalCall?.args.command ?? '')).toContain('Screenshot: /tmp/debugr/capture_1.png');
+  });
+
+  test('Cursor send opens Cursor and copies the session prompt', async ({ page }) => {
+    await loadSessionAndNavigateToSubmit(page);
+    await page.locator('[data-target="cursor"]').click();
+    await page.locator('#send-btn').click();
+
+    await waitForTauriCall(page, 'open_in_cursor');
+    const calls = await getTauriCalls(page);
+    expect(calls.some((call) => call.cmd === 'open_in_cursor')).toBe(true);
+    const clipboardCall = calls.find((call) => call.cmd === 'copy_to_clipboard');
+    expect(clipboardCall).toBeTruthy();
+    expect(String(clipboardCall?.args.text ?? '')).toContain('Screenshot: /tmp/debugr/capture_1.png');
   });
 });
 

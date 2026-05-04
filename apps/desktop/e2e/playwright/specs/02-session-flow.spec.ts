@@ -57,6 +57,18 @@ async function readPersistedState(page: Page) {
   );
 }
 
+async function openFirstSavedSession(page: Page) {
+  await page.reload();
+  await page.waitForTimeout(300);
+  const recentTile = page.locator('.recent-session-tile').first();
+  if (await recentTile.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await recentTile.click();
+  } else {
+    await page.locator('.session-item').first().click();
+  }
+  await expect(page.locator('#session-title-input')).toBeVisible();
+}
+
 test.describe('02–06 — Session creation, annotation & persistence', () => {
   test.beforeEach(async ({ page }) => {
     await injectTauriMock(page, {
@@ -163,6 +175,7 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
 
   test('new annotation persists screenshot payload and renders note + image in workspace', async ({ page }) => {
     await simulateAnnotationSave(page);
+    await openFirstSavedSession(page);
 
     await expect(page.locator('#session-title-input')).toHaveValue('Onboarding flow bug');
     await expect(page.locator('.capture-thumb img').first()).toBeVisible();
@@ -205,6 +218,7 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
       newSessionName: 'This name should be ignored for appends',
       newSessionAbout: 'This note should stay attached to the original session.',
     });
+    await openFirstSavedSession(page);
 
     await expect(page.locator('.session-item')).toHaveCount(1);
     await expect(page.locator('.capture-card')).toHaveCount(2);
@@ -229,6 +243,7 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
       localFolder: '/Users/kumar/direct-append',
       githubRepo: 'kuma0177/debgr_ai',
     });
+    await openFirstSavedSession(page);
 
     await page.locator('#new-ann-btn').click();
     await page.waitForTimeout(150);
@@ -253,6 +268,7 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
 
   test('full resolution preview opens for a saved screenshot payload', async ({ page }) => {
     await simulateAnnotationSave(page);
+    await openFirstSavedSession(page);
 
     await page.getByRole('button', { name: 'Open full resolution', exact: true }).click();
     await expect(page.locator('#capture-preview-modal')).toBeVisible();
@@ -277,9 +293,8 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
       ],
     };
     await simulateAnnotationSave(page, payload);
+    await openFirstSavedSession(page);
 
-    page.once('dialog', (dialog) => dialog.accept());
-    await page.locator('[data-delete-annotation="ann_test_2"]').click();
     await page.locator('[data-delete-annotation="ann_test_2"]').click();
 
     await expect(page.locator('[data-delete-annotation="ann_test_2"]')).toHaveCount(0);
@@ -340,9 +355,8 @@ test.describe('02–06 — Session creation, annotation & persistence', () => {
 
   test('whole session can be deleted from the header action', async ({ page }) => {
     await simulateAnnotationSave(page);
+    await openFirstSavedSession(page);
 
-    page.once('dialog', (dialog) => dialog.accept());
-    await page.locator('#delete-session-btn').click();
     await page.locator('#delete-session-btn').click();
 
     await expect(page.locator('.empty-state .empty-title')).toContainText('No session selected');
