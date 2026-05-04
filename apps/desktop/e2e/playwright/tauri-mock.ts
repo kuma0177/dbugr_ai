@@ -23,6 +23,7 @@ export async function injectTauriMock(page: Page, overrides: InvokeOverrides = {
     let nextCallbackId = 1;
     let nextEventId = 1;
     (window as unknown as Record<string, unknown>)['__TAURI_MOCK_CALLS__'] = callLog;
+    (window as unknown as Record<string, unknown>)['__DBUGR_DISABLE_API_SYNC__'] = true;
     (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {
       invoke: async (cmd: string, args: Record<string, unknown> = {}) => {
         callLog.push({ cmd, args });

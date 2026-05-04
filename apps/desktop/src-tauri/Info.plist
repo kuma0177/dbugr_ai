@@ -7,6 +7,19 @@
   <!-- Required for ScreenCaptureKit / TCC screen capture prompts -->
   <key>NSScreenCaptureUsageDescription</key>
   <string>Debugr captures only the display or window you pick so you can crop and annotate feedback.</string>
+  <!-- Phase 2 web-to-desktop account linking. The web app creates a short-lived
+       link code and opens dbugr://link?... so the Mac app can redeem it. -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.feedbackagent.desktop.link</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>dbugr</string>
+      </array>
+    </dict>
+  </array>
   <!-- Hide the Dock icon — Debugr lives exclusively in the menu bar -->
   <key>LSUIElement</key>
   <true/>

@@ -26,6 +26,7 @@ model User {
   curationDecisions CurationDecision[]
   reviewSummaries  AIReviewSummary[]
   submissions      Submission[]
+  desktopLinks     DesktopLink[]
 }
 
 model Organization {
@@ -48,6 +49,7 @@ model Organization {
   teams        Team[]
   invites      Invite[]
   providerCredentials ProviderCredential[]
+  desktopLinks DesktopLink[]
 }
 
 model Team {
@@ -242,6 +244,22 @@ model ProviderCredential {
   createdAt      DateTime @default(now())
 
   organization Organization? @relation(fields: [organizationId], references: [id])
+}
+
+model DesktopLink {
+  id              String   @id @default(cuid())
+  userId          String
+  organizationId  String
+  codeHash        String   @unique
+  status          String   @default("pending")
+  desktopDeviceId String?
+  desktopDeviceName String?
+  expiresAt       DateTime
+  redeemedAt      DateTime?
+  createdAt       DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
 }
 
 model Submission {

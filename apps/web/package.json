@@ -2,14 +2,16 @@
   "name": "@feedbackagent/web",
   "version": "0.0.1",
   "scripts": {
-    "dev": "next dev --turbopack -p 3000",
-    "build": "next build",
-    "start": "next start"
+    "dev": "DEBUGR_NEXT_DIST_DIR=.next-dev next dev --turbopack -p 3000",
+    "build": "DEBUGR_NEXT_DIST_DIR=.next-build next build",
+    "start": "DEBUGR_NEXT_DIST_DIR=.next-build next start",
+    "test:regression": "node ./scripts/check-dev-build-isolation.mjs"
   },
   "dependencies": {
     "@feedbackagent/shared": "workspace:*",
     "html2canvas": "^1.4.1",
     "next": "^15.3.0",
+    "next-auth": "^4.24.14",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

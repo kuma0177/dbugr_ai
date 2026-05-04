@@ -47,6 +47,7 @@ async function main() {
     // Wipe existing demo data in dependency order
     await prisma.auditLog.deleteMany({});
     await prisma.submission.deleteMany({});
+    await prisma.desktopLink.deleteMany({});
     await prisma.aIReviewSummary.deleteMany({});
     await prisma.curationDecision.deleteMany({});
     await prisma.feedbackVote.deleteMany({});

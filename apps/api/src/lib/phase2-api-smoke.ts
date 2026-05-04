@@ -26,7 +26,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 async function main() {
   console.info('[phase2-smoke] starting', { baseUrl: BASE });
 
-  await request('/phase2/onboarding', {
+  const onboarding = await request<{ invites: Array<{ email: string; acceptUrl?: string }> }>('/phase2/onboarding', {
     method: 'POST',
     body: JSON.stringify({
       name: 'Demo User',
@@ -38,7 +38,33 @@ async function main() {
     }),
   });
 
+  const inviteUrl = onboarding.invites[0]?.acceptUrl;
+  if (!inviteUrl) {
+    throw new Error('Phase 2 onboarding did not return a one-time invite link.');
+  }
+  const inviteToken = new URL(inviteUrl, 'http://localhost:3000').searchParams.get('invite');
+  if (!inviteToken) {
+    throw new Error('Phase 2 invite link is missing its invite token.');
+  }
+  await request('/phase2/invites/accept', {
+    method: 'POST',
+    body: JSON.stringify({
+      token: inviteToken,
+      email: 'phase2-reviewer@example.com',
+      name: 'Phase 2 Reviewer',
+    }),
+  });
+
   await request('/phase2/bootstrap');
+  const desktopLink = await request<{ code: string; status: string }>('/phase2/desktop-link', {
+    method: 'POST',
+    body: JSON.stringify({ appUrl: 'http://localhost:3000' }),
+  });
+  await request('/phase2/desktop-link/redeem', {
+    method: 'POST',
+    body: JSON.stringify({ code: desktopLink.code, desktopDeviceName: 'Phase 2 smoke Mac' }),
+  });
+
   const feed = await request<{ sessions: Array<{ id: string; comments?: Array<{ id: string }> }> }>('/phase2/feed?scope=organization');
   const session = feed.sessions[0];
 
@@ -72,6 +98,20 @@ async function main() {
   if (!summary.finalPromptDraft.includes('Must consider:')) {
     throw new Error('Phase 2 preflight prompt is missing the Must consider section.');
   }
+
+  await request(`/phase2/sessions/${session.id}/visibility`, {
+    method: 'POST',
+    body: JSON.stringify({ visibility: 'org', submissionFlow: 'internal_review' }),
+  });
+
+  await request(`/phase2/sessions/${session.id}/submissions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      providerTarget: 'claude',
+      finalPrompt: summary.finalPromptDraft,
+      credentialScope: 'personal',
+    }),
+  });
 
   console.info('[phase2-smoke] passed', {
     sessionId: session.id,

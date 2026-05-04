@@ -96,6 +96,18 @@ export interface Invite {
   createdAt: string;
 }
 
+export interface DesktopLink {
+  id: string;
+  userId: string;
+  organizationId: string;
+  status: 'pending' | 'redeemed' | 'expired';
+  desktopDeviceId?: string | null;
+  desktopDeviceName?: string | null;
+  expiresAt: string;
+  redeemedAt?: string | null;
+  createdAt: string;
+}
+
 export interface Project {
   id: string;
   organizationId: string;
@@ -242,6 +254,22 @@ export interface AIReviewSummary {
   approvedAt?: string | null;
   editedPrompt?: string | null;
   createdAt: string;
+}
+
+export interface Submission {
+  id: string;
+  feedbackSessionId: string;
+  submittedByUserId: string;
+  providerTarget: 'claude' | 'codex' | 'cursor';
+  credentialScope: 'personal' | 'organization' | 'none';
+  providerCredentialId?: string | null;
+  aiReviewSummaryId?: string | null;
+  finalPrompt: string;
+  screenshotAssetIdsJson?: string | null;
+  status: 'created' | 'sent' | 'failed' | 'completed';
+  providerResponse?: string | null;
+  createdAt: string;
+  completedAt?: string | null;
 }
 
 export interface Integration {

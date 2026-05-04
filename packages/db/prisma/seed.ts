@@ -61,6 +61,10 @@ async function main() {
 
   console.log(`✓ User: ${user.id}`);
 
+  await prisma.desktopLink.deleteMany({
+    where: { userId: user.id },
+  });
+
   const membership = await prisma.organizationMembership.upsert({
     where: { organizationId_userId: { organizationId: org.id, userId: user.id } },
     update: { role: 'owner', status: 'active' },

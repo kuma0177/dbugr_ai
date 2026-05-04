@@ -7,6 +7,7 @@ import type {
   Invite,
   AIReviewSummary,
   CurationDecision,
+  Submission,
   CreateFeedbackSessionRequest,
   CreateCommentRequest,
   CreateTaskRequest,
@@ -14,10 +15,27 @@ import type {
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:3001/api';
 
+function phase2AuthHeaders() {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem('dbugr_phase2_onboarding');
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as { userEmail?: string };
+    return parsed.userEmail ? { 'x-dbugr-user-email': parsed.userEmail } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  headers.set('Content-Type', 'application/json');
+  for (const [key, value] of Object.entries(phase2AuthHeaders())) {
+    headers.set(key, value);
+  }
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
     ...init,
+    headers,
   });
   const json = await res.json();
   if (!res.ok) throw new Error(json.error ?? 'Request failed');
@@ -35,6 +53,7 @@ export const api = {
       policies: Record<string, unknown>;
     }>('/phase2/bootstrap'),
     onboarding: (body: {
+      email?: string;
       name: string;
       organizationName: string;
       role?: string;
@@ -44,11 +63,37 @@ export const api = {
     }) => apiFetch<{
       organization: Organization;
       membership: OrganizationMembership;
-      invites: Invite[];
+      invites: Array<Invite & { acceptUrl?: string }>;
     }>('/phase2/onboarding', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+    acceptInvite: (body: { token: string; email: string; name: string }) => apiFetch<{
+      organization: Organization;
+      membership: OrganizationMembership;
+      invite: Invite;
+    }>('/phase2/invites/accept', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+    createDesktopLink: (body: { appUrl?: string }) => apiFetch<{
+      linkId: string;
+      code: string;
+      deepLinkUrl: string;
+      expiresAt: string;
+      status: 'pending' | 'redeemed' | 'expired';
+    }>('/phase2/desktop-link', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+    redeemDesktopLink: (body: { code: string; desktopDeviceId?: string; desktopDeviceName?: string }) =>
+      apiFetch<{
+        desktopLinkToken: string;
+        desktopLink: { id: string; status: string; redeemedAt?: string | null };
+      }>('/phase2/desktop-link/redeem', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
     feed: (scope: 'private' | 'organization' | 'public') =>
       apiFetch<{ scope: string; sessions: FeedbackSession[] }>(`/phase2/feed?scope=${scope}`),
     contribute: (sessionId: string, body: {
@@ -74,6 +119,23 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ providerTarget }),
       }),
+    visibility: (sessionId: string, body: {
+      visibility: 'private' | 'org' | 'public';
+      submissionFlow?: 'direct' | 'internal_review' | 'public_feed';
+      redactionConfirmed?: boolean;
+    }) => apiFetch<FeedbackSession>(`/phase2/sessions/${sessionId}/visibility`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+    submit: (sessionId: string, body: {
+      providerTarget: 'claude' | 'codex' | 'cursor';
+      aiReviewSummaryId?: string;
+      finalPrompt?: string;
+      credentialScope?: 'personal' | 'organization' | 'none';
+    }) => apiFetch<Submission>(`/phase2/sessions/${sessionId}/submissions`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   },
   sessions: {
     list: () => apiFetch<FeedbackSession[]>('/feedback-sessions'),

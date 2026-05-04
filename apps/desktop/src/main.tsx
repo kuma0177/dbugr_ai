@@ -2410,6 +2410,10 @@ async function checkPermission() {
 }
 
 async function loadSessionsFromApi(options: { force?: boolean } = {}) {
+  if ((window as unknown as { __DBUGR_DISABLE_API_SYNC__?: boolean }).__DBUGR_DISABLE_API_SYNC__) {
+    logUi('workspace_load_sessions_skipped_for_test');
+    return;
+  }
   const { force = false } = options;
   if (!force) {
     if (sessionsApiLoadInFlight) return sessionsApiLoadInFlight;

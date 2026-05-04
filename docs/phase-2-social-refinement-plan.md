@@ -18,18 +18,21 @@ This plan is a draft for confirmation before implementation.
 
 ## Build Status
 
-Current implementation status as of 2026-05-04:
+Current implementation status as of 2026-05-03:
 
 - [x] Phase 2 schema spine exists for IAM, organization policy, social contributions, curation, AI preflight, provider credential metadata, submissions, and audit events.
-- [x] Phase 2 API endpoints exist for demo onboarding, bootstrap, scoped feed loading, contribution creation, curation decisions, and AI preflight prompt generation.
-- [x] Phase 2 web pages exist for onboarding and review feed using the Dbugr design language.
+- [x] Phase 2 API endpoints exist for onboarding, bootstrap, invite acceptance, desktop-link creation/redeem, scoped feed loading, contribution creation, curation decisions, visibility changes, AI preflight prompt generation, and frozen submission snapshots.
+- [x] Phase 2 web pages exist for onboarding, invite-link acceptance, workspace setup, desktop-link handoff, scoped review feeds, curation, provider preflight, and submission snapshot creation using the Dbugr design language.
 - [x] Phase 2 endpoint smoke script exists: `pnpm --filter @feedbackagent/api test:phase2`.
+- [x] Phase 2 smoke now verifies onboarding -> invite accept -> bootstrap -> desktop link -> feed -> contribution -> curation -> preflight -> visibility -> submission.
 - [x] Railway deployment plan exists for web/API services.
-- [ ] Real Google OAuth is not wired yet.
-- [ ] Desktop-to-web account linking is not wired yet.
-- [ ] Real invite email sending is not wired yet.
+- [x] Desktop-to-web account-link API contract exists with one-time code hashing, expiry, redeem endpoint, and audit events.
+- [x] Invite links are one-time token links with hashed storage and an accept endpoint.
+- [ ] Real Google OAuth is not wired yet; current web flow is a local Google-shaped preview and must be replaced with production OAuth before public launch.
+- [ ] Native desktop `dbugr://` redeem handler is not wired yet; the URL scheme is registered and the API/web contract exists.
+- [ ] Real invite email sending is not wired yet; onboarding currently displays shareable invite links.
 - [ ] Desktop session sync to web is not wired yet.
-- [ ] Public redaction/moderation controls are not production-ready yet.
+- [ ] Public redaction/moderation controls are policy-gated and audited, but not production-moderated yet.
 - [ ] Railway Postgres migration is still pending before public multi-user launch.
 
 ## Build Rule

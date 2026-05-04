@@ -314,33 +314,33 @@ Exit criteria:
 
 Milestone checklist:
 
-- [ ] Web auth and desktop account linking
-- [ ] User profile and organization creation
-- [ ] Team invites and lightweight roles
+- [ ] Web auth and desktop account linking `[partial: account-scoped preview and link API done; real Google OAuth and native redeem handler pending]`
+- [x] User profile and organization creation
+- [x] Team invites and lightweight roles
 - [ ] Session sync between desktop and web
-- [ ] Visibility controls for `Private`, `Organization`, and `Public`
-- [ ] Internal review feed
-- [ ] Public feed on the same website
-- [ ] Session-level comments
+- [x] Visibility controls for `Private`, `Organization`, and `Public`
+- [x] Internal review feed
+- [x] Public feed on the same website
+- [x] Session-level comments
 - [ ] Capture-level comments
 - [ ] Annotation-specific comments
-- [ ] Curation board with accept / reject / edit decisions
-- [ ] AI summary preflight
-- [ ] Final prompt approval before send
-- [ ] Submission history with frozen prompt snapshots
-- [ ] Basic org policy controls for public sharing and credential usage
-- [ ] Audit events for sensitive collaboration and submission actions
+- [x] Curation board with accept / reject / edit decisions
+- [x] AI summary preflight
+- [x] Final prompt approval before send
+- [x] Submission history with frozen prompt snapshots
+- [x] Basic org policy controls for public sharing and credential usage
+- [x] Audit events for sensitive collaboration and submission actions
 
-Implementation status as of 2026-05-04:
+Implementation status as of 2026-05-03:
 
 - [x] Phase 2 Prisma schema spine added for organizations, teams, memberships, invites, contributions, curation decisions, AI review summaries, provider credential metadata, submissions, and audit-friendly policy fields.
-- [x] Phase 2 API scaffold added for onboarding, bootstrap, scoped feeds, contributions, curation, and AI preflight summary creation.
-- [x] Phase 2 web scaffold added for onboarding and review feed using the Dbugr design system.
+- [x] Phase 2 API scaffold added for onboarding, invite acceptance, bootstrap, desktop-link create/redeem, scoped feeds, contributions, curation, visibility changes, AI preflight summary creation, and submission snapshots.
+- [x] Phase 2 web scaffold added for onboarding, invite acceptance, desktop linking, review feed, curation, preflight, and submission using the Dbugr design system.
 - [x] Detailed Phase 2 API and web action logging added with token redaction rules.
-- [x] Phase 2 API endpoint smoke script added for onboarding -> feed -> contribution -> curation -> preflight verification.
+- [x] Phase 2 API endpoint smoke script added for onboarding -> invite accept -> desktop link -> feed -> contribution -> curation -> preflight -> visibility -> submission verification.
 - [x] Railway web/API deployment guide added for the Phase 2 collaboration layer.
 - [ ] Real Google OAuth.
-- [ ] Desktop-to-web device linking.
+- [ ] Native desktop-to-web device-link handler `[partial: API/web contract and macOS URL scheme done]`.
 - [ ] Real invite email delivery.
 - [ ] Session sync from desktop local storage to web.
 - [ ] Production public-feed redaction and moderation controls.
