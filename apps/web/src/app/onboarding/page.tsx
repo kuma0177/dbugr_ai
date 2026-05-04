@@ -92,14 +92,44 @@ export default function OnboardingPage() {
   }
 
   function requestEmailCodePreview() {
-    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setStatus('Enter your email first so we know where to send the code.');
+      return;
+    }
+
     setAuthMethod('email');
-    setExpectedEmailCode(code);
     setEmailCode('');
-    setEmailCodeSent(true);
     setIdentityConnected(false);
-    setStatus(`Email sign-up code sent to ${email}. Local preview code: ${code}. Production will deliver this through the email provider.`);
-    console.info('[phase2-web] onboarding.email_code_requested', { email });
+    setLoading(true);
+    console.info('[phase2-web] onboarding.email_code_requested.started', { email: normalizedEmail });
+    api.phase2.requestEmailCode({ email: normalizedEmail })
+      .then((result) => {
+        setExpectedEmailCode(result.previewCode ?? '');
+        setEmailCodeSent(true);
+        setStatus(
+          result.delivered
+            ? `Verification code sent to ${normalizedEmail}. Check your inbox and spam folder. It expires in ${result.expiresInMinutes} minutes.`
+            : `Email delivery is still in preview mode here. Use the temporary code ${result.previewCode ?? ''} to continue. It expires in ${result.expiresInMinutes} minutes.`,
+        );
+        console.info('[phase2-web] onboarding.email_code_requested.completed', {
+          email: normalizedEmail,
+          delivered: result.delivered,
+          provider: result.provider,
+        });
+      })
+      .catch((error) => {
+        setEmailCodeSent(false);
+        setExpectedEmailCode('');
+        setStatus(`Could not send a verification code: ${error instanceof Error ? error.message : String(error)}`);
+        console.warn('[phase2-web] onboarding.email_code_requested.failed', {
+          email: normalizedEmail,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }
 
   function verifyEmailCodePreview() {
@@ -107,16 +137,34 @@ export default function OnboardingPage() {
       setStatus('Request an email sign-up code first.');
       return;
     }
-    if (emailCode.trim() !== expectedEmailCode) {
-      setStatus('That code does not match. Check the email code and try again.');
-      console.warn('[phase2-web] onboarding.email_code_failed', { email });
-      return;
-    }
-    setAuthMethod('email');
-    setIdentityConnected(true);
-    setCurrentStep('workspace');
-    setStatus(`Email verified for ${email}. You can create your organization workspace now.`);
-    console.info('[phase2-web] onboarding.email_code_verified', { email });
+    setLoading(true);
+    api.phase2.verifyEmailCode({ email: email.trim().toLowerCase(), code: emailCode.trim() })
+      .then(() => {
+        setAuthMethod('email');
+        setIdentityConnected(true);
+        setCurrentStep('workspace');
+        setStatus(`Email verified for ${email.trim().toLowerCase()}. You can create your organization workspace now.`);
+        console.info('[phase2-web] onboarding.email_code_verified', { email: email.trim().toLowerCase() });
+      })
+      .catch((error) => {
+        const fallbackMatches = expectedEmailCode && emailCode.trim() === expectedEmailCode;
+        if (fallbackMatches) {
+          setAuthMethod('email');
+          setIdentityConnected(true);
+          setCurrentStep('workspace');
+          setStatus(`Email verified for ${email.trim().toLowerCase()}. You can create your organization workspace now.`);
+          console.info('[phase2-web] onboarding.email_code_verified.preview_fallback', { email: email.trim().toLowerCase() });
+          return;
+        }
+        setStatus(error instanceof Error ? error.message : String(error));
+        console.warn('[phase2-web] onboarding.email_code_failed', {
+          email: email.trim().toLowerCase(),
+          message: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }
 
   function resetWorkspace() {

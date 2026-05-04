@@ -44,6 +44,21 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   phase2: {
+    requestEmailCode: (body: { email: string }) => apiFetch<{
+      delivered: boolean;
+      provider: 'resend' | 'preview';
+      expiresInMinutes: number;
+      previewCode: string | null;
+    }>('/phase2/auth/email-code/request', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+    verifyEmailCode: (body: { email: string; code: string }) => apiFetch<{
+      verified: boolean;
+    }>('/phase2/auth/email-code/verify', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
     bootstrap: () => apiFetch<{
       user: { id: string; name: string; email: string };
       organization: Organization;

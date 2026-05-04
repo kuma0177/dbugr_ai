@@ -136,6 +136,25 @@ const inviteAcceptSchema = z.object({
   name: z.string().min(1),
 });
 
+const emailCodeRequestSchema = z.object({
+  email: z.string().email(),
+});
+
+const emailCodeVerifySchema = z.object({
+  email: z.string().email(),
+  code: z.string().trim().regex(/^\d{6}$/),
+});
+
+type EmailCodeEntry = {
+  codeHash: string;
+  expiresAt: number;
+  attempts: number;
+};
+
+const emailCodeStore = new Map<string, EmailCodeEntry>();
+const EMAIL_CODE_EXPIRY_MINUTES = 10;
+const EMAIL_CODE_MAX_ATTEMPTS = 5;
+
 function createDesktopLinkCode() {
   return crypto.randomBytes(4).toString('hex').toUpperCase();
 }
@@ -150,6 +169,102 @@ function createInviteToken() {
 
 function hashInviteToken(token: string) {
   return crypto.createHash('sha256').update(token.trim()).digest('hex');
+}
+
+function normalizeEmail(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function createEmailCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function hashEmailCode(code: string) {
+  return crypto.createHash('sha256').update(code.trim()).digest('hex');
+}
+
+function emailProviderConfigured() {
+  return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
+}
+
+function getPublicWebBaseUrl() {
+  const candidates = [
+    process.env.EMAIL_ASSET_BASE_URL,
+    process.env.PUBLIC_WEB_URL,
+    process.env.WEB_URL,
+    process.env.AUTH_URL,
+    'https://dbugrweb-production.up.railway.app',
+  ].filter(Boolean) as string[];
+
+  for (const candidate of candidates) {
+    if (candidate.includes('localhost') || candidate.includes('127.0.0.1')) continue;
+    return candidate.replace(/\/$/, '');
+  }
+
+  return 'https://dbugrweb-production.up.railway.app';
+}
+
+async function sendEmailCode(email: string, code: string) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.EMAIL_FROM;
+  if (!apiKey || !from) {
+    return { delivered: false as const, provider: 'preview' as const };
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from,
+      to: [email],
+      subject: 'Your Dbugr sign-in code',
+      text: [
+        'Dbugr sign-in verification',
+        '',
+        `Your verification code is ${code}.`,
+        '',
+        `It expires in ${EMAIL_CODE_EXPIRY_MINUTES} minutes.`,
+        'If you did not request this code, you can ignore this email.',
+      ].join('\n'),
+      html: `
+        <div style="margin:0;padding:24px 12px;background:#ffffff;">
+          <div style="max-width:560px;margin:0 auto;background:#fffdf9;border:1px solid #ebe4d8;border-radius:24px;overflow:hidden;box-shadow:0 12px 36px rgba(26,26,26,0.06);">
+            <div style="padding:24px 20px;background:linear-gradient(135deg,#f8fbff 0%,#eef6ff 100%);border-bottom:1px solid #e2ebf7;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:0 0 16px 0;">
+                <tr>
+                  <td style="padding:0 12px 0 0;vertical-align:middle;">
+                    <img src="${getPublicWebBaseUrl()}/brand/icon-nav-1024.png" alt="Dbugr.ai" width="56" height="56" style="display:block;width:56px;height:56px;border-radius:16px;background:#ffffff;border:1px solid #d9e7f7;box-shadow:0 8px 22px rgba(0,144,255,0.10);" />
+                  </td>
+                  <td style="vertical-align:middle;">
+                    <div style="font-family:Arial,sans-serif;font-size:18px;font-weight:700;line-height:1.1;color:#272522;">Dbugr.ai</div>
+                    <div style="font-family:Arial,sans-serif;font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#8a8479;margin-top:8px;">Workspace sign-in</div>
+                  </td>
+                </tr>
+              </table>
+              <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:36px;line-height:1.04;color:#272522;font-weight:500;">Sign in to your workspace.</h1>
+              <p style="margin:16px 0 0 0;font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#4e4a45;">Use this one-time code to continue into Dbugr and link your Mac app to the right account.</p>
+            </div>
+            <div style="padding:24px 20px;">
+              <div style="font-family:Arial,sans-serif;font-size:13px;letter-spacing:0.14em;text-transform:uppercase;color:#8a8479;margin-bottom:10px;">Verification code</div>
+              <div style="display:inline-block;max-width:100%;padding:16px 18px;border-radius:18px;background:#eef7ff;border:1px solid rgba(0,144,255,0.22);font-family:Arial,sans-serif;font-size:30px;line-height:1.05;font-weight:700;letter-spacing:0.18em;color:#0090ff;box-sizing:border-box;">${code}</div>
+              <p style="margin:18px 0 0 0;font-family:Arial,sans-serif;font-size:15px;line-height:1.65;color:#4e4a45;">This code expires in <strong>${EMAIL_CODE_EXPIRY_MINUTES} minutes</strong> and can only be used once.</p>
+              <p style="margin:10px 0 0 0;font-family:Arial,sans-serif;font-size:15px;line-height:1.65;color:#4e4a45;">If you did not request this code, you can safely ignore this email.</p>
+              <div style="margin-top:20px;padding-top:16px;border-top:1px solid #e2ebf7;font-family:Arial,sans-serif;font-size:13px;line-height:1.6;color:#8a8479;">Dbugr keeps your AI provider keys on your device by default. This email only verifies your web identity.</div>
+            </div>
+          </div>
+        </div>`,
+    }),
+  });
+
+  if (!response.ok) {
+    const failure = await response.text();
+    throw new Error(`Resend failed with ${response.status}: ${failure}`);
+  }
+
+  return { delivered: true as const, provider: 'resend' as const };
 }
 
 phase2Router.get('/phase2/bootstrap', async (req: Request, res: Response) => {
@@ -375,6 +490,87 @@ phase2Router.post('/phase2/invites/accept', async (req: Request, res: Response) 
   return res.status(201).json({
     data: { user, organization: invite.organization, team: invite.team, membership, invite: acceptedInvite },
   });
+});
+
+phase2Router.post('/phase2/auth/email-code/request', async (req: Request, res: Response) => {
+  const parsed = emailCodeRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    logPhase2('email_code.request_validation_failed', { issues: parsed.error.issues.length });
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const email = normalizeEmail(parsed.data.email);
+  const code = createEmailCode();
+  emailCodeStore.set(email, {
+    codeHash: hashEmailCode(code),
+    expiresAt: Date.now() + 1000 * 60 * EMAIL_CODE_EXPIRY_MINUTES,
+    attempts: 0,
+  });
+
+  try {
+    const delivery = await sendEmailCode(email, code);
+    logPhase2('email_code.requested', {
+      email,
+      delivered: delivery.delivered,
+      provider: delivery.provider,
+      configured: emailProviderConfigured(),
+    });
+    return res.status(201).json({
+      data: {
+        delivered: delivery.delivered,
+        provider: delivery.provider,
+        expiresInMinutes: EMAIL_CODE_EXPIRY_MINUTES,
+        previewCode: delivery.delivered ? null : code,
+      },
+    });
+  } catch (error) {
+    logPhase2('email_code.request_failed', {
+      email,
+      message: error instanceof Error ? error.message : String(error),
+      configured: emailProviderConfigured(),
+    });
+    return res.status(502).json({
+      error: error instanceof Error ? error.message : 'Could not send verification email.',
+    });
+  }
+});
+
+phase2Router.post('/phase2/auth/email-code/verify', async (req: Request, res: Response) => {
+  const parsed = emailCodeVerifySchema.safeParse(req.body);
+  if (!parsed.success) {
+    logPhase2('email_code.verify_validation_failed', { issues: parsed.error.issues.length });
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const email = normalizeEmail(parsed.data.email);
+  const entry = emailCodeStore.get(email);
+  if (!entry) {
+    logPhase2('email_code.verify_missing', { email });
+    return res.status(404).json({ error: 'No verification code was requested for this email yet.' });
+  }
+
+  if (entry.expiresAt < Date.now()) {
+    emailCodeStore.delete(email);
+    logPhase2('email_code.verify_expired', { email });
+    return res.status(410).json({ error: 'That verification code expired. Request a new one.' });
+  }
+
+  if (entry.attempts >= EMAIL_CODE_MAX_ATTEMPTS) {
+    emailCodeStore.delete(email);
+    logPhase2('email_code.verify_locked', { email });
+    return res.status(429).json({ error: 'Too many incorrect attempts. Request a new code.' });
+  }
+
+  if (entry.codeHash !== hashEmailCode(parsed.data.code)) {
+    entry.attempts += 1;
+    emailCodeStore.set(email, entry);
+    logPhase2('email_code.verify_failed', { email, attempts: entry.attempts });
+    return res.status(401).json({ error: 'That code does not match. Check the code and try again.' });
+  }
+
+  emailCodeStore.delete(email);
+  logPhase2('email_code.verified', { email });
+  return res.json({ data: { verified: true } });
 });
 
 phase2Router.post('/phase2/desktop-link', async (req: Request, res: Response) => {
