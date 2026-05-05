@@ -79,6 +79,7 @@ function canManageSession(role: string, sessionOwnerId: string, actorId: string)
 const onboardingSchema = z.object({
   email: z.string().email().optional(),
   name: z.string().min(1),
+  authProvider: z.enum(['email', 'google']).optional(),
   organizationName: z.string().min(1),
   organizationLogoUrl: z.string().max(2_000_000).optional(),
   role: z.string().optional(),
@@ -146,6 +147,12 @@ const emailCodeVerifySchema = z.object({
   code: z.string().trim().regex(/^\d{6}$/),
 });
 
+const ensureIdentitySchema = z.object({
+  email: z.string().email(),
+  name: z.string().min(1).optional(),
+  authProvider: z.enum(['email', 'google']),
+});
+
 type EmailCodeEntry = {
   codeHash: string;
   expiresAt: number;
@@ -203,6 +210,66 @@ function getPublicWebBaseUrl() {
   }
 
   return 'https://dbugrweb-production.up.railway.app';
+}
+
+function deriveNameFromEmail(email: string) {
+  const local = email.split('@')[0] || 'Dbugr user';
+  const cleaned = local.replace(/[._-]+/g, ' ').trim();
+  if (!cleaned) return 'Dbugr user';
+  return cleaned
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function mergeAuthProviders(existing: string, incoming: 'email' | 'google') {
+  const providers = new Set(
+    existing
+      .split(',')
+      .map((provider) => provider.trim())
+      .filter(Boolean)
+      .filter((provider) => provider !== 'demo'),
+  );
+  providers.add(incoming);
+  return Array.from(providers).join(',');
+}
+
+async function ensureUserIdentity({
+  email,
+  name,
+  authProvider,
+}: {
+  email: string;
+  name?: string;
+  authProvider: 'email' | 'google';
+}) {
+  const normalizedEmail = normalizeEmail(email);
+  const existingUser = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+  const resolvedName = name?.trim() || existingUser?.name || deriveNameFromEmail(normalizedEmail);
+
+  if (existingUser) {
+    const user = await prisma.user.update({
+      where: { email: normalizedEmail },
+      data: {
+        name: resolvedName,
+        authProvider: mergeAuthProviders(existingUser.authProvider, authProvider),
+        lastSeenAt: new Date(),
+      },
+    });
+    return { user, created: false };
+  }
+
+  const user = await prisma.user.create({
+    data: {
+      email: normalizedEmail,
+      name: resolvedName,
+      role: 'member',
+      authProvider,
+      lastSeenAt: new Date(),
+    },
+  });
+
+  return { user, created: true };
 }
 
 async function sendEmailCode(email: string, code: string) {
@@ -268,6 +335,108 @@ async function sendEmailCode(email: string, code: string) {
   return { delivered: true as const, provider: 'resend' as const };
 }
 
+async function sendWelcomeEmail(email: string, name: string, authProvider: 'email' | 'google') {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.EMAIL_FROM;
+  if (!apiKey || !from) {
+    return { delivered: false as const, provider: 'preview' as const };
+  }
+
+  const webBaseUrl = getPublicWebBaseUrl();
+  const authLabel = authProvider === 'google' ? 'Google' : 'email verification';
+  const downloadUrl =
+    process.env.NEXT_PUBLIC_MAC_DMG_URL ??
+    'https://github.com/kuma0177/debgr_ai/releases/download/stable-macos-claude-codex-cli/dbugr-ai-0.0.1-macos-aarch64.dmg';
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from,
+      to: [email],
+      subject: 'Welcome to Dbugr.ai',
+      text: [
+        `Welcome to Dbugr.ai, ${name}.`,
+        '',
+        `Your account was created using ${authLabel}.`,
+        '',
+        'How to use Dbugr:',
+        '1. Create or join a workspace on the web.',
+        '2. Download the Dbugr Mac app DMG.',
+        '3. Install Dbugr.ai into Applications.',
+        '4. Link this Mac from onboarding.',
+        '5. Capture screenshots, collect review feedback, and send approved changes to Claude, Codex, or Cursor.',
+        '',
+        `Open Dbugr.ai: ${webBaseUrl}`,
+        `Download the Mac app: ${downloadUrl}`,
+      ].join('\n'),
+      html: `
+        <div style="margin:0;padding:24px 12px;background:#ffffff;">
+          <div style="max-width:600px;margin:0 auto;background:#fffdf9;border:1px solid #ebe4d8;border-radius:24px;overflow:hidden;box-shadow:0 12px 36px rgba(26,26,26,0.06);">
+            <div style="padding:24px 20px;background:linear-gradient(135deg,#f8fbff 0%,#eef6ff 100%);border-bottom:1px solid #e2ebf7;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:0 0 16px 0;">
+                <tr>
+                  <td style="padding:0 12px 0 0;vertical-align:middle;">
+                    <img src="${webBaseUrl}/brand/icon-nav-1024.png" alt="Dbugr.ai" width="56" height="56" style="display:block;width:56px;height:56px;border-radius:16px;background:#ffffff;border:1px solid #d9e7f7;box-shadow:0 8px 22px rgba(0,144,255,0.10);" />
+                  </td>
+                  <td style="vertical-align:middle;">
+                    <div style="font-family:Arial,sans-serif;font-size:18px;font-weight:700;line-height:1.1;color:#272522;">Dbugr.ai</div>
+                    <div style="font-family:Arial,sans-serif;font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#8a8479;margin-top:8px;">Welcome</div>
+                  </td>
+                </tr>
+              </table>
+              <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:36px;line-height:1.04;color:#272522;font-weight:500;">Your account is ready.</h1>
+              <p style="margin:16px 0 0 0;font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#4e4a45;">Hi ${name}, you’re in. Dbugr uses ${authLabel} for this account and keeps the capture flow on your Mac fast and local.</p>
+            </div>
+            <div style="padding:24px 20px;">
+              <div style="font-family:Arial,sans-serif;font-size:13px;letter-spacing:0.14em;text-transform:uppercase;color:#8a8479;margin-bottom:12px;">Your first 3 steps</div>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:separate;border-spacing:0 12px;">
+                <tr>
+                  <td style="width:33.33%;padding:0 6px 0 0;vertical-align:top;">
+                    <div style="height:100%;padding:16px 14px;border-radius:18px;background:#f8fbff;border:1px solid #dcecff;">
+                      <div style="font-size:24px;line-height:1;margin-bottom:10px;">🌐</div>
+                      <div style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;line-height:1.3;color:#272522;margin-bottom:6px;">Create your workspace</div>
+                      <div style="font-family:Arial,sans-serif;font-size:13px;line-height:1.55;color:#4e4a45;">Finish setup on the web so your sessions, teammates, and review history all stay organized.</div>
+                    </div>
+                  </td>
+                  <td style="width:33.33%;padding:0 3px;vertical-align:top;">
+                    <div style="height:100%;padding:16px 14px;border-radius:18px;background:#f8fbff;border:1px solid #dcecff;">
+                      <div style="font-size:24px;line-height:1;margin-bottom:10px;">💻</div>
+                      <div style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;line-height:1.3;color:#272522;margin-bottom:6px;">Install the Mac app</div>
+                      <div style="font-family:Arial,sans-serif;font-size:13px;line-height:1.55;color:#4e4a45;">Download the DMG, open it from Downloads, then drag Dbugr.ai into Applications.</div>
+                    </div>
+                  </td>
+                  <td style="width:33.33%;padding:0 0 0 6px;vertical-align:top;">
+                    <div style="height:100%;padding:16px 14px;border-radius:18px;background:#f8fbff;border:1px solid #dcecff;">
+                      <div style="font-size:24px;line-height:1;margin-bottom:10px;">🔗</div>
+                      <div style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;line-height:1.3;color:#272522;margin-bottom:6px;">Link this Mac</div>
+                      <div style="font-family:Arial,sans-serif;font-size:13px;line-height:1.55;color:#4e4a45;">Connect the Mac app once, then start capturing, reviewing, and sending approved prompts to AI.</div>
+                    </div>
+                  </td>
+                </tr>
+              </table>
+              <div style="margin-top:20px;">
+                <a href="${webBaseUrl}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#0090ff;color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:600;text-decoration:none;margin-right:8px;">Open Dbugr.ai</a>
+                <a href="${downloadUrl}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#eef7ff;color:#0090ff;border:1px solid rgba(0,144,255,0.18);font-family:Arial,sans-serif;font-size:15px;font-weight:600;text-decoration:none;">Download the Mac app</a>
+              </div>
+              <div style="margin-top:20px;padding-top:16px;border-top:1px solid #e2ebf7;font-family:Arial,sans-serif;font-size:13px;line-height:1.6;color:#8a8479;">If you later sign in with the same email through Google or email verification, Dbugr will attach you to this same account instead of creating a duplicate user.</div>
+            </div>
+          </div>
+        </div>`,
+    }),
+  });
+
+  if (!response.ok) {
+    const failure = await response.text();
+    throw new Error(`Resend welcome email failed with ${response.status}: ${failure}`);
+  }
+
+  return { delivered: true as const, provider: 'resend' as const };
+}
+
 phase2Router.get('/phase2/bootstrap', async (req: Request, res: Response) => {
   let context;
   try {
@@ -320,24 +489,49 @@ phase2Router.post('/phase2/onboarding', async (req: Request, res: Response) => {
 
   const email = parsed.data.email?.trim().toLowerCase() || 'demo@example.com';
   const slug = slugify(parsed.data.organizationName);
+  const authProvider = parsed.data.authProvider ?? 'google';
 
-  const user = await prisma.user.upsert({
-    where: { email },
-    update: {
-      name: parsed.data.name,
-      role: parsed.data.role || 'owner',
-      authProvider: 'google',
-      lastSeenAt: new Date(),
-    },
-    create: {
-      id: email === 'demo@example.com' ? DEMO_USER_ID : undefined,
-      email,
-      name: parsed.data.name,
-      role: parsed.data.role || 'owner',
-      authProvider: 'google',
-      lastSeenAt: new Date(),
-    },
-  });
+  const identity = email === 'demo@example.com'
+    ? {
+        user: await prisma.user.upsert({
+          where: { id: DEMO_USER_ID },
+          update: {
+            email,
+            name: parsed.data.name,
+            role: parsed.data.role || 'owner',
+            authProvider,
+            lastSeenAt: new Date(),
+          },
+          create: {
+            id: DEMO_USER_ID,
+            email,
+            name: parsed.data.name,
+            role: parsed.data.role || 'owner',
+            authProvider,
+            lastSeenAt: new Date(),
+          },
+        }),
+        created: false,
+      }
+    : await ensureUserIdentity({
+        email,
+        name: parsed.data.name,
+        authProvider,
+      });
+
+  const user = identity.user;
+
+  if (identity.created) {
+    try {
+      await sendWelcomeEmail(user.email, user.name, authProvider);
+      logPhase2('welcome_email.sent_from_onboarding', { email: user.email, authProvider });
+    } catch (error) {
+      logPhase2('welcome_email.failed_from_onboarding', {
+        email: user.email,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   const organization = await prisma.organization.upsert({
     where: { slug },
@@ -450,17 +644,24 @@ phase2Router.post('/phase2/invites/accept', async (req: Request, res: Response) 
     return res.status(403).json({ error: 'Invite email does not match this account.' });
   }
 
-  const user = await prisma.user.upsert({
-    where: { email },
-    update: { name: parsed.data.name, authProvider: 'google', lastSeenAt: new Date() },
-    create: {
-      email,
-      name: parsed.data.name,
-      role: invite.role,
-      authProvider: 'google',
-      lastSeenAt: new Date(),
-    },
+  const identity = await ensureUserIdentity({
+    email,
+    name: parsed.data.name,
+    authProvider: 'google',
   });
+  const user = identity.user;
+
+  if (identity.created) {
+    try {
+      await sendWelcomeEmail(user.email, user.name, 'google');
+      logPhase2('welcome_email.sent_from_invite', { email: user.email });
+    } catch (error) {
+      logPhase2('welcome_email.failed_from_invite', {
+        email: user.email,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   const membership = await prisma.organizationMembership.upsert({
     where: { organizationId_userId: { organizationId: invite.organizationId, userId: user.id } },
     update: { role: invite.role, status: 'active', teamId: invite.teamId ?? null },
@@ -503,6 +704,7 @@ phase2Router.post('/phase2/auth/email-code/request', async (req: Request, res: R
   }
 
   const email = normalizeEmail(parsed.data.email);
+  const existingUser = await prisma.user.findUnique({ where: { email } });
   const code = createEmailCode();
   emailCodeStore.set(email, {
     codeHash: hashEmailCode(code),
@@ -522,6 +724,7 @@ phase2Router.post('/phase2/auth/email-code/request', async (req: Request, res: R
       data: {
         delivered: delivery.delivered,
         provider: delivery.provider,
+        accountExists: Boolean(existingUser),
         expiresInMinutes: EMAIL_CODE_EXPIRY_MINUTES,
         previewCode: delivery.delivered ? null : code,
       },
@@ -572,8 +775,77 @@ phase2Router.post('/phase2/auth/email-code/verify', async (req: Request, res: Re
   }
 
   emailCodeStore.delete(email);
-  logPhase2('email_code.verified', { email });
-  return res.json({ data: { verified: true } });
+  const identity = await ensureUserIdentity({
+    email,
+    authProvider: 'email',
+  });
+
+  let welcomeEmailSent = false;
+  if (identity.created) {
+    try {
+      await sendWelcomeEmail(identity.user.email, identity.user.name, 'email');
+      welcomeEmailSent = true;
+      logPhase2('welcome_email.sent_from_email_verify', { email: identity.user.email });
+    } catch (error) {
+      logPhase2('welcome_email.failed_from_email_verify', {
+        email: identity.user.email,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  logPhase2('email_code.verified', { email, userId: identity.user.id, created: identity.created });
+  return res.json({
+    data: {
+      verified: true,
+      user: identity.user,
+      created: identity.created,
+      welcomeEmailSent,
+    },
+  });
+});
+
+phase2Router.post('/phase2/auth/identity/ensure', async (req: Request, res: Response) => {
+  const parsed = ensureIdentitySchema.safeParse(req.body);
+  if (!parsed.success) {
+    logPhase2('identity.ensure_validation_failed', { issues: parsed.error.issues.length });
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const identity = await ensureUserIdentity({
+    email: parsed.data.email,
+    name: parsed.data.name,
+    authProvider: parsed.data.authProvider,
+  });
+
+  let welcomeEmailSent = false;
+  if (identity.created) {
+    try {
+      await sendWelcomeEmail(identity.user.email, identity.user.name, parsed.data.authProvider);
+      welcomeEmailSent = true;
+      logPhase2('welcome_email.sent_from_identity_ensure', { email: identity.user.email, authProvider: parsed.data.authProvider });
+    } catch (error) {
+      logPhase2('welcome_email.failed_from_identity_ensure', {
+        email: identity.user.email,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  logPhase2('identity.ensured', {
+    email: identity.user.email,
+    userId: identity.user.id,
+    created: identity.created,
+    authProvider: parsed.data.authProvider,
+  });
+
+  return res.status(identity.created ? 201 : 200).json({
+    data: {
+      user: identity.user,
+      created: identity.created,
+      welcomeEmailSent,
+    },
+  });
 });
 
 phase2Router.post('/phase2/desktop-link', async (req: Request, res: Response) => {

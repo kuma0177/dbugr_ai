@@ -62,6 +62,7 @@ export const api = {
     requestEmailCode: (body: { email: string }) => apiFetch<{
       delivered: boolean;
       provider: 'resend' | 'preview';
+      accountExists: boolean;
       expiresInMinutes: number;
       previewCode: string | null;
     }>('/phase2/auth/email-code/request', {
@@ -70,7 +71,18 @@ export const api = {
     }),
     verifyEmailCode: (body: { email: string; code: string }) => apiFetch<{
       verified: boolean;
+      user: { id: string; name: string; email: string };
+      created: boolean;
+      welcomeEmailSent: boolean;
     }>('/phase2/auth/email-code/verify', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+    ensureIdentity: (body: { email: string; name?: string; authProvider: 'email' | 'google' }) => apiFetch<{
+      user: { id: string; name: string; email: string };
+      created: boolean;
+      welcomeEmailSent: boolean;
+    }>('/phase2/auth/identity/ensure', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
@@ -85,6 +97,7 @@ export const api = {
     onboarding: (body: {
       email?: string;
       name: string;
+      authProvider?: 'email' | 'google';
       organizationName: string;
       organizationLogoUrl?: string;
       role?: string;

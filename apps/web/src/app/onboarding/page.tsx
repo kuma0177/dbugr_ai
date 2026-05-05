@@ -38,6 +38,7 @@ export default function OnboardingPage() {
   const [loading, setLoading] = useState(false);
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('sign-in');
   const [authFlow, setAuthFlow] = useState<AuthFlow>('sign-up');
+  const [autoRequestedEmailCode, setAutoRequestedEmailCode] = useState(false);
 
   const authAction = authFlow === 'sign-in' ? 'sign in' : 'sign up';
   const authActionTitle = authFlow === 'sign-in' ? 'Sign in' : 'Sign up';
@@ -48,9 +49,11 @@ export default function OnboardingPage() {
     const incomingEmail = params.get('email') ?? '';
     const incomingAuth = params.get('auth');
     const incomingFlow = params.get('flow') === 'sign-in' ? 'sign-in' : 'sign-up';
+    const hasExplicitEntry = Boolean(incomingInvite || incomingAuth || incomingEmail);
     setAuthFlow(incomingFlow);
     if (incomingAuth === 'google' || incomingAuth === 'email') {
       setAuthMethod(incomingAuth);
+      setCurrentStep('sign-in');
       setStatus(incomingAuth === 'google'
         ? `Continue to Google ${incomingFlow === 'sign-in' ? 'sign-in' : 'sign-up'}, then continue to your workspace.`
         : `Request an email ${incomingFlow === 'sign-in' ? 'sign-in' : 'sign-up'} code, enter it here, then continue to your workspace.`);
@@ -72,11 +75,13 @@ export default function OnboardingPage() {
       setTeamName(localState.teamName ?? '');
       setInviteEmails(localState.inviteEmails);
       setDefaultVisibility(localState.defaultVisibility);
-      setAuthMethod((current) => current ?? 'google');
-      setIdentityConnected(true);
-      setWorkspaceReady(true);
-      setCurrentStep('link');
-      setStatus(`Workspace ready: ${localState.organizationName}. ${localState.inviteEmails.length} invite(s) staged.`);
+      if (!hasExplicitEntry) {
+        setAuthMethod((current) => current ?? 'google');
+        setIdentityConnected(true);
+        setWorkspaceReady(true);
+        setCurrentStep('link');
+        setStatus(`Workspace ready: ${localState.organizationName}. ${localState.inviteEmails.length} invite(s) staged.`);
+      }
     }
 
     console.info('[phase2-web] onboarding.bootstrap.started');
@@ -101,6 +106,20 @@ export default function OnboardingPage() {
         console.warn('[phase2-web] onboarding.bootstrap.failed', { message: error instanceof Error ? error.message : String(error) });
       });
   }, []);
+
+  useEffect(() => {
+    if (
+      authMethod === 'email' &&
+      currentStep === 'sign-in' &&
+      email.trim() &&
+      !emailCodeSent &&
+      !identityConnected &&
+      !autoRequestedEmailCode
+    ) {
+      setAutoRequestedEmailCode(true);
+      requestEmailCodePreview();
+    }
+  }, [authMethod, currentStep, email, emailCodeSent, identityConnected, autoRequestedEmailCode]);
 
   function normalizeInviteEmail(raw: string) {
     return raw.trim().toLowerCase().replace(/,$/, '');
@@ -155,11 +174,36 @@ export default function OnboardingPage() {
   }
 
   function connectGooglePreview() {
-    setAuthMethod('google');
-    setIdentityConnected(true);
-    setCurrentStep('workspace');
-    setStatus(`Google preview connected as ${email}. Production will redirect to Google OAuth for ${authAction} when GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are configured.`);
-    console.info('[phase2-web] onboarding.google_preview_connected', { email });
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setStatus('Enter your email first so Google sign-in can resolve to the correct Dbugr account.');
+      return;
+    }
+
+    setLoading(true);
+    api.phase2.ensureIdentity({
+      email: normalizedEmail,
+      name,
+      authProvider: 'google',
+    })
+      .then((result) => {
+        setAuthMethod('google');
+        setIdentityConnected(true);
+        setCurrentStep('workspace');
+        setStatus(
+          result.created
+            ? `Google ${authAction} connected as ${normalizedEmail}. Your Dbugr account is now created${result.welcomeEmailSent ? ' and a welcome email is on the way.' : '.'}`
+            : `Google ${authAction} connected as ${normalizedEmail}. We matched it to your existing Dbugr account.`
+        );
+        console.info('[phase2-web] onboarding.google_preview_connected', { email: normalizedEmail, created: result.created });
+      })
+      .catch((error) => {
+        setStatus(`Could not complete Google ${authAction}: ${error instanceof Error ? error.message : String(error)}`);
+        console.warn('[phase2-web] onboarding.google_preview_failed', { message: error instanceof Error ? error.message : String(error) });
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }
 
   function requestEmailCodePreview() {
@@ -173,21 +217,26 @@ export default function OnboardingPage() {
     setEmailCode('');
     setEmailCodeError('');
     setIdentityConnected(false);
+    setEmailCodeSent(false);
     setLoading(true);
     console.info('[phase2-web] onboarding.email_code_requested.started', { email: normalizedEmail });
     api.phase2.requestEmailCode({ email: normalizedEmail })
       .then((result) => {
         setExpectedEmailCode(result.previewCode ?? '');
         setEmailCodeSent(true);
+        const actionLabel = result.accountExists
+          ? 'You already have a Dbugr account. Enter the verification code to sign in.'
+          : `This will create your Dbugr account after verification. Enter the code to ${authAction}.`;
         setStatus(
           result.delivered
-            ? `Verification code sent to ${normalizedEmail}. Check your inbox and spam folder. It expires in ${result.expiresInMinutes} minutes.`
-            : `Email delivery is still in preview mode here. Use the temporary code ${result.previewCode ?? ''} to continue. It expires in ${result.expiresInMinutes} minutes.`,
+            ? `${actionLabel} We sent a code to ${normalizedEmail}. Check your inbox and spam folder. It expires in ${result.expiresInMinutes} minutes.`
+            : `${actionLabel} Email delivery is still in preview mode here. Use the temporary code ${result.previewCode ?? ''} to continue. It expires in ${result.expiresInMinutes} minutes.`,
         );
         console.info('[phase2-web] onboarding.email_code_requested.completed', {
           email: normalizedEmail,
           delivered: result.delivered,
           provider: result.provider,
+          accountExists: result.accountExists,
         });
       })
       .catch((error) => {
@@ -211,13 +260,17 @@ export default function OnboardingPage() {
     }
     setLoading(true);
     api.phase2.verifyEmailCode({ email: email.trim().toLowerCase(), code: emailCode.trim() })
-      .then(() => {
+      .then((result) => {
         setAuthMethod('email');
         setIdentityConnected(true);
         setCurrentStep('workspace');
         setEmailCodeError('');
-        setStatus(`Email verified for ${email.trim().toLowerCase()}. You can create your organization workspace now.`);
-        console.info('[phase2-web] onboarding.email_code_verified', { email: email.trim().toLowerCase() });
+        setStatus(
+          result.created
+            ? `Email verified for ${email.trim().toLowerCase()}. Your Dbugr account is now created${result.welcomeEmailSent ? ' and a welcome email is on the way.' : '.'} You can create your organization workspace now.`
+            : `Email verified for ${email.trim().toLowerCase()}. We matched it to your existing Dbugr account. You can create your organization workspace now.`
+        );
+        console.info('[phase2-web] onboarding.email_code_verified', { email: email.trim().toLowerCase(), created: result.created });
       })
       .catch((error) => {
         const fallbackMatches = expectedEmailCode && emailCode.trim() === expectedEmailCode;
@@ -316,6 +369,7 @@ export default function OnboardingPage() {
       const result = await api.phase2.onboarding({
         email,
         name,
+        authProvider: authMethod ?? undefined,
         organizationName,
         organizationLogoUrl: organizationLogoPreview ?? undefined,
         role,

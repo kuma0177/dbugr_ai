@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { JourneyInfographic } from './journey-infographic';
+import { HomeSignupStrip } from './home-signup-strip';
 
 export const metadata: Metadata = {
   title: 'Dbugr.ai | From screenshot to shippable prompt',
@@ -30,21 +31,7 @@ export default function HomePage() {
             Dbugr.ai helps app builders capture visual feedback, annotate product changes, and
             turn approved comments into clean instructions for Claude, Codex, and Cursor through MCP.
           </p>
-          <form className="signup-strip" action="/onboarding" aria-label="Sign up options">
-            <input type="hidden" name="flow" value="sign-up" />
-            <div className="signup-email-row">
-              <input className="signup-email" name="email" placeholder="Enter your email" aria-label="Email address" />
-              <button className="btn btn-ghost signup-email-button" type="submit" name="auth" value="email">
-                Sign up with email
-              </button>
-            </div>
-            <div className="signup-google-row">
-              <button className="google-oauth-button signup-google" type="submit" name="auth" value="google">
-                <img src="/brand/google-g.svg" alt="" className="google-mark" aria-hidden="true" />
-                Sign up with Google
-              </button>
-            </div>
-          </form>
+          <HomeSignupStrip />
           <p className="home-note">
             Create a private workspace for your team, or share publicly to get feedback from the builder community.
           </p>
