@@ -113,6 +113,21 @@ describe('macOS screen-recording permission flow', () => {
     expect(listSourcesBlock).toContain('SCShareableContent');
   });
 
+  it('restores the overlay before enabling current-screen annotation controls', () => {
+    const currentScreenBlock = overlayFunctionBlock(/async function beginCurrentScreenCapture\(\)/);
+    const readyControlsBlock = overlayFunctionBlock(/function ensureAnnotatingControlsReady/);
+
+    expect(currentScreenBlock).toContain("invoke<string>('capture_current_screen_snapshot')");
+    expect(currentScreenBlock).toContain('await resumeOverlayVisible()');
+    expect(currentScreenBlock.indexOf('await resumeOverlayVisible()')).toBeLessThan(currentScreenBlock.indexOf("showStep('annotating')"));
+    expect(currentScreenBlock).toContain("ensureAnnotatingControlsReady('current_screen_snapshot')");
+
+    expect(readyControlsBlock).toContain("toolbarEl.style.display = 'flex'");
+    expect(readyControlsBlock).toContain("root.style.pointerEvents = 'auto'");
+    expect(readyControlsBlock).toContain("root.classList.add('cursor-annotating')");
+    expect(readyControlsBlock).toContain('overlay.annotating_controls.ready');
+  });
+
   it('keeps passive permission checks from running screenshot probes', () => {
     const permissionBlock = rustFunctionBlock('get_screen_capture_permission');
     const diagnosticsBlock = rustFunctionBlock('get_screen_capture_diagnostics');

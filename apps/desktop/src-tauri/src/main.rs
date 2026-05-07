@@ -1144,10 +1144,8 @@ async fn capture_selected_source(app: AppHandle, kind: String, source_id: u64) -
     .await
     .map_err(|e| format!("capture_selected_source: {e}"))?;
 
-    if let Some(ov) = app.get_webview_window("overlay") {
-        let _ = ov.show();
-    }
-    tokio::time::sleep(Duration::from_millis(80)).await;
+    show_overlay_window(&app);
+    tokio::time::sleep(Duration::from_millis(120)).await;
     OVERLAY_HIDDEN_FOR_SCREENSHOT.store(false, Ordering::SeqCst);
 
     let png_bytes = png_result?;
@@ -1177,10 +1175,8 @@ async fn capture_current_screen_snapshot(app: AppHandle) -> Result<String, Strin
         .await
         .map_err(|e| format!("capture_current_screen_snapshot: {e}"))??;
 
-    if let Some(ov) = app.get_webview_window("overlay") {
-        let _ = ov.show();
-    }
-    tokio::time::sleep(Duration::from_millis(80)).await;
+    show_overlay_window(&app);
+    tokio::time::sleep(Duration::from_millis(120)).await;
     OVERLAY_HIDDEN_FOR_SCREENSHOT.store(false, Ordering::SeqCst);
 
     log_backend(

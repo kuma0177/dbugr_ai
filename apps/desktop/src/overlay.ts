@@ -357,6 +357,7 @@ const setupFolderBtn = document.getElementById('setup-folder-btn') as HTMLButton
 const setupFolderPath = document.getElementById('setup-folder-path')!;
 const setupStartBtn = document.getElementById('setup-start') as HTMLButtonElement;
 const toolSaveBtn = document.getElementById('tool-save') as HTMLButtonElement;
+const toolbarEl = document.getElementById('toolbar') as HTMLDivElement;
 
 function sandclockMarkup(label: string) {
   return `<span class="sandclock-inline"><span class="sandclock-spinner" aria-hidden="true">⌛</span><span>${label}</span></span>`;
@@ -394,7 +395,10 @@ function showStep(s: OverlayStep) {
         el.style.removeProperty('pointer-events');
       });
     });
+    toolbarEl.style.display = 'flex';
+    toolbarEl.style.pointerEvents = 'auto';
   }
+  addDebugLog(`overlay.step.changed step=${s} root_pointer=${root.style.pointerEvents || 'default'} annotation_ui=${annotationUiEl.style.display || 'default'} toolbar=${toolbarEl.style.display || 'default'} img=${screenshotImgEl.style.display || 'default'}`);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -503,9 +507,12 @@ async function beginCurrentScreenCapture() {
     const dataUrl = await invoke<string>('capture_current_screen_snapshot');
     applySourceFrameDisplay(dataUrl);
     await screenshotImgEl.decode().catch(() => {});
+    await resumeOverlayVisible();
     screenshotCaptured = false;
     currentScreenshotDataUrl = '';
     showStep('annotating');
+    setTool(activeTool, true);
+    ensureAnnotatingControlsReady('current_screen_snapshot');
     setToast('Draw a region or pin on the snapshot. The saved image uses your crop.');
     updateCounter();
     addDebugLog(`capture.current_screen.success len=${dataUrl.length}`);
@@ -516,6 +523,30 @@ async function beginCurrentScreenCapture() {
   } finally {
     captureInProgress = false;
   }
+}
+
+function ensureAnnotatingControlsReady(reason: string) {
+  annotationUiEl.style.display = 'block';
+  hudPickerEl.style.display = 'none';
+  hudSetupEl.style.display = 'none';
+  hudCaptureEl.style.display = 'none';
+  hudSavedEl.style.display = 'none';
+  stepPickerEl.style.display = 'none';
+  stepSetupEl.style.display = 'none';
+  toolbarEl.style.display = 'flex';
+  toolbarEl.style.pointerEvents = 'auto';
+  root.style.pointerEvents = 'auto';
+  root.classList.add('cursor-annotating');
+  void document.documentElement.offsetHeight;
+
+  const imgRect = screenshotImgEl.getBoundingClientRect();
+  const toolbarRect = toolbarEl.getBoundingClientRect();
+  addDebugLog(
+    `overlay.annotating_controls.ready reason=${reason} step=${step} tool=${activeTool} ` +
+    `source_frame=${Boolean(sourceFrameDataUrl)} img_display=${screenshotImgEl.style.display || 'default'} ` +
+    `img_w=${Math.round(imgRect.width)} img_h=${Math.round(imgRect.height)} ` +
+    `toolbar_display=${toolbarEl.style.display || 'default'} toolbar_w=${Math.round(toolbarRect.width)} toolbar_h=${Math.round(toolbarRect.height)}`,
+  );
 }
 
 function beginCaptureFlowForMode(mode: CaptureSourceMode = captureSourceMode) {
