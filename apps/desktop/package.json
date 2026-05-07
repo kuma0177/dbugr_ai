@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build --bundles app",
-    "bundle": "tauri build",
+    "build": "tauri build --bundles app && bash src-tauri/scripts/postbundle-macos.sh",
+    "bundle": "tauri build && bash src-tauri/scripts/postbundle-macos.sh",
     "vite": "vite",
     "preview": "vite preview",
     "test": "vitest run",

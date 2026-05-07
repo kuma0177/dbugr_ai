@@ -495,6 +495,37 @@ async function showCaptureSourceStep() {
   await loadCaptureSources();
 }
 
+async function beginCurrentScreenCapture() {
+  captureInProgress = true;
+  setToast('Freezing your current screen…');
+  addDebugLog('capture.current_screen.start');
+  try {
+    const dataUrl = await invoke<string>('capture_current_screen_snapshot');
+    applySourceFrameDisplay(dataUrl);
+    await screenshotImgEl.decode().catch(() => {});
+    screenshotCaptured = false;
+    currentScreenshotDataUrl = '';
+    showStep('annotating');
+    setToast('Draw a region or pin on the snapshot. The saved image uses your crop.');
+    updateCounter();
+    addDebugLog(`capture.current_screen.success len=${dataUrl.length}`);
+  } catch (err) {
+    addDebugLog(`capture.current_screen.failed error=${String(err)}`);
+    setToast('Could not freeze the current screen. Pick a display or window instead.');
+    await showCaptureSourceStep();
+  } finally {
+    captureInProgress = false;
+  }
+}
+
+function beginCaptureFlowForMode(mode: CaptureSourceMode = captureSourceMode) {
+  if (mode === 'screen') {
+    void beginCurrentScreenCapture();
+    return;
+  }
+  void showCaptureSourceStep();
+}
+
 async function ensureScreenshotImgReady(): Promise<void> {
   if (!sourceFrameDataUrl || !screenshotImgEl.src) {
     throw new Error('No snapshot');
@@ -1043,7 +1074,7 @@ function startPreparedSession(payload: OverlayLaunchPayload) {
   githubRepo = payload.githubRepo ?? '';
   setTool('region', false);
   updateSessionModeChrome();
-  void showCaptureSourceStep();
+  beginCaptureFlowForMode();
 }
 
 function clearAnnotationDOM() {
@@ -1262,7 +1293,7 @@ document.getElementById('saved-close')!.addEventListener('click', e => {
 document.getElementById('saved-more')!.addEventListener('click', e => {
   e.stopPropagation();
   clearCurrentDraftCaptureState();
-  void showCaptureSourceStep();
+  beginCaptureFlowForMode();
 });
 
 document.getElementById('saved-open-session')!.addEventListener('click', async e => {
@@ -1311,7 +1342,7 @@ function enterAnnotating() {
   }
 
   setTool('region', false);
-  void showCaptureSourceStep();
+  beginCaptureFlowForMode();
 }
 
 // ── Tool selection ────────────────────────────────────────────────────────────

@@ -1161,6 +1161,35 @@ async fn capture_selected_source(app: AppHandle, kind: String, source_id: u64) -
     Ok(encode_png_bytes_to_data_url(&png_bytes))
 }
 
+/// Captures the current screen silently for the default annotation flow.
+/// Unlike source listing, this does not depend on ScreenCaptureKit returning
+/// a window/display index first; it simply freezes what the user is already
+/// looking at and lets the overlay crop on top.
+#[tauri::command]
+async fn capture_current_screen_snapshot(app: AppHandle) -> Result<String, String> {
+    OVERLAY_HIDDEN_FOR_SCREENSHOT.store(true, Ordering::SeqCst);
+    if let Some(ov) = app.get_webview_window("overlay") {
+        let _ = ov.hide();
+    }
+    tokio::time::sleep(Duration::from_millis(180)).await;
+
+    let data_url = tokio::task::spawn_blocking(take_silent_screenshot)
+        .await
+        .map_err(|e| format!("capture_current_screen_snapshot: {e}"))??;
+
+    if let Some(ov) = app.get_webview_window("overlay") {
+        let _ = ov.show();
+    }
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    OVERLAY_HIDDEN_FOR_SCREENSHOT.store(false, Ordering::SeqCst);
+
+    log_backend(
+        "overlay.capture.current_screen",
+        format!("data_url_len={}", data_url.len()),
+    );
+    Ok(data_url)
+}
+
 #[tauri::command]
 fn suspend_overlay(app: AppHandle) -> Result<(), String> {
     log_backend("overlay.suspend.start", "reason=idle_or_blur");
@@ -1841,6 +1870,7 @@ fn main() {
             hide_overlay,
             list_capture_sources,
             capture_selected_source,
+            capture_current_screen_snapshot,
             suspend_overlay,
             resume_overlay,
             append_overlay_debug_log,
