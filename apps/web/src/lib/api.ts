@@ -4,6 +4,9 @@ import type {
   ImprovementTask,
   Organization,
   OrganizationMembership,
+  WorkspaceSummary,
+  AdminOverview,
+  PlatformAdminOverview,
   Invite,
   AIReviewSummary,
   CurationDecision,
@@ -11,9 +14,44 @@ import type {
   CreateFeedbackSessionRequest,
   CreateCommentRequest,
   CreateTaskRequest,
+  DesktopSessionSyncRequest,
+  DesktopSessionSyncResponse,
 } from '@feedbackagent/shared';
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:3001/api';
+
+function formatApiError(error: unknown): string | null {
+  if (!error) return null;
+  if (typeof error === 'string') return error;
+
+  if (typeof error === 'object') {
+    const maybe = error as {
+      message?: unknown;
+      formErrors?: unknown;
+      fieldErrors?: unknown;
+    };
+
+    if (typeof maybe.message === 'string' && maybe.message.trim()) {
+      return maybe.message;
+    }
+
+    if (Array.isArray(maybe.formErrors)) {
+      const first = maybe.formErrors.find((entry) => typeof entry === 'string' && entry.trim());
+      if (typeof first === 'string') return first;
+    }
+
+    if (maybe.fieldErrors && typeof maybe.fieldErrors === 'object') {
+      for (const value of Object.values(maybe.fieldErrors)) {
+        if (Array.isArray(value)) {
+          const first = value.find((entry) => typeof entry === 'string' && entry.trim());
+          if (typeof first === 'string') return first;
+        }
+      }
+    }
+  }
+
+  return null;
+}
 
 function phase2AuthHeaders() {
   if (typeof window === 'undefined') return {};
@@ -33,6 +71,9 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   for (const [key, value] of Object.entries(phase2AuthHeaders())) {
     headers.set(key, value);
   }
+  const method = init?.method ?? 'GET';
+  const startedAt = performance.now();
+  console.info('[phase2-web] api.request.started', { method, path });
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers,
@@ -47,12 +88,33 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
-    throw new Error(json?.error ?? raw ?? 'Request failed');
+    const message = formatApiError(json?.error) ?? raw ?? 'Request failed';
+    console.warn('[phase2-web] api.request.failed', {
+      method,
+      path,
+      status: res.status,
+      durationMs: Math.round(performance.now() - startedAt),
+      message,
+    });
+    throw new Error(message);
   }
 
   if (!json) {
+    console.warn('[phase2-web] api.request.empty_response', {
+      method,
+      path,
+      status: res.status,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
     throw new Error('The server returned an empty response.');
   }
+
+  console.info('[phase2-web] api.request.completed', {
+    method,
+    path,
+    status: res.status,
+    durationMs: Math.round(performance.now() - startedAt),
+  });
 
   return json.data as T;
 }
@@ -74,6 +136,7 @@ export const api = {
       user: { id: string; name: string; email: string };
       created: boolean;
       welcomeEmailSent: boolean;
+      workspace?: WorkspaceSummary | null;
     }>('/phase2/auth/email-code/verify', {
       method: 'POST',
       body: JSON.stringify(body),
@@ -82,6 +145,7 @@ export const api = {
       user: { id: string; name: string; email: string };
       created: boolean;
       welcomeEmailSent: boolean;
+      workspace?: WorkspaceSummary | null;
     }>('/phase2/auth/identity/ensure', {
       method: 'POST',
       body: JSON.stringify(body),
@@ -94,6 +158,35 @@ export const api = {
       invites: Invite[];
       policies: Record<string, unknown>;
     }>('/phase2/bootstrap'),
+    adminOverview: () => apiFetch<AdminOverview>('/phase2/admin/overview'),
+    platformAdminOverview: (params?: { q?: string; organizationId?: string }) => {
+      const search = new URLSearchParams();
+      if (params?.q) search.set('q', params.q);
+      if (params?.organizationId) search.set('organizationId', params.organizationId);
+      return apiFetch<PlatformAdminOverview>(`/phase2/platform-admin/overview${search.size ? `?${search.toString()}` : ''}`);
+    },
+    updateAdminMember: (membershipId: string, body: { role?: string; status?: string; teamId?: string | null }) =>
+      apiFetch<{ member: OrganizationMembership }>(`/phase2/admin/members/${membershipId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    removeAdminMember: (membershipId: string) =>
+      apiFetch<{ member: OrganizationMembership }>(`/phase2/admin/members/${membershipId}`, {
+        method: 'DELETE',
+      }),
+    createAdminInvite: (body: { email: string; role?: string; teamId?: string | null }) =>
+      apiFetch<{ invite: Invite & { acceptUrl?: string } }>('/phase2/admin/invites', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    revokeAdminInvite: (inviteId: string) =>
+      apiFetch<{ invite: Invite }>(`/phase2/admin/invites/${inviteId}`, {
+        method: 'DELETE',
+      }),
+    deleteAdminAudit: (auditLogId: string) =>
+      apiFetch<{ deleted: boolean; auditLogId: string }>(`/phase2/admin/audit/${auditLogId}`, {
+        method: 'DELETE',
+      }),
     onboarding: (body: {
       email?: string;
       name: string;
@@ -140,6 +233,11 @@ export const api = {
       }),
     feed: (scope: 'private' | 'organization' | 'public') =>
       apiFetch<{ scope: string; sessions: FeedbackSession[] }>(`/phase2/feed?scope=${scope}`),
+    syncDesktopSession: (body: DesktopSessionSyncRequest) =>
+      apiFetch<DesktopSessionSyncResponse>('/phase2/desktop-sessions/sync', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
     contribute: (sessionId: string, body: {
       targetType: 'session' | 'capture' | 'annotation';
       contributionType: 'comment' | 'suggested_edit' | 'question' | 'risk' | 'requirement';

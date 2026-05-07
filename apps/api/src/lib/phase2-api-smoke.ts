@@ -3,8 +3,8 @@ const BASE = process.env.PHASE2_API_BASE_URL ?? 'http://127.0.0.1:3001/api';
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const startedAt = Date.now();
   const response = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
     ...init,
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
   });
   const json = await response.json().catch(() => ({}));
   const durationMs = Date.now() - startedAt;
@@ -60,10 +60,78 @@ async function main() {
     method: 'POST',
     body: JSON.stringify({ appUrl: 'http://localhost:3000' }),
   });
-  await request('/phase2/desktop-link/redeem', {
+  const redeemedLink = await request<{ desktopLinkToken: string }>('/phase2/desktop-link/redeem', {
     method: 'POST',
     body: JSON.stringify({ code: desktopLink.code, desktopDeviceName: 'Phase 2 smoke Mac' }),
   });
+  if (!redeemedLink.desktopLinkToken) {
+    throw new Error('Phase 2 desktop link redeem did not return a desktop token.');
+  }
+
+  async function syncDesktopFlow(flow: 'direct' | 'team' | 'public') {
+    const synced = await request<{
+      mapping: {
+        desktopFlow: string;
+        visibility: string;
+        submissionFlow: string;
+        reviewStatus: string;
+      };
+      nextAction: string;
+      syncedFrameCount: number;
+      syncedAnnotationCount: number;
+    }>('/phase2/desktop-sessions/sync', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${redeemedLink.desktopLinkToken}` },
+      body: JSON.stringify({
+        localSessionId: `phase2-smoke-${flow}`,
+        title: `Phase 2 smoke ${flow}`,
+        about: 'Smoke test desktop bridge session.',
+        projectFolder: '/tmp/debugr-smoke',
+        submissionFlow: flow,
+        providerTarget: 'codex',
+        captures: [
+          {
+            id: `capture-${flow}`,
+            title: 'Smoke capture',
+            note: 'Captured from the Mac app smoke test.',
+            previewDataUrl: 'desktop-capture://smoke-preview',
+            timestampMs: 1000,
+            annotations: [
+              {
+                id: `annotation-${flow}`,
+                text: `Smoke ${flow} annotation should sync to the web feed.`,
+                type: 'note',
+                x: 120,
+                y: 80,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const expected = flow === 'direct'
+      ? { visibility: 'private', submissionFlow: 'direct', nextAction: 'local_ai_handoff' }
+      : flow === 'team'
+        ? { visibility: 'org', submissionFlow: 'internal_review', nextAction: 'open_team_review' }
+        : { visibility: 'public', submissionFlow: 'public_feed', nextAction: 'open_public_curation' };
+
+    if (
+      synced.mapping.visibility !== expected.visibility ||
+      synced.mapping.submissionFlow !== expected.submissionFlow ||
+      synced.nextAction !== expected.nextAction ||
+      synced.syncedFrameCount !== 1 ||
+      synced.syncedAnnotationCount !== 1
+    ) {
+      throw new Error(`Desktop bridge mapping failed for ${flow}: ${JSON.stringify(synced)}`);
+    }
+
+    return synced;
+  }
+
+  await syncDesktopFlow('direct');
+  await syncDesktopFlow('team');
+  await syncDesktopFlow('public');
 
   const feed = await request<{ sessions: Array<{ id: string; comments?: Array<{ id: string }> }> }>('/phase2/feed?scope=organization');
   const session = feed.sessions[0];
@@ -124,3 +192,5 @@ void main().catch((error) => {
   console.error('[phase2-smoke] failed', error);
   process.exitCode = 1;
 });
+
+export {};

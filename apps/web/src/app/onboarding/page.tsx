@@ -2,6 +2,7 @@
 
 import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { JourneyInfographic } from '@/app/journey-infographic';
 import { api } from '@/lib/api';
 import { clearOnboardingState, readOnboardingState, writeOnboardingState } from '@/lib/onboarding';
@@ -10,12 +11,30 @@ type OnboardingStep = 'sign-in' | 'workspace' | 'link';
 type AuthFlow = 'sign-in' | 'sign-up';
 const MAX_INVITE_EMAILS = 10;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MAC_DMG_DOWNLOAD_URL = process.env.NEXT_PUBLIC_MAC_DMG_URL ?? 'https://github.com/kuma0177/debgr_ai/releases/download/stable-macos-claude-codex-cli/dbugr-ai-0.0.1-macos-aarch64.dmg';
+const MAC_DMG_DOWNLOAD_URL = process.env.NEXT_PUBLIC_MAC_DMG_URL ?? '/downloads/dbugr-ai-0.0.1-macos-aarch64.dmg';
+
+type ExistingWorkspace = {
+  organization: {
+    name: string;
+    logoUrl?: string | null;
+    defaultVisibility?: 'private' | 'org' | 'public';
+  };
+  membership: {
+    role: string;
+    team?: { name: string } | null;
+  };
+};
+
+function deriveWorkspaceName(userName: string) {
+  const firstName = userName.trim().split(/\s+/)[0] || 'My';
+  return `${firstName}'s workspace`;
+}
 
 export default function OnboardingPage() {
-  const [name, setName] = useState('Demo User');
-  const [email, setEmail] = useState('demo@example.com');
-  const [organizationName, setOrganizationName] = useState('Demo Organization');
+  const router = useRouter();
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [organizationName, setOrganizationName] = useState('');
   const [role, setRole] = useState('Founder');
   const [teamName, setTeamName] = useState('Product');
   const [inviteEmails, setInviteEmails] = useState<string[]>([]);
@@ -67,7 +86,9 @@ export default function OnboardingPage() {
     const localState = readOnboardingState();
     if (localState) {
       setName(localState.userName);
-      setEmail(localState.userEmail);
+      if (!incomingEmail) {
+        setEmail(localState.userEmail);
+      }
       setOrganizationName(localState.organizationName);
       setOrganizationLogoPreview(localState.organizationLogoUrl ?? null);
       setOrganizationLogoName(localState.organizationLogoUrl ? 'Selected logo' : '');
@@ -84,27 +105,31 @@ export default function OnboardingPage() {
       }
     }
 
-    console.info('[phase2-web] onboarding.bootstrap.started');
-    api.phase2.bootstrap()
-      .then((data) => {
-        if (!localState) {
-          setName(data.user.name);
-          setEmail(data.user.email);
-          setOrganizationName(data.organization.name);
-          setOrganizationLogoPreview(data.organization.logoUrl ?? null);
-          setOrganizationLogoName(data.organization.logoUrl ? 'Saved logo' : '');
-          setDefaultVisibility((data.organization.defaultVisibility as 'private' | 'org' | 'public') ?? 'private');
-        }
-        console.info('[phase2-web] onboarding.bootstrap.completed', {
-          organizationId: data.organization.id,
-          members: data.members.length,
-          invites: data.invites.length,
+    if (!hasExplicitEntry) {
+      console.info('[phase2-web] onboarding.bootstrap.started');
+      api.phase2.bootstrap()
+        .then((data) => {
+          if (!localState) {
+            setName(data.user.name);
+            if (!incomingEmail) {
+              setEmail(data.user.email);
+            }
+            setOrganizationName(data.organization.name);
+            setOrganizationLogoPreview(data.organization.logoUrl ?? null);
+            setOrganizationLogoName(data.organization.logoUrl ? 'Saved logo' : '');
+            setDefaultVisibility((data.organization.defaultVisibility as 'private' | 'org' | 'public') ?? 'private');
+          }
+          console.info('[phase2-web] onboarding.bootstrap.completed', {
+            organizationId: data.organization.id,
+            members: data.members.length,
+            invites: data.invites.length,
+          });
+        })
+        .catch((error) => {
+          setStatus(`Bootstrap waiting on API: ${error instanceof Error ? error.message : String(error)}`);
+          console.warn('[phase2-web] onboarding.bootstrap.failed', { message: error instanceof Error ? error.message : String(error) });
         });
-      })
-      .catch((error) => {
-        setStatus(`Bootstrap waiting on API: ${error instanceof Error ? error.message : String(error)}`);
-        console.warn('[phase2-web] onboarding.bootstrap.failed', { message: error instanceof Error ? error.message : String(error) });
-      });
+    }
   }, []);
 
   useEffect(() => {
@@ -173,6 +198,27 @@ export default function OnboardingPage() {
     reader.readAsDataURL(file);
   }
 
+  function continueExistingWorkspace(workspace: ExistingWorkspace, user: { name: string; email: string }) {
+    writeOnboardingState({
+      userName: user.name,
+      userEmail: user.email,
+      organizationName: workspace.organization.name,
+      organizationLogoUrl: workspace.organization.logoUrl ?? undefined,
+      role: workspace.membership.role,
+      teamName: workspace.membership.team?.name ?? '',
+      defaultVisibility: workspace.organization.defaultVisibility ?? 'private',
+      inviteEmails: [],
+      completedAt: new Date().toISOString(),
+    });
+    setStatus(`Welcome back, ${user.name}. Opening your ${workspace.organization.name} notes feed.`);
+    console.info('[phase2-web] onboarding.existing_workspace_redirect', {
+      email: user.email,
+      organizationName: workspace.organization.name,
+      role: workspace.membership.role,
+    });
+    router.push('/feed');
+  }
+
   function connectGooglePreview() {
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail) {
@@ -187,13 +233,25 @@ export default function OnboardingPage() {
       authProvider: 'google',
     })
       .then((result) => {
+        const resolvedName = result.user.name || name;
+        const resolvedFlow: AuthFlow = result.created ? 'sign-up' : 'sign-in';
+        setAuthFlow(resolvedFlow);
+        setName(resolvedName);
+        setEmail(result.user.email);
+        if (result.workspace) {
+          continueExistingWorkspace(result.workspace, { name: resolvedName, email: result.user.email });
+          return;
+        }
+        if (!organizationName.trim() || organizationName === 'Demo Organization') {
+          setOrganizationName(deriveWorkspaceName(resolvedName));
+        }
         setAuthMethod('google');
         setIdentityConnected(true);
         setCurrentStep('workspace');
         setStatus(
           result.created
-            ? `Google ${authAction} connected as ${normalizedEmail}. Your Dbugr account is now created${result.welcomeEmailSent ? ' and a welcome email is on the way.' : '.'}`
-            : `Google ${authAction} connected as ${normalizedEmail}. We matched it to your existing Dbugr account.`
+            ? `Google sign up connected as ${normalizedEmail}. Your Dbugr account is now created${result.welcomeEmailSent ? ' and a welcome email is on the way.' : '.'}`
+            : `Google sign in connected as ${normalizedEmail}. We matched it to your existing Dbugr account.`
         );
         console.info('[phase2-web] onboarding.google_preview_connected', { email: normalizedEmail, created: result.created });
       })
@@ -224,9 +282,13 @@ export default function OnboardingPage() {
       .then((result) => {
         setExpectedEmailCode(result.previewCode ?? '');
         setEmailCodeSent(true);
+        const resolvedFlow: AuthFlow = result.accountExists ? 'sign-in' : 'sign-up';
+        if (authFlow !== resolvedFlow) {
+          setAuthFlow(resolvedFlow);
+        }
         const actionLabel = result.accountExists
           ? 'You already have a Dbugr account. Enter the verification code to sign in.'
-          : `This will create your Dbugr account after verification. Enter the code to ${authAction}.`;
+          : 'This will create your Dbugr account after verification. Enter the code to sign up.';
         setStatus(
           result.delivered
             ? `${actionLabel} We sent a code to ${normalizedEmail}. Check your inbox and spam folder. It expires in ${result.expiresInMinutes} minutes.`
@@ -258,13 +320,30 @@ export default function OnboardingPage() {
       setStatus(`Request an email ${authAction} code first.`);
       return;
     }
+    if (!/^\d{6}$/.test(emailCode.trim())) {
+      const message = 'Incorrect Code Received. Enter the 6-digit code from your email.';
+      setEmailCodeError(message);
+      setStatus(message);
+      return;
+    }
     setLoading(true);
     api.phase2.verifyEmailCode({ email: email.trim().toLowerCase(), code: emailCode.trim() })
       .then((result) => {
+        const resolvedName = result.user.name || name;
+        setName(resolvedName);
+        setEmail(result.user.email);
+        if (result.workspace) {
+          continueExistingWorkspace(result.workspace, { name: resolvedName, email: result.user.email });
+          return;
+        }
+        if (!organizationName.trim() || organizationName === 'Demo Organization') {
+          setOrganizationName(deriveWorkspaceName(resolvedName));
+        }
         setAuthMethod('email');
         setIdentityConnected(true);
         setCurrentStep('workspace');
         setEmailCodeError('');
+        setAuthFlow(result.created ? 'sign-up' : 'sign-in');
         setStatus(
           result.created
             ? `Email verified for ${email.trim().toLowerCase()}. Your Dbugr account is now created${result.welcomeEmailSent ? ' and a welcome email is on the way.' : '.'} You can create your organization workspace now.`
@@ -483,7 +562,11 @@ export default function OnboardingPage() {
         </div>
       </section>
 
-      <div className="onboarding-status-banner" role="status" aria-live="polite">
+      <div
+        className={`onboarding-status-banner ${status.includes('already have a Dbugr account') ? 'account-existing' : ''}`}
+        role="status"
+        aria-live="polite"
+      >
         {status}
       </div>
 
@@ -576,14 +659,14 @@ export default function OnboardingPage() {
           </div>
           <div className="identity-context-card">
             <div>
-              <span>Signed in as</span>
+              <span>Account connected</span>
               <strong>{name || 'Dbugr user'}</strong>
-              <p>{email}</p>
+              <p>{email} is ready to create this workspace.</p>
             </div>
             <div>
               <span>{authActionTitle} method</span>
               <strong>{authMethod === 'email' ? 'Email code' : 'Google OAuth'}</strong>
-              <p>{authMethod === 'email' ? 'Verified by one-time code' : `Connected through Google ${authAction}`}</p>
+              <p>{authMethod === 'email' ? 'Verified with a one-time code you entered above.' : `Connected through Google ${authAction}.`}</p>
             </div>
           </div>
           <div className="onboarding-field-grid">

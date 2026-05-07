@@ -12,7 +12,9 @@
     "db:setup": "pnpm db:generate && pnpm db:push && pnpm db:seed",
     "db:migrate": "pnpm --filter @feedbackagent/db migrate",
     "railway:api:prepare-db": "node scripts/prepare-railway-db.mjs",
-    "railway:api:start": "pnpm railway:api:prepare-db && pnpm --filter @feedbackagent/api start"
+    "railway:api:start": "pnpm railway:api:prepare-db && pnpm --filter @feedbackagent/api start",
+    "test:phase2:auth": "pnpm --filter @feedbackagent/api test:phase2:auth",
+    "phase2:comment-digest": "pnpm --filter @feedbackagent/api worker:comment-digest"
   },
   "workspaces": [
     "apps/*",

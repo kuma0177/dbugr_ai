@@ -3,9 +3,12 @@
   "version": "0.0.1",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "pnpm --filter @feedbackagent/shared build && pnpm --filter @feedbackagent/db build && pnpm --filter @feedbackagent/integrations build && tsc",
     "start": "node dist/index.js",
     "test:phase2": "tsx src/lib/phase2-api-smoke.ts",
+    "test:phase2:auth": "tsx src/lib/phase2-auth-regression.ts",
+    "test:phase2:all": "pnpm test:phase2 && pnpm test:phase2:auth",
+    "worker:comment-digest": "tsx src/lib/phase2-comment-digest.ts",
     "seed": "tsx src/lib/seed.ts"
   },
   "dependencies": {

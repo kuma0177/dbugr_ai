@@ -1,5 +1,4 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
-import { requestScreenRecordingPermission } from 'tauri-plugin-macos-permissions-api';
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 import { listen, emit } from '@tauri-apps/api/event';
 import './index.css';
@@ -39,6 +38,7 @@ import {
   getPromptDiagnostics,
   getCombinedPromptDiagnostics,
   buildAiCliCommand,
+  buildDesktopSessionSyncPayload,
 } from './core';
 
 /** Image URL suitable for `<img src>` — Tauri cannot load raw POSIX paths without conversion. */
@@ -79,7 +79,22 @@ interface PersistedState {
   target: Target;
 }
 
-const API = 'http://127.0.0.1:3001/api';
+interface DesktopLinkProfile {
+  userId: string;
+  userEmail: string;
+  userName: string;
+  organizationId: string;
+  organizationName: string;
+  apiBaseUrl: string;
+  appUrl?: string;
+  linkedAt: string;
+  deviceId: string;
+}
+
+const DEFAULT_API = 'http://127.0.0.1:3001/api';
+const API_BASE_URL_KEY = 'debugr-desktop-api-base-url';
+const DESKTOP_LINK_PROFILE_KEY = 'debugr-desktop-link-profile';
+const DESKTOP_DEVICE_ID_KEY = 'debugr-desktop-device-id';
 const APP_STATE_KEY = 'debugr-desktop-v2-state';
 const MAX_ANNOTATIONS = 5;
 const UI_LOG_PREFIX = '[debugr-ui]';
@@ -165,6 +180,44 @@ let providerConnections: Record<Target, ProviderConnectionState> = {
 
 const win = getCurrentWindow();
 const app = document.querySelector<HTMLDivElement>('#app')!;
+
+function safeErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return 'Unknown error';
+  }
+}
+
+function apiBaseUrl() {
+  return localStorage.getItem(API_BASE_URL_KEY) || DEFAULT_API;
+}
+
+function getDesktopDeviceId() {
+  const existing = localStorage.getItem(DESKTOP_DEVICE_ID_KEY);
+  if (existing) return existing;
+  const next = crypto.randomUUID();
+  localStorage.setItem(DESKTOP_DEVICE_ID_KEY, next);
+  return next;
+}
+
+function saveDesktopLinkProfile(profile: DesktopLinkProfile) {
+  localStorage.setItem(DESKTOP_LINK_PROFILE_KEY, JSON.stringify(profile));
+  localStorage.setItem(API_BASE_URL_KEY, profile.apiBaseUrl);
+}
+
+function readDesktopLinkProfile(): DesktopLinkProfile | null {
+  const raw = localStorage.getItem(DESKTOP_LINK_PROFILE_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as DesktopLinkProfile;
+  } catch {
+    localStorage.removeItem(DESKTOP_LINK_PROFILE_KEY);
+    return null;
+  }
+}
 
 function scheduleScreenshotCacheRefresh() {
   if (screenshotCacheRefreshQueued) return;
@@ -371,8 +424,9 @@ function providerLogoUrl(provider: Target) {
 
 function bindPermissionNoteActions(executablePath: string) {
   document.getElementById('open-screen-settings-btn')?.addEventListener('click', async () => {
-    await requestScreenRecordingPermission().catch(() => {});
-    await invoke('request_screen_capture_permission').catch(() => false);
+    // Do not request TCC permission from the session window. Opening settings
+    // keeps the Apple modal from blocking Debugr's own chooser/sidebar.
+    await win.hide().catch(() => {});
     await invoke('open_screen_capture_settings').catch(() => {});
   });
   document.getElementById('reveal-runtime-btn')?.addEventListener('click', () => {
@@ -448,6 +502,10 @@ function fmtDate(iso: string) {
 // Local wrappers so module-level `sessions` state is used transparently
 function sortedSessions() { return sortedSessionsUtil(sessions); }
 
+function localDesktopSessionsForPicker() {
+  return sortedSessions().filter((session) => session.captures.length > 0 || totalAnnotations(session) > 0);
+}
+
 function groupSessions() {
   const now = new Date();
   const yesterday = new Date(now);
@@ -502,10 +560,16 @@ function queuePersistMirrors() {
   }
   persistMirrorsTimer = window.setTimeout(() => {
     persistMirrorsTimer = null;
-    const pickerSessions = buildPickerSessionCache(sessions);
+    const localSessions = localDesktopSessionsForPicker();
+    const pickerSessions = buildPickerSessionCache(localSessions);
+    logUi('workspace_persist_local_session_mirrors', {
+      totalSessions: sessions.length,
+      localPickerSessions: localSessions.length,
+      skippedRemoteOrEmptySessions: Math.max(0, sessions.length - localSessions.length),
+    });
     // Mirror sessions to disk so the local MCP server can read them.
     // Fire-and-forget — never block the UI on this.
-    invoke('save_sessions_to_disk', { payload: { sessions } }).catch(() => {
+    invoke('save_sessions_to_disk', { payload: { sessions: localSessions } }).catch(() => {
       // silently ignore — disk write is best-effort
     });
     invoke('save_picker_sessions_cache', {
@@ -919,6 +983,10 @@ function renderWelcome() {
       collaborationReady: false,
       lastTarget: target,
       lastExplicitSaveAt: null,
+      webSessionId: null,
+      webSyncedAt: null,
+      webSyncStatus: 'idle',
+      webSyncError: null,
     };
     sessions.unshift(session);
     activeSessionId = session.id;
@@ -1745,6 +1813,7 @@ function renderWorkspacePanel() {
         renderSessionList();
         window.requestAnimationFrame(() => {
           persistAppState();
+          void syncSessionToWeb(session, 'submission_flow_selected');
           clearPendingFlowSelectionIndicator();
           pendingFlowSelection = null;
           renderWorkspacePanel();
@@ -2422,7 +2491,7 @@ async function loadSessionsFromApi(options: { force?: boolean } = {}) {
   sessionsApiLoadInFlight = (async () => {
   try {
     logUi('workspace_load_sessions_start', { existingLocalSessions: sessions.length });
-    const response = await fetch(`${API}/feedback-sessions`);
+    const response = await fetch(`${apiBaseUrl()}/feedback-sessions`);
     if (!response.ok) throw new Error('Could not load sessions');
     const json = await response.json() as {
       data: Array<{
@@ -2488,6 +2557,198 @@ async function loadSessionsFromApi(options: { force?: boolean } = {}) {
     await sessionsApiLoadInFlight;
   } finally {
     sessionsApiLoadInFlight = null;
+  }
+}
+
+async function loadDesktopLinkToken(): Promise<string | null> {
+  try {
+    const token = await invoke<string | null>('load_desktop_link_token');
+    return token?.trim() || null;
+  } catch (error) {
+    logUi('desktop_link_token_load_failed', { error: safeErrorMessage(error).slice(0, 180) });
+    return null;
+  }
+}
+
+async function syncSessionToWeb(session: Session, reason: string) {
+  if ((window as unknown as { __DBUGR_DISABLE_API_SYNC__?: boolean }).__DBUGR_DISABLE_API_SYNC__) {
+    logUi('desktop_session_sync_skipped_for_test', { sessionId: session.id, reason });
+    return;
+  }
+
+  session.webSyncStatus = 'syncing';
+  session.webSyncError = null;
+  persistAppState();
+  refreshSessionMetaDisplay(session);
+  renderSessionList();
+
+  const token = await loadDesktopLinkToken();
+  if (!token) {
+    session.webSyncStatus = 'failed';
+    session.webSyncError = 'Link this Mac from Dbugr web onboarding before syncing team or public review.';
+    persistAppState();
+    refreshSessionMetaDisplay(session);
+    renderSessionList();
+    logUi('desktop_session_sync_missing_token', {
+      sessionId: session.id,
+      reason,
+      flow: session.submissionFlow,
+    });
+    return;
+  }
+
+  const payload = buildDesktopSessionSyncPayload(session, target);
+  logUi('desktop_session_sync_started', {
+    sessionId: session.id,
+    reason,
+    flow: session.submissionFlow,
+    captureCount: payload.captures.length,
+    annotationCount: payload.captures.reduce((count, capture) => count + capture.annotations.length, 0),
+    apiBaseUrl: apiBaseUrl(),
+  });
+
+  try {
+    const response = await fetch(`${apiBaseUrl()}/phase2/desktop-sessions/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    const json = await response.json().catch(() => ({})) as {
+      data?: { session?: { id?: string }; nextAction?: string };
+      error?: unknown;
+    };
+    if (!response.ok) {
+      const message = typeof json.error === 'string'
+        ? json.error
+        : response.status === 401
+          ? 'This Mac is not linked anymore. Use Relink Mac app from onboarding.'
+          : `Web sync failed with status ${response.status}.`;
+      throw new Error(message);
+    }
+
+    session.webSessionId = json.data?.session?.id ?? session.webSessionId ?? null;
+    session.webSyncedAt = new Date().toISOString();
+    session.webSyncStatus = 'synced';
+    session.webSyncError = null;
+    persistAppState();
+    refreshSessionMetaDisplay(session);
+    renderSessionList();
+    logUi('desktop_session_sync_completed', {
+      sessionId: session.id,
+      webSessionId: session.webSessionId,
+      reason,
+      nextAction: json.data?.nextAction ?? null,
+    });
+  } catch (error) {
+    session.webSyncStatus = 'failed';
+    session.webSyncError = safeErrorMessage(error);
+    persistAppState();
+    refreshSessionMetaDisplay(session);
+    renderSessionList();
+    logUi('desktop_session_sync_failed', {
+      sessionId: session.id,
+      reason,
+      flow: session.submissionFlow,
+      error: session.webSyncError.slice(0, 300),
+    });
+  }
+}
+
+async function handleDesktopDeepLink(rawUrl: string) {
+  logUi('desktop_link_deep_link_received', { urlChars: rawUrl.length });
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    logUi('desktop_link_deep_link_invalid_url');
+    return;
+  }
+
+  const code = parsed.searchParams.get('code')?.trim();
+  const apiParam = parsed.searchParams.get('api')?.trim();
+  const appParam = parsed.searchParams.get('app')?.trim();
+  if (!code) {
+    logUi('desktop_link_deep_link_missing_code');
+    return;
+  }
+  if (apiParam) localStorage.setItem(API_BASE_URL_KEY, apiParam);
+
+  const baseUrl = apiParam || apiBaseUrl();
+  const deviceId = getDesktopDeviceId();
+  logUi('desktop_link_redeem_started', {
+    apiBaseUrl: baseUrl,
+    deviceId,
+    codeChars: code.length,
+  });
+
+  try {
+    const response = await fetch(`${baseUrl}/phase2/desktop-link/redeem`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code,
+        desktopDeviceId: deviceId,
+        desktopDeviceName: 'Dbugr Mac app',
+      }),
+    });
+    const json = await response.json().catch(() => ({})) as {
+      data?: {
+        desktopLinkToken?: string;
+        user?: { id?: string; email?: string; name?: string };
+        organization?: { id?: string; name?: string };
+      };
+      error?: unknown;
+    };
+    if (!response.ok || !json.data?.desktopLinkToken) {
+      const message = typeof json.error === 'string'
+        ? json.error
+        : `Could not link this Mac. Status ${response.status}.`;
+      throw new Error(message);
+    }
+
+    await invoke('save_desktop_link_token', { token: json.data.desktopLinkToken });
+    const user = json.data.user ?? {};
+    const organization = json.data.organization ?? {};
+    const profile: DesktopLinkProfile = {
+      userId: user.id ?? '',
+      userEmail: user.email ?? authState.email,
+      userName: user.name ?? authState.name,
+      organizationId: organization.id ?? '',
+      organizationName: organization.name ?? authState.company,
+      apiBaseUrl: baseUrl,
+      appUrl: appParam,
+      linkedAt: new Date().toISOString(),
+      deviceId,
+    };
+    saveDesktopLinkProfile(profile);
+    authState = {
+      ...authState,
+      authenticated: true,
+      profileInitialized: true,
+      name: profile.userName || authState.name,
+      email: profile.userEmail || authState.email,
+      company: profile.organizationName || authState.company,
+      avatarInitials: (profile.userName || profile.userEmail || 'DB')
+        .split(/\s+|@/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase())
+        .join('') || 'DB',
+    };
+    persistAppState();
+    logUi('desktop_link_redeem_completed', {
+      userId: profile.userId,
+      organizationId: profile.organizationId,
+      apiBaseUrl: profile.apiBaseUrl,
+      deviceId: profile.deviceId,
+    });
+    render();
+  } catch (error) {
+    logUi('desktop_link_redeem_failed', { error: safeErrorMessage(error).slice(0, 300) });
+    window.alert(`${safeErrorMessage(error)}\n\nUse Relink Mac app from Dbugr onboarding to create a fresh link.`);
   }
 }
 
@@ -2774,9 +3035,19 @@ async function sendSession() {
 }
 
 async function listenForAnnotations() {
+  await listen<string>('dbugr-deep-link', (event) => {
+    void handleDesktopDeepLink(event.payload);
+  });
+
   await listen('request-sessions', async () => {
     const emitPickerSessions = async () => {
-      await emit('sessions-list', sortedSessions().map((session) => ({
+      const pickerSessions = localDesktopSessionsForPicker();
+      logUi('workspace_picker_sessions_emit', {
+        source: 'local_desktop_only',
+        localPickerSessions: pickerSessions.length,
+        totalSessions: sessions.length,
+      });
+      await emit('sessions-list', pickerSessions.map((session) => ({
         id: session.id,
         title: session.title,
         createdAt: session.createdAt,
@@ -2785,9 +3056,9 @@ async function listenForAnnotations() {
     };
 
     await emitPickerSessions();
-    void loadSessionsFromApi().then(async () => {
-      await emitPickerSessions();
-    }).catch(() => {});
+    logUi('workspace_picker_sessions_api_refresh_skipped', {
+      reason: 'Annotation picker must only show local desktop sessions. Web review sessions are opened from the web dashboard.',
+    });
   });
 
   await listen<{
@@ -2882,12 +3153,14 @@ async function listenForAnnotations() {
       preview_img_usable: Boolean(screenshotImgSrc(screenshotStored)),
     });
 
+    let savedSession: Session | null = null;
     if (targetSession) {
       const session = targetSession;
       session.captures.unshift(capture);
       session.about = payloadAbout || (session.about ?? '');
       session.projectFolder = normalizeProjectFolderInput(event.payload.localFolder) ?? session.projectFolder ?? null;
       session.githubRepo = payloadGithubRepo || (session.githubRepo ?? '');
+      savedSession = session;
       activeSessionId = session.id;
       activeCaptureId = capture.id;
       activeAnnotationId = capture.annotations[0]?.id ?? null;
@@ -2918,8 +3191,13 @@ async function listenForAnnotations() {
         collaborationReady: false,
         lastTarget: target,
         lastExplicitSaveAt: null,
+        webSessionId: null,
+        webSyncedAt: null,
+        webSyncStatus: 'idle',
+        webSyncError: null,
       };
       sessions.unshift(session);
+      savedSession = session;
       activeSessionId = session.id;
       activeCaptureId = capture.id;
       activeAnnotationId = capture.annotations[0]?.id ?? null;
@@ -2938,6 +3216,12 @@ async function listenForAnnotations() {
 
     sessions = sortedSessions();
     persistAppState();
+    if (
+      savedSession &&
+      (savedSession.webSessionId || savedSession.submissionFlow === 'team' || savedSession.submissionFlow === 'public')
+    ) {
+      void syncSessionToWeb(savedSession, 'annotations_saved');
+    }
     logUi('workspace_annotations_saved_persisted', {
       sessionCount: sessions.length,
       activeSessionId,
@@ -3100,7 +3384,6 @@ async function init() {
   hydrateAppState();
   queuePersistMirrors();
   await loadProviderConfig();
-  invoke('request_screen_capture_permission').catch(() => {});
   // Check Cursor installation without blocking render
   invoke<boolean>('check_cursor_installed').then((installed) => {
     cursorInstalled = installed;

@@ -18,7 +18,7 @@ This plan is a draft for confirmation before implementation.
 
 ## Build Status
 
-Current implementation status as of 2026-05-03:
+Current implementation status as of 2026-05-06:
 
 - [x] Phase 2 schema spine exists for IAM, organization policy, social contributions, curation, AI preflight, provider credential metadata, submissions, and audit events.
 - [x] Phase 2 API endpoints exist for onboarding, bootstrap, invite acceptance, desktop-link creation/redeem, scoped feed loading, contribution creation, curation decisions, visibility changes, AI preflight prompt generation, and frozen submission snapshots.
@@ -28,10 +28,16 @@ Current implementation status as of 2026-05-03:
 - [x] Railway deployment plan exists for web/API services.
 - [x] Desktop-to-web account-link API contract exists with one-time code hashing, expiry, redeem endpoint, and audit events.
 - [x] Invite links are one-time token links with hashed storage and an accept endpoint.
+- [x] Desktop session sync API contract exists for mapping Mac `Direct to AI`, `Team review`, and `Public feed` choices into web/API visibility and review state.
+- [x] Phase 2 smoke now verifies desktop session sync mappings for `direct`, `team`, and `public` flows.
+- [x] The product plan records the 10-minute batched comment digest requirement for team/public review notifications.
 - [ ] Real Google OAuth is not wired yet; current web flow is a local Google-shaped preview and must be replaced with production OAuth before public launch.
-- [ ] Native desktop `dbugr://` redeem handler is not wired yet; the URL scheme is registered and the API/web contract exists.
+- [x] Native desktop `dbugr://` redeem handler is wired to redeem the web link code and persist the returned desktop token through the macOS Keychain command bridge.
 - [ ] Real invite email sending is not wired yet; onboarding currently displays shareable invite links.
-- [ ] Desktop session sync to web is not wired yet.
+- [x] Desktop app calls the desktop session sync endpoint when the user chooses `Direct`, `Team`, or `Public`, and again after later annotation saves for synced/social sessions.
+- [x] Desktop app stores the redeemed desktop token in Keychain and attaches it to sync calls as a bearer token; the API stores only the token hash.
+- [x] Web review board has a Stitch-inspired first pass with scoped feeds, screenshot previews, Direct/Team/Public routing, comments, curation, provider preflight, and frozen submission snapshots.
+- [x] Batched comment digest worker/email sender is implemented as `pnpm phase2:comment-digest`; it groups comments after a 10-minute window, skips author self-notifications, and logs delivery decisions without raw tokens.
 - [ ] Public redaction/moderation controls are policy-gated and audited, but not production-moderated yet.
 - [ ] Railway Postgres migration is still pending before public multi-user launch.
 
@@ -151,6 +157,19 @@ Native app account context:
 - The Mac app should show `Linked as [name] <email>`, `Workspace: [org]`, `Role: [role]`, and `Device: [device name]`.
 - The Mac app should support unlink/logout, relink, and workspace switching if the user belongs to multiple organizations.
 - AI provider credentials remain local by default and are separate from Dbugr web identity.
+
+Submission flow bridge:
+
+- The Mac app remains the source of truth for the user's initial submission choice after annotation save.
+- `Direct to AI` in the Mac app maps to web/API `visibility=private` and `submissionFlow=direct`.
+- `Team review` in the Mac app maps to web/API `visibility=org` and `submissionFlow=internal_review`.
+- `Public feed` in the Mac app maps to web/API `visibility=public` and `submissionFlow=public_feed`.
+- Desktop session sync must send the selected flow, session title, session note, project folder or GitHub repo, screenshot assets, captures, annotations, and selected provider target.
+- Direct sessions can remain mostly local and fast; web may store a private snapshot or audit trail later, but should not force the user into the social review hub.
+- Team and public sessions should open the matching web review board/feed after sync so users continue the journey in the right context.
+- Public flow must require redaction confirmation and poster approval controls before a session becomes broadly visible.
+- Web curation must send only accepted comments and edits back into the final AI-ready prompt.
+- Final provider execution should still default to the user's local Claude CLI, Codex CLI, or Cursor handoff unless the organization explicitly enables managed credentials later.
 
 ### 2. Capture And Annotate On Desktop
 
@@ -811,13 +830,13 @@ Use this checklist when implementing Phase 2. Do not skip ahead unless the earli
 - [ ] Add device-link polling endpoint for desktop.
 - [ ] Add `dbugr://link?code=...` deep-link handler in the native macOS app.
 - [ ] Add one-time desktop-link code hashing, expiry, replay prevention, and account/workspace binding.
-- [ ] Add desktop token storage for linked account.
-- [ ] Store linked desktop token in macOS Keychain, not in plain local storage.
-- [ ] Add desktop account context UI: signed-in name, email, workspace, role, and device name.
+- [x] Add desktop token storage for linked account.
+- [x] Store linked desktop token in macOS Keychain, not in plain local storage.
+- [x] Add desktop account context UI: signed-in name, email, workspace, role, and device name.
 - [ ] Add desktop workspace switcher for users who belong to multiple organizations.
 - [ ] Add desktop unlink/logout action.
 - [ ] Add audit event for sign-in.
-- [ ] Add audit event for desktop linking.
+- [x] Add audit event for desktop linking.
 - [ ] Add audit event for desktop unlink/logout.
 - [ ] Verify desktop can show authenticated user/org state.
 
@@ -882,8 +901,8 @@ Exit criteria:
 - [ ] Add `ownerId`, `orgId`, and `teamId` to sessions.
 - [ ] Add `visibility`: `private`, `organization`, `public`, `link`.
 - [ ] Add `reviewStatus`.
-- [ ] Add desktop sync endpoint for sessions.
-- [ ] Add desktop sync endpoint for captures/screenshots.
+- [x] Add desktop sync endpoint for sessions.
+- [x] Add desktop sync endpoint for captures/screenshots.
 - [ ] Add web session list.
 - [ ] Add private session access check.
 - [ ] Add organization session access check.
@@ -905,8 +924,8 @@ Exit criteria:
 ### 5. Internal Review Feed
 
 - [ ] Add `Team Review` web route.
-- [ ] Add organization feed API.
-- [ ] Add feed cards with screenshot thumbnail, owner, visibility, annotation count, comment count, accepted count, and status.
+- [x] Add organization feed API.
+- [x] Add feed cards with screenshot thumbnail, owner, visibility, annotation count, comment count, accepted count, and status.
 - [ ] Add session detail route.
 - [ ] Add capture preview in session detail.
 - [ ] Add annotation list in session detail.
@@ -923,7 +942,7 @@ Exit criteria:
 
 - [ ] Org member can comment on an org-visible session.
 - [ ] Non-member cannot view or comment on org session.
-- [ ] Owner sees all team feedback in one review board.
+- [x] Owner sees all team feedback in one review board.
 
 ### 6. Curation Board
 
@@ -941,10 +960,10 @@ Exit criteria:
 
 Exit criteria:
 
-- [ ] Owner can accept feedback.
-- [ ] Owner can reject feedback.
-- [ ] Accepted feedback appears in final context preview.
-- [ ] Rejected feedback is excluded from final context.
+- [x] Owner can accept feedback.
+- [x] Owner can reject feedback.
+- [x] Accepted feedback appears in final context preview.
+- [x] Rejected feedback is excluded from final context.
 
 ### 7. AI Summary Preflight
 
@@ -1001,7 +1020,7 @@ Exit criteria:
 ### 9. Public Feed
 
 - [ ] Add public feed route.
-- [ ] Add public feed API.
+- [x] Add public feed API.
 - [ ] Add public session card.
 - [ ] Add public comment path.
 - [ ] Add public suggested edit path.
@@ -1021,7 +1040,14 @@ Exit criteria:
 ### 10. Notifications And Polish
 
 - [ ] Send invite email.
-- [ ] Send new comment notification.
+- [x] Send batched new-comment notification email.
+- [x] Batch team and public comment notifications per session for 10 minutes before sending.
+- [x] Re-run the comment digest job every 10 minutes so active threads produce grouped updates instead of one email per comment.
+- [x] Include all new comments since the last digest, grouped by session, comment scope, author, and target: session, capture, or annotation.
+- [x] Send digests to the session owner and relevant watchers/team members; do not notify the comment author about their own comment.
+- [ ] For public comments, notify the poster/owner that comments are waiting for review and that only accepted comments enter the AI payload.
+- [ ] Add unsubscribe/notification preference hooks before public launch.
+- [x] Log notification queued, digest window opened, digest sent, digest skipped, and delivery failure without logging full private comment bodies.
 - [ ] Send ready-to-curate notification.
 - [ ] Send ready-to-submit notification.
 - [ ] Add activity history.
@@ -1032,7 +1058,10 @@ Exit criteria:
 
 Exit criteria:
 
-- [ ] Owner knows when feedback arrives.
+- [ ] Owner knows when feedback arrives without getting spammed by one email per comment.
+- [ ] Multiple comments posted inside a 10-minute window produce a single digest email.
+- [ ] Team review digest links the owner back to the internal review board.
+- [ ] Public feedback digest links the owner back to the public curation view with redaction and approval controls.
 - [ ] Reviewers know when they are invited or mentioned.
 - [ ] Internal review flow passes end-to-end.
 

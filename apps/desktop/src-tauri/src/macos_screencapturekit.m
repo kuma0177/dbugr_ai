@@ -329,12 +329,18 @@ bool debugr_list_capture_sources_json(char **out_json, char **out_error) {
         return false;
     }
 
-    /* Sync CoreGraphics TCC state with System Settings (helps after toggles without restart). */
-    if (@available(macOS 10.15, *)) {
-        if (!CGPreflightScreenCaptureAccess()) {
-            CGRequestScreenCaptureAccess();
-        }
-    }
+    /*
+     * Never request Screen Recording access from source listing.
+     *
+     * This path runs during normal chooser/session flow, so requesting Screen
+     * Recording here can summon Apple's blocking modal over Debugr even when
+     * the user only expected to pick a session or refresh a list.
+     *
+     * Do not hard-fail on CGPreflightScreenCaptureAccess() either. On unsigned
+     * or freshly rebuilt local bundles macOS can report a stale false preflight
+     * while ScreenCaptureKit is still allowed to list content. Let
+     * SCShareableContent be the source of truth, and only surface its real error.
+     */
 
     __block NSDictionary *rootObj = nil;
     __block NSError *listErr = nil;

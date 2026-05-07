@@ -314,16 +314,16 @@ Exit criteria:
 
 Milestone checklist:
 
-- [ ] Web auth and desktop account linking `[partial: account-scoped preview and link API done; real Google OAuth and native redeem handler pending]`
+- [x] Web auth and desktop account linking `[account-scoped preview, link API, native deep-link redeem handler, Keychain token storage, and bearer sync auth done; real Google OAuth still pending before public launch]`
 - [x] User profile and organization creation
 - [x] Team invites and lightweight roles
-- [ ] Session sync between desktop and web
+- [x] Session sync between desktop and web `[API contract, smoke coverage, desktop caller, flow-choice sync hook, and annotation-save resync hook done]`
 - [x] Visibility controls for `Private`, `Organization`, and `Public`
 - [x] Internal review feed
 - [x] Public feed on the same website
 - [x] Session-level comments
-- [ ] Capture-level comments
-- [ ] Annotation-specific comments
+- [ ] Capture-level comments `[partial: desktop-synced frame descriptions are stored]`
+- [ ] Annotation-specific comments `[partial: desktop-synced owner annotation notes are stored as annotation-targeted comments]`
 - [x] Curation board with accept / reject / edit decisions
 - [x] AI summary preflight
 - [x] Final prompt approval before send
@@ -331,7 +331,7 @@ Milestone checklist:
 - [x] Basic org policy controls for public sharing and credential usage
 - [x] Audit events for sensitive collaboration and submission actions
 
-Implementation status as of 2026-05-03:
+Implementation status as of 2026-05-05:
 
 - [x] Phase 2 Prisma schema spine added for organizations, teams, memberships, invites, contributions, curation decisions, AI review summaries, provider credential metadata, submissions, and audit-friendly policy fields.
 - [x] Phase 2 API scaffold added for onboarding, invite acceptance, bootstrap, desktop-link create/redeem, scoped feeds, contributions, curation, visibility changes, AI preflight summary creation, and submission snapshots.
@@ -339,12 +339,16 @@ Implementation status as of 2026-05-03:
 - [x] Detailed Phase 2 API and web action logging added with token redaction rules.
 - [x] Phase 2 API endpoint smoke script added for onboarding -> invite accept -> desktop link -> feed -> contribution -> curation -> preflight -> visibility -> submission verification.
 - [x] Railway web/API deployment guide added for the Phase 2 collaboration layer.
+- [x] Desktop session sync API added for Mac-created sessions, captures, owner annotation notes, and submission-flow mapping.
+- [x] Phase 2 API smoke now checks `direct -> private/direct`, `team -> org/internal_review`, and `public -> public/public_feed` desktop bridge mappings.
 - [ ] Real Google OAuth.
-- [ ] Native desktop-to-web device-link handler `[partial: API/web contract and macOS URL scheme done]`.
+- [x] Native desktop-to-web device-link handler.
 - [ ] Post-onboarding DMG download and `Link this Mac` flow.
 - [ ] Native app account context after linking: signed-in user, email, workspace, role, device name, and workspace switcher.
 - [ ] Real invite email delivery.
-- [ ] Session sync from desktop local storage to web.
+- [x] Session sync from desktop local storage to web `[server endpoint, token-authenticated desktop call, and social-session resync done; durable offline retry queue still future hardening]`.
+- [x] Submission-flow bridge from Mac `Direct to AI`, `Team review`, and `Public feed` choices to web/API visibility and review states.
+- [x] Batched comment digest emails for team/public review, sent at most once per 10-minute session window.
 - [ ] Production public-feed redaction and moderation controls.
 - [ ] Railway Postgres migration for public multi-user launch.
 
@@ -383,6 +387,17 @@ Desktop linking product contract:
 - Users with multiple organizations need a workspace switcher in the native app before sharing or syncing.
 - AI provider keys and local CLI credentials remain on the user's Mac by default.
 
+Mac submission-flow bridge:
+
+- The Mac app owns the user's initial choice after capture: `Direct to AI`, `Team review`, or `Public feed`.
+- `Direct to AI` maps to API `visibility=private` and `submissionFlow=direct`.
+- `Team review` maps to API `visibility=org` and `submissionFlow=internal_review`.
+- `Public feed` maps to API `visibility=public` and `submissionFlow=public_feed`.
+- Desktop sync must include linked account token, organization/workspace id, session title, session note, project folder or GitHub repo, captures, screenshot assets, annotations, selected provider target, and selected submission flow.
+- Team and public flows should open the matching web review board after sync; direct flow should remain a fast local Claude/Codex/Cursor handoff unless the user explicitly opens the private board.
+- Public flow must require redaction confirmation and poster approval before broad visibility.
+- Accepted web comments and edits must flow into preflight and final prompt creation; rejected or unreviewed comments must not enter the AI payload.
+
 Quality tracker:
 
 | Milestone | Logging | Unit / component tests | Regression tests | Functional verification | Quality gate |
@@ -391,10 +406,12 @@ Quality tracker:
 | User profile and organization creation | Log profile created, org created, owner membership created, onboarding step completion, and validation failures. | Add unit coverage for org slug generation, required fields, owner role assignment, duplicate org names, and profile validation. | Re-run regressions for new user onboarding, existing user return, skipped optional role/team, and duplicate org name. | Create a new account, name an org, skip optional fields, and confirm dashboard and desktop both show the correct org. | First-run onboarding must land the user in a usable workspace without requiring team setup. |
 | Team invites and lightweight roles | Log invite created, email queued, invite accepted, invite revoked, membership role changed, and permission-denied events. Never log invite tokens. | Add unit coverage for invite token hashing, invite expiry, role assignment, permission checks, and revoked invite behavior. | Re-run regressions for owner invite, member invite, reviewer invite, expired invite, duplicate invite, and revoked invite. | Invite a teammate, accept the invite in another account, and confirm the teammate can view/comment only where allowed. | Roles must enforce access in API and UI, not only through hidden buttons. |
 | Session sync between desktop and web | Log sync start, local session id, remote session id, conflict result, asset upload result, retry count, and sync failure reason. | Add unit coverage for payload mapping, conflict resolution, retry scheduling, asset reference normalization, and offline queue behavior. | Re-run regressions for local-only session, sync after login, duplicate sync attempt, failed upload retry, and web edit then desktop refresh. | Capture locally, link account, sync, open web review board, and confirm the session, screenshots, and notes match. | Sync must preserve local data and avoid duplicate sessions. |
+| Desktop submission-flow bridge | Log flow selected on Mac, flow mapped for API, sync intent, review board open attempt, redaction confirmation state, and fallback reason. | Add unit coverage for `direct -> private/direct`, `team -> org/internal_review`, `public -> public/public_feed`, missing linked account, and public redaction-required mapping. | Re-run regressions for choosing each flow after annotation save, changing the flow before sync, offline sync retry, and opening the correct web board. | Capture locally, choose each flow, and confirm the web/API session has the correct visibility, submission flow, review status, and next action. | The Mac flow choice must be the single source of truth and must not create disconnected web sessions. |
 | Visibility controls for `Private`, `Organization`, and `Public` | Log visibility change requested, actor role, policy check result, redaction confirmation, approval status, and visibility change success/failure. | Add unit coverage for visibility transitions, policy gates, permission checks, and public redaction requirement. | Re-run regressions for private to org, org to public, public blocked by org policy, public approval required, and revert to private. | Change visibility from private to org and public, then verify feed visibility from owner, teammate, and anonymous/public views. | Private content must never appear in org or public feed without explicit visibility change. |
 | Internal review feed | Log feed query scope, actor org id, result count, pagination cursor, filter state, and permission denials. | Add unit coverage for feed query filters, pagination, org scoping, sorting, and empty states. | Re-run regressions for empty feed, multiple orgs, pagination, search/filter, and unauthorized access. | Create several org sessions and confirm only the right organization members see them. | Internal review must be scoped by organization and role on the server. |
 | Public feed on the same website | Log public publish request, redaction confirmation, moderation/manual review state, public feed query, report action, and unpublish action. | Add unit coverage for public query filters, publish policy, report handling, unpublish rules, and sanitized public response shape. | Re-run regressions for publish, public view, report, unpublish, org-public-disabled, and public comment restrictions. | Publish a redaction-confirmed session and confirm it appears publicly without leaking private-only fields. | Public feed must not expose private/org-only data or raw secrets in payloads. |
 | Session-level comments | Log comment create, edit, delete, author id, session id, visibility, and permission denial. Avoid logging full comment body in production logs. | Add unit coverage for comment validation, permissions, editing window if used, deletion rules, and notification event creation. | Re-run regressions for owner comment, teammate comment, public comment, edit, delete, and unauthorized comment. | Add comments from owner and teammate accounts, then verify ordering and visibility. | Comments must be visible in the right scope and must never automatically enter the AI payload. |
+| Batched comment digest emails | Log notification event created, digest window opened, digest recipient count, digest sent, digest skipped, and delivery failure. Avoid logging full comment bodies in production logs. | Add unit coverage for 10-minute grouping, author self-notification suppression, owner/team recipient selection, public comment owner notification, retry behavior, and last-sent cursor handling. | Re-run regressions for one comment, many comments inside 10 minutes, comments across two sessions, public comments, failed delivery retry, and user notification preferences. | Add several comments from teammate/public accounts, wait for the digest job, and confirm a single email summarizes all new comments with links back to the right review board. | Feedback emails must inform users without overwhelming them; one active session should produce at most one digest per 10-minute window. |
 | Capture-level comments | Log comment create, capture target id, session id, visibility, and permission denial. Avoid logging full comment body in production logs. | Add unit coverage for capture target validation, permissions, missing capture handling, and deleted capture behavior. | Re-run regressions for comment on first capture, comment on second capture, deleted capture, and unauthorized capture comment. | Add comments to two different captures and confirm each stays attached to the correct screenshot. | Capture comments must remain attached to the correct capture across reloads and prompt generation. |
 | Annotation-specific comments | Log comment create, annotation target id, session id, visibility, and permission denial. Avoid logging full comment body in production logs. | Add unit coverage for annotation target validation, permissions, missing annotation handling, and deleted annotation behavior. | Re-run regressions for comment on pin, comment on region, deleted annotation, and unauthorized annotation comment. | Comment directly on an annotation and confirm the thread appears when that annotation is selected. | Annotation comments must not drift to the wrong annotation after edits or reloads. |
 | Curation board with accept / reject / edit decisions | Log curation decision create, decision type, actor id, contribution id, included-in-payload state, edit state, and undo/reopen action. Avoid logging full private text in production logs. | Add unit coverage for accepted-only filtering, edit-then-accept, duplicate handling, permission checks, and decision state transitions. | Re-run regressions for accept, reject, edit, duplicate, needs clarification, undo, and non-owner access. | Accept some comments, reject others, edit one suggestion, and confirm the final context includes only accepted/edited items. | Owner-controlled curation must be the only path for social feedback to enter final AI context. |
@@ -617,11 +634,17 @@ Initial:
 
 - personal local credentials
 - optional org-managed credentials modeled, possibly limited
+- local MCP connector credentials stored on the user's device, not in the Dbugr API
 
 Phase 3:
 
 - stricter org-managed credential controls
 - enterprise credential routing
+- enterprise-managed MCP connector policies without forcing individual users to disclose personal API keys to Dbugr
+
+Implementation rule:
+
+- The admin panel may let a user add MCP connector URLs and API keys for tools like Google Stitch, but those values must remain local-only unless an organization explicitly enables a future managed connector vault. Local MCP connector settings should be saved in browser/device storage, excluded from API requests, excluded from audit metadata, and hidden from platform admin views.
 
 ### Identity
 

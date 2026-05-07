@@ -289,6 +289,7 @@ Deployment guide:
 Important default:
 
 - Personal Claude, Codex, Cursor, Anthropic, OpenAI, and GitHub user keys should stay local to the user's device unless an organization explicitly enables an org-managed credential path later.
+- Local MCP connector keys should also stay on the user's device. The web admin panel includes a local-only MCP connector manager for tools such as Google Stitch (`https://stitch.googleapis.com/mcp` with `X-Goog-Api-Key`). Those connector URLs and keys are saved in browser `localStorage`, are not posted to the Dbugr API, and are not visible to workspace admins or Dbugr platform admins.
 
 ## Remaining Work
 

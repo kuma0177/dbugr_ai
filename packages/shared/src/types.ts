@@ -54,6 +54,7 @@ export interface User {
   name: string;
   avatarUrl?: string;
   role: string;
+  lastSeenAt?: string | null;
   createdAt: string;
 }
 
@@ -83,6 +84,16 @@ export interface OrganizationMembership {
   status: 'active' | 'invited' | 'revoked';
   createdAt: string;
   user?: User;
+  team?: Team | null;
+  organization?: Organization;
+}
+
+export interface Team {
+  id: string;
+  organizationId: string;
+  name: string;
+  slug: string;
+  createdAt: string;
 }
 
 export interface Invite {
@@ -291,6 +302,69 @@ export interface AuditLog {
   targetId: string;
   metadataJson?: Record<string, unknown>;
   createdAt: string;
+  actor?: User;
+}
+
+export interface WorkspaceSummary {
+  organization: Organization;
+  membership: OrganizationMembership;
+}
+
+export interface AdminUserActivity {
+  userId: string;
+  sessionCount: number;
+  commentCount: number;
+  desktopLinkCount: number;
+  lastSeenAt?: string | null;
+}
+
+export interface AdminOverview {
+  viewer: User;
+  organization: Organization;
+  membership: OrganizationMembership;
+  members: OrganizationMembership[];
+  teams: Team[];
+  invites: Invite[];
+  auditLogs: AuditLog[];
+  activity: AdminUserActivity[];
+  totals: {
+    users: number;
+    activeMembers: number;
+    teams: number;
+    pendingInvites: number;
+    sessions: number;
+    comments: number;
+    desktopLinks: number;
+  };
+}
+
+export interface PlatformAdminOrganizationSummary {
+  organization: Organization;
+  memberCount: number;
+  pendingInvites: number;
+  sessionCount: number;
+}
+
+export interface PlatformAdminUserSummary {
+  user: User;
+  memberships: OrganizationMembership[];
+  sessionCount: number;
+  commentCount: number;
+  lastSeenAt?: string | null;
+}
+
+export interface PlatformAdminOverview {
+  viewer: User;
+  users: PlatformAdminUserSummary[];
+  organizations: PlatformAdminOrganizationSummary[];
+  totals: {
+    users: number;
+    organizations: number;
+    activeMemberships: number;
+    pendingInvites: number;
+    sessions: number;
+    comments: number;
+  };
 }
 
 // API request/response shapes
@@ -301,6 +375,53 @@ export interface CreateFeedbackSessionRequest {
   projectFolder?: string;
   githubRepo?: string;
   userIntent?: string;
+}
+
+export type DesktopSubmissionFlow = 'direct' | 'team' | 'public';
+
+export interface DesktopAnnotationSync {
+  id: string;
+  text?: string;
+  type?: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+}
+
+export interface DesktopCaptureSync {
+  id: string;
+  title?: string;
+  note?: string;
+  screenshotUrl?: string;
+  previewDataUrl?: string;
+  timestampMs?: number;
+  annotations?: DesktopAnnotationSync[];
+}
+
+export interface DesktopSessionSyncRequest {
+  localSessionId: string;
+  title: string;
+  about?: string;
+  sessionNote?: string;
+  projectFolder?: string;
+  githubRepo?: string;
+  submissionFlow: DesktopSubmissionFlow;
+  providerTarget?: 'claude' | 'codex' | 'cursor';
+  captures?: DesktopCaptureSync[];
+}
+
+export interface DesktopSessionSyncResponse {
+  session: FeedbackSession;
+  mapping: {
+    desktopFlow: DesktopSubmissionFlow;
+    visibility: FeedbackVisibility;
+    submissionFlow: NonNullable<FeedbackSession['submissionFlow']>;
+    reviewStatus: NonNullable<FeedbackSession['reviewStatus']>;
+  };
+  syncedFrameCount: number;
+  syncedAnnotationCount: number;
+  nextAction: 'local_ai_handoff' | 'open_team_review' | 'open_public_curation';
 }
 
 export interface FinalizeFeedbackSessionRequest {

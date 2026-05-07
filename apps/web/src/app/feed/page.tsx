@@ -2,202 +2,220 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
-import { readOnboardingState } from '@/lib/onboarding';
+import { displayOnboardingName, readOnboardingState } from '@/lib/onboarding';
 import type { AIReviewSummary, FeedbackComment, FeedbackSession, Submission } from '@feedbackagent/shared';
 
 type Scope = 'private' | 'organization' | 'public';
+type ProviderTarget = 'claude' | 'codex' | 'cursor';
+
+const scopeLabels: Record<Scope, string> = {
+  private: 'Private feed',
+  organization: 'Team feed',
+  public: 'Public feed',
+};
+
+const providerLabels: Record<ProviderTarget, string> = {
+  claude: 'Claude CLI',
+  codex: 'Codex CLI',
+  cursor: 'Cursor',
+};
+
+function acceptedComments(session?: FeedbackSession) {
+  return (session?.comments ?? []).filter((comment) =>
+    comment.curationDecisions?.some((decision) => decision.includedInPayload),
+  );
+}
+
+function commentDecision(comment: FeedbackComment) {
+  const latest = comment.curationDecisions?.[comment.curationDecisions.length - 1];
+  return latest?.decision ?? 'needs_review';
+}
+
+function sessionImage(session?: FeedbackSession) {
+  return session?.frames?.find((frame) => frame.imageUrl)?.imageUrl ?? '';
+}
+
+function updatedCopy(value?: string) {
+  if (!value) return 'Just now';
+  const delta = Date.now() - new Date(value).getTime();
+  if (Number.isNaN(delta) || delta < 60_000) return 'Just now';
+  if (delta < 3_600_000) return `${Math.max(1, Math.round(delta / 60_000))}m ago`;
+  if (delta < 86_400_000) return `${Math.max(1, Math.round(delta / 3_600_000))}h ago`;
+  return `${Math.max(1, Math.round(delta / 86_400_000))}d ago`;
+}
 
 export default function FeedPage() {
   const [scope, setScope] = useState<Scope>('organization');
   const [sessions, setSessions] = useState<FeedbackSession[]>([]);
   const [selectedId, setSelectedId] = useState('');
-  const [commentBody, setCommentBody] = useState('Make sure this follows the Dbugr design system before AI handoff.');
-  const [status, setStatus] = useState('Loading Phase 2 feed...');
+  const [commentBody, setCommentBody] = useState('I think this should be accepted before the final AI handoff.');
+  const [status, setStatus] = useState('Loading review workspace...');
   const [summary, setSummary] = useState<AIReviewSummary | null>(null);
-  const [providerTarget, setProviderTarget] = useState<'claude' | 'codex' | 'cursor'>('claude');
+  const [providerTarget, setProviderTarget] = useState<ProviderTarget>('claude');
   const [submission, setSubmission] = useState<Submission | null>(null);
   const [working, setWorking] = useState('');
   const [isOnboarded, setIsOnboarded] = useState(false);
+  const [workspaceName, setWorkspaceName] = useState('Dbugr workspace');
+  const [signedInAs, setSignedInAs] = useState('');
 
   const selected = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0],
     [selectedId, sessions],
   );
+  const accepted = useMemo(() => acceptedComments(selected), [selected]);
+  const selectedImage = sessionImage(selected);
 
   async function load(nextScope = scope) {
-    setWorking('Loading feed');
-    setStatus(`Loading ${nextScope} feed...`);
-    console.info('[phase2-web] feed.load.started', { scope: nextScope });
+    setWorking('Loading workspace');
+    setStatus(`Loading ${scopeLabels[nextScope].toLowerCase()} sessions...`);
+    console.info('[phase2-web] review_feed.load.started', { scope: nextScope });
     try {
       const data = await api.phase2.feed(nextScope);
       setSessions(data.sessions);
       setSelectedId((current) => data.sessions.some((session) => session.id === current) ? current : data.sessions[0]?.id ?? '');
-      setStatus(`${data.sessions.length} session(s) loaded for ${nextScope}.`);
-      console.info('[phase2-web] feed.load.completed', {
+      setStatus(data.sessions.length
+        ? `${data.sessions.length} session(s) ready in ${scopeLabels[nextScope].toLowerCase()}.`
+        : `No sessions are in ${scopeLabels[nextScope].toLowerCase()} yet.`);
+      console.info('[phase2-web] review_feed.load.completed', {
         scope: nextScope,
         sessions: data.sessions.length,
       });
     } catch (error) {
-      setStatus(`Feed failed: ${error instanceof Error ? error.message : String(error)}`);
-      console.warn('[phase2-web] feed.load.failed', {
-        scope: nextScope,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`Feed failed: ${message}`);
+      console.warn('[phase2-web] review_feed.load.failed', { scope: nextScope, message });
+    } finally {
+      setWorking('');
     }
-    setWorking('');
   }
 
   useEffect(() => {
-    const onboarding = readOnboardingState();
+    const syncWorkspaceIdentity = () => {
+      const next = readOnboardingState();
+      setWorkspaceName(next?.organizationName || 'Dbugr workspace');
+      setSignedInAs(displayOnboardingName(next) || next?.userEmail || '');
+      return next;
+    };
+    const onboarding = syncWorkspaceIdentity();
     setIsOnboarded(Boolean(onboarding));
     if (!onboarding) {
-      setStatus('Create a web account and organization before opening team/public review.');
-      console.info('[phase2-web] feed.blocked_missing_onboarding');
-      return;
+      setStatus('Create a workspace before opening team or public review.');
+      console.info('[phase2-web] review_feed.blocked_missing_onboarding');
+      window.addEventListener('dbugr-auth-changed', syncWorkspaceIdentity);
+      return () => window.removeEventListener('dbugr-auth-changed', syncWorkspaceIdentity);
     }
     void load(scope);
+    window.addEventListener('dbugr-auth-changed', syncWorkspaceIdentity);
+    return () => window.removeEventListener('dbugr-auth-changed', syncWorkspaceIdentity);
   }, [scope]);
 
-  if (!isOnboarded) {
-    return (
-      <section className="phase2-hero">
-        <div className="phase2-card">
-          <div className="phase2-kicker">Account required</div>
-          <h1 className="phase2-title">Create your workspace before review.</h1>
-          <p className="phase2-lede">
-            Direct local desktop handoff can stay account-free, but team review, public feed,
-            comments, curation, and AI preflight require a web identity, organization, and role.
-          </p>
-          <a className="btn btn-primary mt-24" href="/onboarding">Start onboarding</a>
-        </div>
-        <div className="phase2-card">
-          <div className="phase2-kicker">What onboarding creates</div>
-          <div className="stack gap-16 mt-16">
-            <p className="phase2-muted">Google-backed user identity.</p>
-            <p className="phase2-muted">Organization owner role and optional team.</p>
-            <p className="phase2-muted">Invites for teammates and a Mac app link code.</p>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
   async function addContribution() {
-    if (!selected) return;
-    setWorking('Adding suggestion');
-    setStatus('Adding structured contribution...');
-    console.info('[phase2-web] contribution.create.started', {
-      sessionId: selected.id,
-      scope,
-    });
+    if (!selected || !commentBody.trim()) return;
+    setWorking('Posting note');
+    setStatus('Adding your note to the review thread...');
+    console.info('[phase2-web] review_feed.contribution.started', { sessionId: selected.id, scope });
     try {
       await api.phase2.contribute(selected.id, {
         targetType: 'session',
         contributionType: 'suggested_edit',
-        body: commentBody,
-        visibility: selected.visibility === 'public' ? 'public' : 'org',
+        body: commentBody.trim(),
+        visibility: selected.visibility === 'public' ? 'public' : selected.visibility === 'private' ? 'private' : 'org',
       });
+      setCommentBody('');
       await load(scope);
-      setStatus('Contribution added. It will not enter the AI payload until accepted.');
-      console.info('[phase2-web] contribution.create.completed', { sessionId: selected.id });
+      setStatus('Note added. It will be emailed in the next digest batch if it needs team attention.');
+      console.info('[phase2-web] review_feed.contribution.completed', { sessionId: selected.id });
     } catch (error) {
-      setStatus(`Contribution failed: ${error instanceof Error ? error.message : String(error)}`);
-      console.warn('[phase2-web] contribution.create.failed', {
-        sessionId: selected.id,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`Contribution failed: ${message}`);
+      console.warn('[phase2-web] review_feed.contribution.failed', { sessionId: selected.id, message });
+    } finally {
+      setWorking('');
     }
-    setWorking('');
   }
 
   async function curate(comment: FeedbackComment, decision: 'accepted' | 'rejected' | 'duplicate' | 'needs_clarification') {
-    setWorking('Saving curation');
-    setStatus(`${decision === 'accepted' ? 'Accepting' : 'Rejecting'} contribution...`);
-    console.info('[phase2-web] curation.submit.started', {
-      contributionId: comment.id,
-      decision,
-    });
+    setWorking('Saving decision');
+    setStatus(`Marking feedback as ${decision.replace('_', ' ')}...`);
+    console.info('[phase2-web] review_feed.curation.started', { contributionId: comment.id, decision });
     try {
       await api.phase2.curate(comment.id, { decision });
       await load(scope);
-      setStatus(`Contribution ${decision}.`);
-      console.info('[phase2-web] curation.submit.completed', {
-        contributionId: comment.id,
-        decision,
-      });
+      setStatus(decision === 'accepted'
+        ? 'Accepted. This feedback is now eligible for the AI-ready prompt.'
+        : `Marked as ${decision.replace('_', ' ')}.`);
+      console.info('[phase2-web] review_feed.curation.completed', { contributionId: comment.id, decision });
     } catch (error) {
-      setStatus(`Curation failed: ${error instanceof Error ? error.message : String(error)}`);
-      console.warn('[phase2-web] curation.submit.failed', {
-        contributionId: comment.id,
-        decision,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`Curation failed: ${message}`);
+      console.warn('[phase2-web] review_feed.curation.failed', { contributionId: comment.id, decision, message });
+    } finally {
+      setWorking('');
     }
-    setWorking('');
   }
 
-  async function preflight(providerTarget: 'claude' | 'codex' | 'cursor') {
+  async function preflight(target: ProviderTarget) {
     if (!selected) return;
-    setWorking('Generating preflight');
-    setProviderTarget(providerTarget);
-    setStatus(`Generating ${providerTarget} preflight summary from accepted feedback...`);
-    console.info('[phase2-web] preflight.started', {
+    setWorking('Generating AI preview');
+    setProviderTarget(target);
+    setStatus(`Generating a clean ${providerLabels[target]} prompt from accepted feedback...`);
+    console.info('[phase2-web] review_feed.preflight.started', {
       sessionId: selected.id,
-      providerTarget,
+      providerTarget: target,
+      acceptedCount: accepted.length,
     });
     try {
-      const result = await api.phase2.preflight(selected.id, providerTarget);
+      const result = await api.phase2.preflight(selected.id, target);
       setSummary(result);
-      setStatus('AI preflight summary ready for owner approval.');
-      console.info('[phase2-web] preflight.completed', {
+      setStatus('AI prompt preview is ready. Review it before freezing the submission.');
+      console.info('[phase2-web] review_feed.preflight.completed', {
         sessionId: selected.id,
-        providerTarget,
+        providerTarget: target,
         promptChars: result.finalPromptDraft.length,
       });
     } catch (error) {
-      setStatus(`Preflight failed: ${error instanceof Error ? error.message : String(error)}`);
-      console.warn('[phase2-web] preflight.failed', {
-        sessionId: selected.id,
-        providerTarget,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`Preflight failed: ${message}`);
+      console.warn('[phase2-web] review_feed.preflight.failed', { sessionId: selected.id, providerTarget: target, message });
+    } finally {
+      setWorking('');
     }
-    setWorking('');
   }
 
   async function changeVisibility(visibility: 'private' | 'org' | 'public') {
     if (!selected) return;
     const submissionFlow = visibility === 'public' ? 'public_feed' : visibility === 'org' ? 'internal_review' : 'direct';
-    setWorking('Updating visibility');
-    setStatus(visibility === 'public' ? 'Publishing with redaction confirmation...' : `Moving session to ${visibility} scope...`);
-    console.info('[phase2-web] visibility.started', { sessionId: selected.id, visibility, submissionFlow });
+    setWorking('Updating route');
+    setStatus(visibility === 'public'
+      ? 'Publishing to the public feed with redaction confirmation...'
+      : `Moving session to ${visibility === 'org' ? 'team review' : 'private/direct'}...`);
+    console.info('[phase2-web] review_feed.visibility.started', { sessionId: selected.id, visibility, submissionFlow });
     try {
       await api.phase2.visibility(selected.id, {
         visibility,
         submissionFlow,
         redactionConfirmed: visibility === 'public',
       });
-      await load(scope);
+      await load(visibility === 'org' ? 'organization' : visibility);
+      setScope(visibility === 'org' ? 'organization' : visibility);
       setStatus(visibility === 'public'
-        ? 'Public feed publish recorded with redaction confirmation.'
-        : `Session moved to ${visibility === 'org' ? 'internal review' : 'private'}.`);
-      console.info('[phase2-web] visibility.completed', { sessionId: selected.id, visibility });
+        ? 'Public feed route is ready. Review redaction before final AI handoff.'
+        : `Session route updated to ${visibility === 'org' ? 'team review' : 'direct/private'}.`);
+      console.info('[phase2-web] review_feed.visibility.completed', { sessionId: selected.id, visibility });
     } catch (error) {
-      setStatus(`Visibility update failed: ${error instanceof Error ? error.message : String(error)}`);
-      console.warn('[phase2-web] visibility.failed', {
-        sessionId: selected.id,
-        visibility,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`Visibility update failed: ${message}`);
+      console.warn('[phase2-web] review_feed.visibility.failed', { sessionId: selected.id, visibility, message });
+    } finally {
+      setWorking('');
     }
-    setWorking('');
   }
 
   async function submitToAI() {
     if (!selected) return;
-    setWorking('Freezing submission');
-    setStatus(`Freezing prompt snapshot for ${providerTarget}...`);
-    console.info('[phase2-web] submission.started', {
+    setWorking('Freezing prompt');
+    setStatus(`Freezing prompt snapshot for ${providerLabels[providerTarget]}...`);
+    console.info('[phase2-web] review_feed.submission.started', {
       sessionId: selected.id,
       providerTarget,
       summaryId: summary?.id,
@@ -211,144 +229,255 @@ export default function FeedPage() {
       });
       setSubmission(result);
       await load(scope);
-      setStatus(`Submission snapshot created for ${providerTarget}. Desktop can hand this to the local CLI.`);
-      console.info('[phase2-web] submission.completed', {
+      setStatus(`Submission snapshot created for ${providerLabels[providerTarget]}. The Mac app can hand it to the local CLI.`);
+      console.info('[phase2-web] review_feed.submission.completed', {
         sessionId: selected.id,
         submissionId: result.id,
         providerTarget,
       });
     } catch (error) {
-      setStatus(`Submission failed: ${error instanceof Error ? error.message : String(error)}`);
-      console.warn('[phase2-web] submission.failed', {
-        sessionId: selected.id,
-        providerTarget,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`Submission failed: ${message}`);
+      console.warn('[phase2-web] review_feed.submission.failed', { sessionId: selected.id, providerTarget, message });
+    } finally {
+      setWorking('');
     }
-    setWorking('');
+  }
+
+  if (!isOnboarded) {
+    return (
+      <section className="phase2-hero">
+        <div className="phase2-card">
+          <div className="phase2-kicker">Account required</div>
+          <h1 className="phase2-title">Create your workspace before review.</h1>
+          <p className="phase2-lede">
+            Direct local desktop handoff can stay account-free, but team review, public feed,
+            comments, curation, and AI preflight need a web identity, organization, and role.
+          </p>
+          <a className="btn btn-primary mt-24" href="/onboarding">Start onboarding</a>
+        </div>
+      </section>
+    );
   }
 
   return (
-    <div>
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 18 }}>
-        <div>
-          <div className="phase2-kicker">Social review hub</div>
-          <h1 className="page-title" style={{ marginBottom: 4 }}>Team and public feedback feed</h1>
-          <p className="phase2-muted">{status}</p>
-          {working ? <p className="phase2-muted mt-8">⌛ {working}...</p> : null}
+    <section className="review-shell">
+      <aside className="review-sidebar" aria-label="Review navigation">
+        <div className="review-profile">
+          <div className="review-avatar">D</div>
+          <div>
+            <strong>Dbugr.ai</strong>
+            <span>Review mode</span>
+          </div>
         </div>
-        <div className="row gap-8">
-          {(['private', 'organization', 'public'] as Scope[]).map((item) => (
-            <button key={item} className={`btn ${scope === item ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setScope(item)}>
-              {item === 'organization' ? 'Internal review' : item[0].toUpperCase() + item.slice(1)}
-            </button>
-          ))}
+        <div className="review-workspace-card" aria-label="Current workspace">
+          <span>Workspace</span>
+          <strong>{workspaceName}</strong>
+          {signedInAs ? <small>Signed in as {signedInAs}</small> : null}
         </div>
-      </div>
-
-      <section className="feed-layout">
-        <aside className="phase2-card">
-          <div className="phase2-kicker">Sessions</div>
-          <div className="stack gap-8 mt-16">
-            {sessions.map((session) => (
-              <button key={session.id} className="session-select" onClick={() => setSelectedId(session.id)} aria-pressed={selected?.id === session.id}>
-                <strong>{session.title}</strong>
-                <span>{session.visibility === 'org' ? 'Internal review' : session.visibility} · {session.comments?.length ?? 0} comments</span>
+        <nav className="review-nav">
+          <a className="active" href="/feed">Notes Feed</a>
+          <div className="review-nav-subtabs" role="tablist" aria-label="Notes feed scope">
+            {(['private', 'organization', 'public'] as Scope[]).map((item) => (
+              <button
+                key={item}
+                className={scope === item ? 'active' : ''}
+                onClick={() => setScope(item)}
+                role="tab"
+                aria-selected={scope === item}
+                type="button"
+              >
+                {scopeLabels[item]}
               </button>
             ))}
-            {sessions.length === 0 && <p className="phase2-muted">No sessions in this scope yet.</p>}
           </div>
-        </aside>
+          <a href="/sessions">Sessions</a>
+          <a href="/admin">Admin</a>
+          <a href="/onboarding">Mac Link</a>
+        </nav>
+        <a className="review-new" href="/onboarding">New Annotation</a>
+      </aside>
 
-        <main>
-          {sessions.map((session) => (
-            <article key={session.id} className="phase2-card feed-card">
-              <div className="feed-thumb" />
-              <div>
-                <div className="row gap-8" style={{ justifyContent: 'space-between' }}>
-                  <h2>{session.title}</h2>
-                  <span className="visibility-pill">{session.visibility === 'org' ? 'Team' : session.visibility}</span>
-                </div>
-                <p className="phase2-muted">{session.about || 'No session note yet.'}</p>
-                <div className="row gap-8 mt-16">
-                  <span className="badge badge-ready">{session.comments?.length ?? 0} comments</span>
-                  <span className="badge badge-approved">
-                    {(session.comments ?? []).filter((comment) => comment.curationDecisions?.some((decision) => decision.includedInPayload)).length} accepted
-                  </span>
-                  <span className="badge badge-routed">{session.reviewStatus ?? 'draft'}</span>
-                </div>
-              </div>
-            </article>
-          ))}
-        </main>
+      <main className="review-main">
+        <header className="review-topbar">
+          <label className="review-search">
+            <span>Search</span>
+            <input placeholder="Search annotations, notes, or sessions..." />
+          </label>
+          <div className="review-top-actions">
+            <button className="btn btn-ghost">Settings</button>
+            <button className="btn btn-primary" onClick={() => selected && preflight(providerTarget)}>
+              Export prompt
+            </button>
+          </div>
+        </header>
 
-        <aside className="phase2-card">
-          <div className="phase2-kicker">Curation tray</div>
-          {selected ? (
-            <div className="stack gap-16 mt-16">
-              <div>
-                <h3>{selected.title}</h3>
-                <p className="phase2-muted">Only accepted suggestions enter the AI preflight payload.</p>
-              </div>
-              <div className="card stack gap-8">
-                <div className="phase2-kicker">Submission flow</div>
-                <button className="btn btn-ghost" onClick={() => changeVisibility('private')}>Direct / private</button>
-                <button className="btn btn-ghost" onClick={() => changeVisibility('org')}>Internal review</button>
-                <button className="btn btn-primary" onClick={() => changeVisibility('public')}>Publish public feed</button>
-                <p className="phase2-muted">Public publish sends an explicit redaction confirmation to the API audit log.</p>
-              </div>
-              <textarea className="textarea" value={commentBody} onChange={(event) => setCommentBody(event.target.value)} />
-              <button className="btn btn-primary" onClick={addContribution}>Add suggestion</button>
-              <div className="stack gap-8">
-                {(selected.comments ?? []).map((comment) => (
-                  <div key={comment.id} className="card">
-                    <div className="phase2-kicker">{comment.contributionType ?? 'comment'} · {comment.author?.name ?? 'Teammate'}</div>
-                    <p className="phase2-muted mt-8">{comment.body}</p>
-                    <div className="row gap-8 mt-16">
-                      <button className="btn btn-ghost" onClick={() => curate(comment, 'accepted')}>Accept</button>
-                      <button className="btn btn-danger" onClick={() => curate(comment, 'rejected')}>Reject</button>
-                      <button className="btn btn-ghost" onClick={() => curate(comment, 'duplicate')}>Duplicate</button>
-                      <button className="btn btn-ghost" onClick={() => curate(comment, 'needs_clarification')}>Clarify</button>
+        <div className="review-hero">
+          <div>
+            <div className="phase2-kicker">Notes Feed</div>
+            <h1>Review visual feedback before AI sees it.</h1>
+            <p>{status}</p>
+            {working ? <span className="review-working">⌛ {working}...</span> : null}
+          </div>
+        </div>
+
+        <section className="review-grid">
+          <div className="review-session-list">
+            {sessions.map((session) => {
+              const isSelected = selected?.id === session.id;
+              const acceptedCount = acceptedComments(session).length;
+              const image = sessionImage(session);
+              return (
+                <button
+                  key={session.id}
+                  className={`review-session-card ${isSelected ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectedId(session.id);
+                    setSummary(null);
+                    setSubmission(null);
+                    console.info('[phase2-web] review_feed.session_selected', { sessionId: session.id });
+                  }}
+                >
+                  <div className="review-session-thumb">
+                    {image ? <img src={image} alt={`${session.title} screenshot preview`} /> : <span>▣</span>}
+                  </div>
+                  <div className="review-session-body">
+                    <div className="review-session-title">
+                      <h2>{session.title}</h2>
+                      <span>{session.visibility === 'org' ? 'Team' : session.visibility}</span>
+                    </div>
+                    <p>{session.about || session.aiSummary || 'No session note yet. Add context before handoff.'}</p>
+                    <div className="review-card-meta">
+                      <span>💬 {session.comments?.length ?? 0} notes</span>
+                      <span>✅ {acceptedCount} accepted</span>
+                      <span>Updated {updatedCopy(session.updatedAt)}</span>
                     </div>
                   </div>
-                ))}
+                </button>
+              );
+            })}
+            {sessions.length === 0 ? (
+              <div className="review-empty">
+                <strong>No sessions here yet.</strong>
+                <p>Choose Team or Public in the Mac app submission flow, and Dbugr will sync the session into this feed.</p>
               </div>
-              <div className="phase2-card" style={{ background: 'var(--surface-soft)' }}>
-                <div className="phase2-kicker">AI destination</div>
-                <div className="provider-stack mt-16">
-                  {(['claude', 'codex', 'cursor'] as const).map((provider) => (
-                    <button
-                      key={provider}
-                      className={`provider-row ${providerTarget === provider ? 'active' : ''}`}
-                      onClick={() => setProviderTarget(provider)}
-                      aria-pressed={providerTarget === provider}
-                    >
-                      <span className="radio-dot" />
-                      <strong>{provider === 'claude' ? 'Claude CLI' : provider === 'codex' ? 'Codex CLI' : 'Cursor'}</strong>
-                      <span>Local handoff</span>
+            ) : null}
+          </div>
+
+          <aside className="review-detail-panel">
+            {selected ? (
+              <>
+                <div className="review-detail-header">
+                  <div>
+                    <div className="phase2-kicker">Selected session</div>
+                    <h2>{selected.title}</h2>
+                  </div>
+                  <span className="review-pill">{selected.reviewStatus?.replaceAll('_', ' ') ?? 'draft'}</span>
+                </div>
+
+                <div className="review-route-card">
+                  <div className="phase2-kicker">Where should this go?</div>
+                  <div className="review-route-buttons">
+                    <button onClick={() => changeVisibility('private')} className={selected.visibility === 'private' ? 'active' : ''}>
+                      Direct
                     </button>
-                  ))}
+                    <button onClick={() => changeVisibility('org')} className={selected.visibility === 'org' ? 'active' : ''}>
+                      Team
+                    </button>
+                    <button onClick={() => changeVisibility('public')} className={selected.visibility === 'public' ? 'active' : ''}>
+                      Public
+                    </button>
+                  </div>
+                  <p>
+                    Direct stays private for local CLI handoff. Team opens internal review.
+                    Public asks the builder community after redaction approval.
+                  </p>
                 </div>
-              </div>
-              <div className="row gap-8">
-                <button className="btn btn-primary" onClick={() => preflight(providerTarget)}>Generate preflight</button>
-                <button className="btn btn-ghost" disabled={!summary} onClick={submitToAI}>Freeze submission</button>
-              </div>
-              {summary && (
-                <pre className="pre card">{summary.finalPromptDraft}</pre>
-              )}
-              {submission && (
-                <div className="card">
-                  <div className="phase2-kicker">Submission snapshot</div>
-                  <p className="phase2-muted mt-8">Created for {submission.providerTarget}. Prompt chars: {submission.finalPrompt.length}.</p>
+
+                <div className="review-preview-frame">
+                  {selectedImage ? (
+                    <img src={selectedImage} alt={`${selected.title} annotated screenshot`} />
+                  ) : (
+                    <div className="review-preview-empty">
+                      <span>📸</span>
+                      <strong>Screenshot preview will appear here</strong>
+                      <p>Native Mac captures sync frames into this review board.</p>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          ) : (
-            <p className="phase2-muted mt-16">Choose a session to curate.</p>
-          )}
-        </aside>
-      </section>
-    </div>
+
+                <div className="review-comment-box">
+                  <div className="phase2-kicker">Add team note</div>
+                  <textarea value={commentBody} onChange={(event) => setCommentBody(event.target.value)} />
+                  <button className="btn btn-primary" onClick={addContribution}>Post note</button>
+                </div>
+
+                <div className="review-comment-list">
+                  {(selected.comments ?? []).map((comment) => {
+                    const decision = commentDecision(comment);
+                    return (
+                      <article key={comment.id} className="review-comment">
+                        <div className="review-comment-head">
+                          <strong>{comment.author?.name ?? 'Teammate'}</strong>
+                          <span className={`review-decision decision-${decision}`}>{decision.replace('_', ' ')}</span>
+                        </div>
+                        <p>{comment.body}</p>
+                        <div className="review-comment-actions">
+                          <button onClick={() => curate(comment, 'accepted')}>Accept</button>
+                          <button onClick={() => curate(comment, 'rejected')}>Decline</button>
+                          <button onClick={() => curate(comment, 'duplicate')}>Duplicate</button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                  {(selected.comments ?? []).length === 0 ? (
+                    <p className="phase2-muted">No comments yet. Add the first review note.</p>
+                  ) : null}
+                </div>
+
+                <div className="review-synthesis">
+                  <div>
+                    <div className="phase2-kicker">Accepted notes</div>
+                    <h3>{accepted.length} item(s) ready for synthesis</h3>
+                  </div>
+                  <div className="review-provider-row">
+                    {(['claude', 'codex', 'cursor'] as const).map((provider) => (
+                      <button
+                        key={provider}
+                        className={providerTarget === provider ? 'active' : ''}
+                        onClick={() => setProviderTarget(provider)}
+                      >
+                        {providerLabels[provider]}
+                      </button>
+                    ))}
+                  </div>
+                  <button className="btn btn-primary" onClick={() => preflight(providerTarget)}>
+                    Generate AI-ready prompt
+                  </button>
+                  {summary ? (
+                    <>
+                      <pre>{summary.finalPromptDraft}</pre>
+                      <button className="btn btn-primary" onClick={submitToAI}>
+                        Freeze and send snapshot
+                      </button>
+                    </>
+                  ) : (
+                    <p>Accept the best notes, then generate a clean implementation prompt for Claude, Codex, or Cursor.</p>
+                  )}
+                  {submission ? (
+                    <p className="review-success">Snapshot created for {providerLabels[submission.providerTarget]}.</p>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <div className="review-empty">
+                <strong>Choose a session.</strong>
+                <p>The curation panel will show screenshots, comments, accepted notes, and AI handoff controls.</p>
+              </div>
+            )}
+          </aside>
+        </section>
+      </main>
+    </section>
   );
 }

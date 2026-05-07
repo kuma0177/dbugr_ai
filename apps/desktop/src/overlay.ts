@@ -1,9 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
-import {
-  checkScreenRecordingPermission,
-  requestScreenRecordingPermission,
-} from 'tauri-plugin-macos-permissions-api';
+import { requestScreenRecordingPermission } from 'tauri-plugin-macos-permissions-api';
 import './overlay.css';
 
 declare const __DEBUGR_BUILD_STAMP__: string;
@@ -226,7 +223,7 @@ root.innerHTML = `
     <div class="hud-popover" id="hud-capture" style="display:none;">
       <div class="step-card step-card-hud" id="step-capture">
         <div class="step-card-title">Choose screen or window</div>
-        <div class="step-card-sub" id="capture-step-sub">Capture what you're looking at first. Use browser or app filters only when you need something more specific.</div>
+        <div class="step-card-sub" id="capture-step-sub">Refresh to see the current screen, browser pages, and open app windows. Pick one, then crop or pin the exact area you want to annotate.</div>
         <div class="capture-mode-bar" id="capture-mode-bar" role="tablist" aria-label="Capture source type">
           <button type="button" class="capture-mode-btn active" id="capture-mode-screen" data-capture-mode="screen" aria-selected="true">Current screen</button>
           <button type="button" class="capture-mode-btn" id="capture-mode-browser" data-capture-mode="browser" aria-selected="false">Browser tabs/pages</button>
@@ -535,26 +532,15 @@ function isLikelyMacScreenRecordingDenied(message: string): boolean {
   );
 }
 
-/** macOS plugin API; returns null when unavailable (non-macOS / tests). */
-async function macosPluginScreenRecordingGate(): Promise<boolean | null> {
-  try {
-    return await checkScreenRecordingPermission();
-  } catch {
-    return null;
-  }
-}
-
 function wireCaptureSettingsButtons(root: ParentNode) {
   root.querySelector('#capture-open-screen-settings')?.addEventListener('click', async (e) => {
     e.stopPropagation();
     try {
-      await requestScreenRecordingPermission();
-    } catch {
-      await invoke<boolean>('request_screen_capture_permission').catch(() => false);
-    }
-    try {
+      setToast('Opening Screen Recording settings…');
+      await hideOverlayForMacosPermissionUi('open_screen_capture_settings');
       await invoke('open_screen_capture_settings');
-    } catch {
+    } catch (err) {
+      addDebugLog(`permission.settings.open.failed error=${String(err)}`);
       setToast('Could not open System Settings. Open Screen Recording manually from Privacy & Security.');
     }
   });
@@ -569,32 +555,43 @@ function attachCaptureRequestAccessHandler(root: ParentNode) {
     e.stopPropagation();
     setToast('Asking macOS…');
     try {
+      await hideOverlayForMacosPermissionUi('request_screen_capture_permission');
       await requestScreenRecordingPermission();
     } catch {
       try {
         await invoke<boolean>('request_screen_capture_permission');
       } catch (err) {
+        addDebugLog(`permission.request.failed error=${String(err)}`);
         setToast(`Could not request access: ${String(err)}`);
         return;
       }
     }
-    void loadCaptureSources();
   });
 }
 
-/** When the macOS permissions plugin says Screen Recording is off — clear, authoritative UI. */
+async function hideOverlayForMacosPermissionUi(reason: string): Promise<void> {
+  addDebugLog(`permission.ui.hide_overlay reason=${reason}`);
+  try {
+    await invoke('hide_overlay');
+    await new Promise(resolve => window.setTimeout(resolve, 180));
+  } catch (err) {
+    addDebugLog(`permission.ui.hide_overlay_failed reason=${reason} error=${String(err)}`);
+  }
+}
+
+/** When macOS refuses to list capture sources — clear, non-looping recovery UI. */
 function renderCaptureSourcesScreenRecordingOff(kind: 'plugin' | 'generic') {
   const lead =
     kind === 'plugin'
-      ? 'Screen Recording isn’t authorized for this process.'
-      : 'Screen Recording is turned off for this build.';
+      ? 'Dbugr cannot read open screens or windows yet.'
+      : 'macOS did not share the screen/window list with Dbugr.';
   const detail =
     kind === 'plugin'
-      ? `<p class="capture-perm-detail">The macOS permission plugin reports <strong>no Screen Recording access</strong> for this binary. Apple does not expose the display/window list until access is granted.</p>
-        <p class="capture-perm-tip"><strong>App missing from the list?</strong> Click <strong>+</strong>, <strong>⌘⇧G</strong>, and pick your dev binary — e.g. <code>…/src-tauri/target/debug/feedbackagent-desktop</code>. After <code>pnpm build</code>, add <code>src-tauri/target/release/bundle/macos/debugr.ai.app</code> (that folder only exists once you’ve built the bundle — it is not created in <code>/Applications</code> unless you copy it there).</p>`
-      : `<p class="capture-perm-detail">macOS won’t list displays or windows until you allow it. Open <strong>System Settings → Privacy &amp; Security → Screen Recording</strong>, enable <strong>debugr.ai</strong>, then return here and tap refresh.</p>
-        <p class="capture-perm-tip">If you run from <code>pnpm</code> / dev, enable the <code>feedbackagent-desktop</code> entry — macOS treats it separately from the .app.</p>
-        <p class="capture-perm-tip"><strong>Don’t see Debugr?</strong> Click <strong>+</strong>, <strong>⌘⇧G</strong>, and select <code>feedbackagent-desktop</code> under <code>target/debug</code>. For a bundled build, use <code>src-tauri/target/release/bundle/macos/debugr.ai.app</code> after <code>pnpm build</code> — copy it to <strong>/Applications</strong> yourself if you want that path.</p>`;
+      ? `<p class="capture-perm-detail">macOS has not released Screen Recording access to the running Dbugr process yet. If you just enabled <strong>Dbugr.ai.app</strong> in System Settings, quit Dbugr completely and reopen it once so macOS applies the change.</p>
+        <p class="capture-perm-tip"><strong>Need to change the permission?</strong> Use the buttons below. Dbugr will get out of the way before macOS opens the prompt or settings screen.</p>
+        <p class="capture-perm-tip"><strong>Advanced dev build note:</strong> macOS treats a local dev binary separately from the installed app. Only add the dev binary when you are intentionally running from source.</p>`
+      : `<p class="capture-perm-detail">Tap <strong>Refresh list</strong> first. If the list still stays empty, quit and reopen Dbugr once so macOS refreshes the Screen Recording grant for this installed app.</p>
+        <p class="capture-perm-tip">Only use <strong>Ask macOS</strong> or <strong>Open Screen Recording settings</strong> if Dbugr is missing from System Settings or the toggle is off.</p>`;
   captureListEl.innerHTML = `
       <div class="capture-perm-panel">
         <p class="capture-perm-lead">${lead}</p>
@@ -729,7 +726,6 @@ async function loadCaptureSources() {
     const list = await invoke<CaptureSourceListPayload>('list_capture_sources');
     renderCaptureSourceList(list);
   } catch (err) {
-    const pluginAfter = await macosPluginScreenRecordingGate();
     let systemReportsCaptureAllowed = false;
     try {
       systemReportsCaptureAllowed = await invoke<boolean>('get_screen_capture_permission');
@@ -742,7 +738,7 @@ async function loadCaptureSources() {
     } catch {
       diagnostics = null;
     }
-    renderCaptureSourcesError(err, systemReportsCaptureAllowed, diagnostics, pluginAfter);
+    renderCaptureSourcesError(err, systemReportsCaptureAllowed, diagnostics, null);
   }
 }
 
@@ -785,10 +781,10 @@ function setCaptureSourceMode(mode: CaptureSourceMode) {
   });
   captureStepSubEl.textContent =
     mode === 'screen'
-      ? "Capture what you're looking at right now. We'll freeze the screen once, then you crop on top of it."
+      ? "Capture the current screen, freeze it once, then crop or pin the exact area you want to annotate."
       : mode === 'browser'
-        ? 'Filter to browser windows using page titles when macOS exposes them. This is the closest available match to tab picking.'
-        : 'Filter to other app windows like Terminal, Cursor, Figma, or another desktop app.';
+        ? 'Refresh to show browser windows/pages by app and page title when macOS exposes them. Pick the page, then crop the exact region.'
+        : 'Refresh to show Terminal, Cursor, Figma, and other open app windows. Pick an app window, then crop or pin the area.';
 }
 
 function parseCaptureWindowLabel(label: string): { appName: string; title: string } {
@@ -1089,14 +1085,17 @@ function deleteAnnotation(id: string) {
 
 // ── Step 1: Picker ────────────────────────────────────────────────────────────
 
-function renderPickerSessions(list: Array<{ id: string; title: string; createdAt: string }>) {
+function renderPickerSessions(list: Array<{ id: string; title: string; createdAt: string; annotationCount?: number }>) {
   clearPickerLoadingTimer();
-  pickerSessions = list;
-  if (list.length === 0) {
+  const visibleSessions = list.filter((session) => (
+    typeof session.annotationCount !== 'number' || session.annotationCount > 0
+  ));
+  pickerSessions = visibleSessions;
+  if (visibleSessions.length === 0) {
     pickerListEl.innerHTML = '<div class="picker-empty">No past sessions yet. Start a new one to create your first list item.</div>';
     return;
   }
-  pickerListEl.innerHTML = list.map(s => `
+  pickerListEl.innerHTML = visibleSessions.map(s => `
     <button class="picker-session-item" data-id="${s.id}">
       <span class="picker-session-main">
         <span class="picker-session-title">${s.title}</span>

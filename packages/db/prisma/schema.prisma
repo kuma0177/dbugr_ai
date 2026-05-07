@@ -252,6 +252,7 @@ model DesktopLink {
   userId          String
   organizationId  String
   codeHash        String   @unique
+  tokenHash       String?
   status          String   @default("pending")
   desktopDeviceId String?
   desktopDeviceName String?

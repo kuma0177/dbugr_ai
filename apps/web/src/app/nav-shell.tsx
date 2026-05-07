@@ -1,11 +1,56 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { api } from '@/lib/api';
+import { displayOnboardingName, readOnboardingState, writeOnboardingState } from '@/lib/onboarding';
 
 export function NavShell() {
-  const pathname = usePathname();
-  const showAuthButtons = !pathname.startsWith('/onboarding');
+  const [signedInEmail, setSignedInEmail] = useState('');
+  const [signedInName, setSignedInName] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const sync = () => {
+      const state = readOnboardingState();
+      setSignedInEmail(state?.userEmail ?? '');
+      setSignedInName(displayOnboardingName(state));
+    };
+
+    const refreshFromApi = async () => {
+      const state = readOnboardingState();
+      if (!state?.userEmail) return;
+      try {
+        const data = await api.phase2.bootstrap();
+        if (cancelled) return;
+        const nextState = {
+          ...state,
+          userName: data.user.name || displayOnboardingName(state),
+          userEmail: data.user.email,
+          organizationName: data.organization.name,
+          organizationLogoUrl: data.organization.logoUrl ?? state.organizationLogoUrl,
+          role: data.membership.role,
+          teamName: data.membership.team?.name ?? state.teamName,
+          defaultVisibility: (data.organization.defaultVisibility as typeof state.defaultVisibility) ?? state.defaultVisibility,
+        };
+        writeOnboardingState(nextState);
+      } catch (error) {
+        console.warn('[phase2-web] nav.identity_refresh_failed', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+
+    sync();
+    void refreshFromApi();
+    window.addEventListener('storage', sync);
+    window.addEventListener('dbugr-auth-changed', sync);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('storage', sync);
+      window.removeEventListener('dbugr-auth-changed', sync);
+    };
+  }, []);
 
   return (
     <nav className="nav">
@@ -13,12 +58,26 @@ export function NavShell() {
         <img src="/brand/icon-nav-1024.png" alt="" className="nav-brand-icon" />
         <span>Dbugr.ai</span>
       </Link>
-      {showAuthButtons ? (
-        <div className="nav-links">
-          <Link className="nav-auth-button nav-auth-button-secondary" href="/onboarding?flow=sign-in&auth=email">Sign in</Link>
-          <Link className="nav-auth-button nav-auth-button-primary" href="/onboarding?flow=sign-up&auth=google">Get started</Link>
-        </div>
-      ) : null}
+      <div className="nav-links">
+        {signedInEmail ? (
+          <>
+            <div className="nav-signed-in" aria-label={`Signed in as ${signedInName || signedInEmail}`}>
+              <span>Signed in as</span>
+              <strong>{signedInName || signedInEmail}</strong>
+            </div>
+            <Link className="nav-auth-button nav-auth-button-secondary" href="/feed">Notes Feed</Link>
+            <Link className="nav-auth-button nav-auth-button-primary" href="/admin">Admin</Link>
+          </>
+        ) : (
+          <>
+            <Link className="nav-auth-button nav-auth-button-secondary" href="/onboarding?flow=sign-in&auth=email">Sign in with email</Link>
+            <Link className="nav-auth-button nav-auth-button-google" href="/onboarding?flow=sign-in&auth=google">
+              <img src="/brand/google-g.svg" alt="" className="nav-google-mark" aria-hidden="true" />
+              <span>Sign in with Google</span>
+            </Link>
+          </>
+        )}
+      </div>
     </nav>
   );
 }

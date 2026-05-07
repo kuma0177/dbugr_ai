@@ -11,7 +11,16 @@ const DEMO_USER_ID = 'user_demo';
 function logPhase2(event: string, details: Record<string, unknown> = {}) {
   const stamp = new Date().toISOString();
   const safeDetails = Object.fromEntries(
-    Object.entries(details).filter(([key]) => !key.toLowerCase().includes('token')),
+    Object.entries(details)
+      .filter(([key]) => !key.toLowerCase().includes('token'))
+      .map(([key, value]) => {
+        if (key.toLowerCase().includes('email') && typeof value === 'string') {
+          const [local, domain] = value.split('@');
+          return [key, `${local.slice(0, 2)}***@${domain ?? 'unknown'}`];
+        }
+        if (key.toLowerCase().includes('code')) return [key, '[redacted]'];
+        return [key, value];
+      }),
   );
   console.info(`[phase2] ${stamp} ${event}`, safeDetails);
 }
@@ -36,6 +45,50 @@ function slugify(value: string, fallback = 'workspace') {
 }
 
 async function requestContext(req: Request) {
+  const desktopToken = desktopBearerToken(req);
+  if (desktopToken) {
+    const desktopLink = await prisma.desktopLink.findFirst({
+      where: { tokenHash: hashDesktopLinkToken(desktopToken) },
+      include: { user: true, organization: true },
+    });
+
+    if (!desktopLink || desktopLink.status !== 'redeemed') {
+      const error = new Error('This Mac is not linked to a valid Dbugr account. Relink it from onboarding.');
+      error.name = 'UNAUTHENTICATED';
+      throw error;
+    }
+
+    if (desktopLink.expiresAt.getTime() < Date.now()) {
+      const error = new Error('This Mac link expired. Relink the Mac app from onboarding.');
+      error.name = 'UNAUTHENTICATED';
+      throw error;
+    }
+
+    const membership = await prisma.organizationMembership.findFirst({
+      where: {
+        userId: desktopLink.userId,
+        organizationId: desktopLink.organizationId,
+        status: 'active',
+      },
+      include: { organization: true, team: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    if (!membership) {
+      const error = new Error('This linked Mac no longer has active access to this organization.');
+      error.name = 'FORBIDDEN';
+      throw error;
+    }
+
+    logPhase2('desktop_token.context_loaded', {
+      userId: desktopLink.userId,
+      organizationId: desktopLink.organizationId,
+      desktopLinkId: desktopLink.id,
+      deviceId: desktopLink.desktopDeviceId,
+    });
+    return { user: desktopLink.user, membership, organization: desktopLink.organization };
+  }
+
   const email = typeof req.headers['x-dbugr-user-email'] === 'string'
     ? req.headers['x-dbugr-user-email'].trim().toLowerCase()
     : '';
@@ -74,6 +127,50 @@ function handleContextError(error: unknown, res: Response) {
 
 function canManageSession(role: string, sessionOwnerId: string, actorId: string) {
   return sessionOwnerId === actorId || role === 'owner' || role === 'admin';
+}
+
+function mapDesktopSubmissionFlow(flow: 'direct' | 'team' | 'public') {
+  if (flow === 'team') {
+    return {
+      visibility: 'org' as const,
+      submissionFlow: 'internal_review' as const,
+      reviewStatus: 'collecting_feedback' as const,
+      nextAction: 'open_team_review' as const,
+    };
+  }
+
+  if (flow === 'public') {
+    return {
+      visibility: 'public' as const,
+      submissionFlow: 'public_feed' as const,
+      reviewStatus: 'collecting_feedback' as const,
+      nextAction: 'open_public_curation' as const,
+    };
+  }
+
+  return {
+    visibility: 'private' as const,
+    submissionFlow: 'direct' as const,
+    reviewStatus: 'draft' as const,
+    nextAction: 'local_ai_handoff' as const,
+  };
+}
+
+async function ensureDefaultProject(organizationId: string, visibilityDefault = 'private') {
+  const existing = await prisma.project.findFirst({
+    where: { organizationId, slug: 'desktop-captures' },
+    orderBy: { createdAt: 'asc' },
+  });
+  if (existing) return existing;
+
+  return prisma.project.create({
+    data: {
+      organizationId,
+      name: 'Desktop captures',
+      slug: 'desktop-captures',
+      visibilityDefault,
+    },
+  });
 }
 
 const onboardingSchema = z.object({
@@ -122,6 +219,34 @@ const submitSchema = z.object({
   credentialScope: z.enum(['personal', 'organization', 'none']).default('personal'),
 });
 
+const desktopSessionSyncSchema = z.object({
+  localSessionId: z.string().min(1),
+  title: z.string().min(1),
+  about: z.string().optional(),
+  sessionNote: z.string().optional(),
+  projectFolder: z.string().optional(),
+  githubRepo: z.string().optional(),
+  submissionFlow: z.enum(['direct', 'team', 'public']),
+  providerTarget: z.enum(['claude', 'codex', 'cursor']).optional(),
+  captures: z.array(z.object({
+    id: z.string().min(1),
+    title: z.string().optional(),
+    note: z.string().optional(),
+    screenshotUrl: z.string().optional(),
+    previewDataUrl: z.string().optional(),
+    timestampMs: z.number().int().nonnegative().optional(),
+    annotations: z.array(z.object({
+      id: z.string().min(1),
+      text: z.string().optional(),
+      type: z.string().optional(),
+      x: z.number().optional(),
+      y: z.number().optional(),
+      width: z.number().optional(),
+      height: z.number().optional(),
+    })).default([]),
+  })).default([]),
+});
+
 const desktopLinkSchema = z.object({
   appUrl: z.string().url().optional(),
 });
@@ -153,6 +278,18 @@ const ensureIdentitySchema = z.object({
   authProvider: z.enum(['email', 'google']),
 });
 
+const adminMemberUpdateSchema = z.object({
+  role: z.enum(['owner', 'admin', 'member', 'reviewer', 'guest']).optional(),
+  status: z.enum(['active', 'invited', 'revoked']).optional(),
+  teamId: z.string().nullable().optional(),
+});
+
+const adminInviteCreateSchema = z.object({
+  email: z.string().email(),
+  role: z.enum(['admin', 'member', 'reviewer', 'guest']).default('member'),
+  teamId: z.string().nullable().optional(),
+});
+
 type EmailCodeEntry = {
   codeHash: string;
   expiresAt: number;
@@ -169,6 +306,23 @@ function createDesktopLinkCode() {
 
 function hashDesktopLinkCode(code: string) {
   return crypto.createHash('sha256').update(code.trim().toUpperCase()).digest('hex');
+}
+
+function createDesktopLinkToken() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function hashDesktopLinkToken(token: string) {
+  return crypto.createHash('sha256').update(token.trim()).digest('hex');
+}
+
+function desktopBearerToken(req: Request) {
+  const authorization = typeof req.headers.authorization === 'string' ? req.headers.authorization : '';
+  if (authorization.toLowerCase().startsWith('bearer ')) {
+    return authorization.slice('bearer '.length).trim();
+  }
+  const headerToken = req.headers['x-dbugr-desktop-token'];
+  return typeof headerToken === 'string' ? headerToken.trim() : '';
 }
 
 function createInviteToken() {
@@ -234,6 +388,20 @@ function mergeAuthProviders(existing: string, incoming: 'email' | 'google') {
   return Array.from(providers).join(',');
 }
 
+function platformAdminEmails() {
+  return new Set(
+    (process.env.DEBUGR_SUPER_ADMIN_EMAILS ?? '')
+      .split(',')
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+function isPlatformAdmin(user: { email: string; role: string }) {
+  return ['owner', 'admin', 'super_admin', 'platform_admin'].includes(user.role) ||
+    platformAdminEmails().has(user.email.toLowerCase());
+}
+
 async function ensureUserIdentity({
   email,
   name,
@@ -270,6 +438,21 @@ async function ensureUserIdentity({
   });
 
   return { user, created: true };
+}
+
+async function activeWorkspaceForUser(userId: string) {
+  const membership = await prisma.organizationMembership.findFirst({
+    where: { userId, status: 'active' },
+    include: { organization: true, team: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  if (!membership) return null;
+
+  return {
+    organization: membership.organization,
+    membership,
+  };
 }
 
 async function sendEmailCode(email: string, code: string) {
@@ -346,7 +529,7 @@ async function sendWelcomeEmail(email: string, name: string, authProvider: 'emai
   const authLabel = authProvider === 'google' ? 'Google' : 'email verification';
   const downloadUrl =
     process.env.NEXT_PUBLIC_MAC_DMG_URL ??
-    'https://github.com/kuma0177/debgr_ai/releases/download/stable-macos-claude-codex-cli/dbugr-ai-0.0.1-macos-aarch64.dmg';
+    `${webBaseUrl}/downloads/dbugr-ai-0.0.1-macos-aarch64.dmg`;
 
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -706,6 +889,9 @@ phase2Router.post('/phase2/auth/email-code/request', async (req: Request, res: R
   const email = normalizeEmail(parsed.data.email);
   const existingUser = await prisma.user.findUnique({ where: { email } });
   const code = createEmailCode();
+  const forcePreviewDelivery =
+    req.headers['x-dbugr-test-preview-email'] === '1' &&
+    process.env.NODE_ENV !== 'production';
   emailCodeStore.set(email, {
     codeHash: hashEmailCode(code),
     expiresAt: Date.now() + 1000 * 60 * EMAIL_CODE_EXPIRY_MINUTES,
@@ -713,12 +899,16 @@ phase2Router.post('/phase2/auth/email-code/request', async (req: Request, res: R
   });
 
   try {
-    const delivery = await sendEmailCode(email, code);
+    const delivery = forcePreviewDelivery
+      ? { delivered: false as const, provider: 'preview' as const }
+      : await sendEmailCode(email, code);
     logPhase2('email_code.requested', {
       email,
       delivered: delivery.delivered,
       provider: delivery.provider,
       configured: emailProviderConfigured(),
+      accountExists: Boolean(existingUser),
+      forcePreviewDelivery,
     });
     return res.status(201).json({
       data: {
@@ -771,7 +961,7 @@ phase2Router.post('/phase2/auth/email-code/verify', async (req: Request, res: Re
     entry.attempts += 1;
     emailCodeStore.set(email, entry);
     logPhase2('email_code.verify_failed', { email, attempts: entry.attempts });
-    return res.status(401).json({ error: 'That code does not match. Check the code and try again.' });
+    return res.status(401).json({ error: 'Incorrect Code Received. Enter the 6-digit code from your email.' });
   }
 
   emailCodeStore.delete(email);
@@ -795,12 +985,21 @@ phase2Router.post('/phase2/auth/email-code/verify', async (req: Request, res: Re
   }
 
   logPhase2('email_code.verified', { email, userId: identity.user.id, created: identity.created });
+  const workspace = await activeWorkspaceForUser(identity.user.id);
+  logPhase2('email_code.verify_completed', {
+    email,
+    userId: identity.user.id,
+    created: identity.created,
+    hasWorkspace: Boolean(workspace),
+    organizationId: workspace?.organization.id,
+  });
   return res.json({
     data: {
       verified: true,
       user: identity.user,
       created: identity.created,
       welcomeEmailSent,
+      workspace,
     },
   });
 });
@@ -838,12 +1037,500 @@ phase2Router.post('/phase2/auth/identity/ensure', async (req: Request, res: Resp
     created: identity.created,
     authProvider: parsed.data.authProvider,
   });
+  const workspace = await activeWorkspaceForUser(identity.user.id);
+  logPhase2('identity.ensure_completed', {
+    email: identity.user.email,
+    userId: identity.user.id,
+    created: identity.created,
+    authProvider: parsed.data.authProvider,
+    hasWorkspace: Boolean(workspace),
+    organizationId: workspace?.organization.id,
+  });
 
   return res.status(identity.created ? 201 : 200).json({
     data: {
       user: identity.user,
       created: identity.created,
       welcomeEmailSent,
+      workspace,
+    },
+  });
+});
+
+phase2Router.get('/phase2/admin/overview', async (req: Request, res: Response) => {
+  let context;
+  try {
+    context = await requestContext(req);
+  } catch (error) {
+    return handleContextError(error, res);
+  }
+
+  const { user, membership, organization } = context;
+  if (!['owner', 'admin'].includes(membership.role)) {
+    logPhase2('admin.overview_forbidden', {
+      userId: user.id,
+      organizationId: organization.id,
+      role: membership.role,
+    });
+    return res.status(403).json({ error: 'Only workspace owners and admins can open the admin panel.' });
+  }
+
+  const [members, teams, invites, auditLogs, sessions, comments, desktopLinks] = await Promise.all([
+    prisma.organizationMembership.findMany({
+      where: { organizationId: organization.id },
+      include: { user: true, team: true },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.team.findMany({
+      where: { organizationId: organization.id },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.invite.findMany({
+      where: { organizationId: organization.id, acceptedAt: null, revokedAt: null },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.auditLog.findMany({
+      where: { organizationId: organization.id },
+      include: { actor: true },
+      orderBy: { createdAt: 'desc' },
+      take: 25,
+    }),
+    prisma.feedbackSession.findMany({
+      where: { project: { organizationId: organization.id } },
+      select: { id: true, createdBy: true },
+    }),
+    prisma.feedbackComment.findMany({
+      where: { session: { project: { organizationId: organization.id } } },
+      select: { id: true, authorId: true },
+    }),
+    prisma.desktopLink.findMany({
+      where: { organizationId: organization.id },
+      select: { id: true, userId: true },
+    }),
+  ]);
+
+  const activity = members.map((member) => ({
+    userId: member.userId,
+    sessionCount: sessions.filter((session) => session.createdBy === member.userId).length,
+    commentCount: comments.filter((comment) => comment.authorId === member.userId).length,
+    desktopLinkCount: desktopLinks.filter((link) => link.userId === member.userId).length,
+    lastSeenAt: member.user.lastSeenAt?.toISOString() ?? null,
+  }));
+
+  logPhase2('admin.overview_loaded', {
+    userId: user.id,
+    organizationId: organization.id,
+    memberCount: members.length,
+    inviteCount: invites.length,
+    sessionCount: sessions.length,
+  });
+
+  return res.json({
+    data: {
+      viewer: user,
+      organization,
+      membership,
+      members,
+      teams,
+      invites,
+      auditLogs,
+      activity,
+      totals: {
+        users: members.filter((member) => member.status === 'active').length,
+        activeMembers: members.filter((member) => member.status === 'active').length,
+        teams: teams.length,
+        pendingInvites: invites.length,
+        sessions: sessions.length,
+        comments: comments.length,
+        desktopLinks: desktopLinks.length,
+      },
+    },
+  });
+});
+
+phase2Router.patch('/phase2/admin/members/:membershipId', async (req: Request, res: Response) => {
+  let context;
+  try {
+    context = await requestContext(req);
+  } catch (error) {
+    return handleContextError(error, res);
+  }
+
+  const { user, membership, organization } = context;
+  if (!['owner', 'admin'].includes(membership.role)) {
+    logPhase2('admin.member_update_forbidden', { userId: user.id, role: membership.role });
+    return res.status(403).json({ error: 'Only workspace owners and admins can manage member access.' });
+  }
+
+  const parsed = adminMemberUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    logPhase2('admin.member_update_validation_failed', { issues: parsed.error.issues.length });
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const target = await prisma.organizationMembership.findFirst({
+    where: { id: req.params.membershipId, organizationId: organization.id },
+    include: { user: true },
+  });
+  if (!target) {
+    logPhase2('admin.member_update_not_found', { actorId: user.id, membershipId: req.params.membershipId });
+    return res.status(404).json({ error: 'That member was not found in this workspace.' });
+  }
+
+  if (target.userId === user.id && parsed.data.status === 'revoked') {
+    return res.status(400).json({ error: 'You cannot remove your own access from this workspace.' });
+  }
+
+  if (membership.role !== 'owner' && target.role === 'owner') {
+    return res.status(403).json({ error: 'Only an owner can change another owner.' });
+  }
+
+  const updated = await prisma.organizationMembership.update({
+    where: { id: target.id },
+    data: {
+      role: parsed.data.role ?? undefined,
+      status: parsed.data.status ?? undefined,
+      teamId: parsed.data.teamId === undefined ? undefined : parsed.data.teamId,
+    },
+    include: { user: true, team: true },
+  });
+
+  await auditLog({
+    organizationId: organization.id,
+    actorId: user.id,
+    action: 'phase2.admin_member_updated',
+    targetType: 'organization_membership',
+    targetId: updated.id,
+    metadata: {
+      targetEmail: target.user.email,
+      role: updated.role,
+      status: updated.status,
+      teamId: updated.teamId,
+    },
+  });
+
+  logPhase2('admin.member_updated', {
+    actorId: user.id,
+    organizationId: organization.id,
+    membershipId: updated.id,
+    targetUserId: updated.userId,
+    role: updated.role,
+    status: updated.status,
+  });
+
+  return res.json({ data: { member: updated } });
+});
+
+phase2Router.delete('/phase2/admin/members/:membershipId', async (req: Request, res: Response) => {
+  let context;
+  try {
+    context = await requestContext(req);
+  } catch (error) {
+    return handleContextError(error, res);
+  }
+
+  const { user, membership, organization } = context;
+  if (!['owner', 'admin'].includes(membership.role)) {
+    logPhase2('admin.member_revoke_forbidden', { userId: user.id, role: membership.role });
+    return res.status(403).json({ error: 'Only workspace owners and admins can remove members.' });
+  }
+
+  const target = await prisma.organizationMembership.findFirst({
+    where: { id: req.params.membershipId, organizationId: organization.id },
+    include: { user: true },
+  });
+  if (!target) {
+    return res.status(404).json({ error: 'That member was not found in this workspace.' });
+  }
+
+  if (target.userId === user.id) {
+    return res.status(400).json({ error: 'You cannot remove your own access from this workspace.' });
+  }
+
+  if (membership.role !== 'owner' && target.role === 'owner') {
+    return res.status(403).json({ error: 'Only an owner can remove another owner.' });
+  }
+
+  const revoked = await prisma.organizationMembership.update({
+    where: { id: target.id },
+    data: { status: 'revoked' },
+    include: { user: true, team: true },
+  });
+
+  await auditLog({
+    organizationId: organization.id,
+    actorId: user.id,
+    action: 'phase2.admin_member_removed',
+    targetType: 'organization_membership',
+    targetId: revoked.id,
+    metadata: { targetEmail: target.user.email, previousRole: target.role },
+  });
+
+  logPhase2('admin.member_removed', {
+    actorId: user.id,
+    organizationId: organization.id,
+    membershipId: revoked.id,
+    targetUserId: revoked.userId,
+  });
+
+  return res.json({ data: { member: revoked } });
+});
+
+phase2Router.post('/phase2/admin/invites', async (req: Request, res: Response) => {
+  let context;
+  try {
+    context = await requestContext(req);
+  } catch (error) {
+    return handleContextError(error, res);
+  }
+
+  const { user, membership, organization } = context;
+  if (!['owner', 'admin'].includes(membership.role)) {
+    logPhase2('admin.invite_create_forbidden', { userId: user.id, role: membership.role });
+    return res.status(403).json({ error: 'Only workspace owners and admins can invite teammates.' });
+  }
+
+  const parsed = adminInviteCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    logPhase2('admin.invite_create_validation_failed', { issues: parsed.error.issues.length });
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const email = normalizeEmail(parsed.data.email);
+  const activeMembership = await prisma.organizationMembership.findFirst({
+    where: { organizationId: organization.id, user: { email }, status: 'active' },
+    include: { user: true },
+  });
+  if (activeMembership) {
+    return res.status(409).json({ error: `${email} is already an active member of this workspace.` });
+  }
+
+  const existingInvite = await prisma.invite.findFirst({
+    where: {
+      organizationId: organization.id,
+      email,
+      acceptedAt: null,
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+  });
+  if (existingInvite) {
+    return res.status(409).json({ error: `${email} already has a pending invite.` });
+  }
+
+  const token = createInviteToken();
+  const invite = await prisma.invite.create({
+    data: {
+      organizationId: organization.id,
+      teamId: parsed.data.teamId ?? null,
+      email,
+      role: parsed.data.role,
+      tokenHash: hashInviteToken(token),
+      invitedByUserId: user.id,
+      expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7),
+    },
+  });
+
+  await auditLog({
+    organizationId: organization.id,
+    actorId: user.id,
+    action: 'phase2.admin_invite_created',
+    targetType: 'invite',
+    targetId: invite.id,
+    metadata: { email, role: invite.role, teamId: invite.teamId },
+  });
+
+  logPhase2('admin.invite_created', {
+    actorId: user.id,
+    organizationId: organization.id,
+    inviteId: invite.id,
+    email,
+    role: invite.role,
+    teamId: invite.teamId,
+  });
+
+  return res.status(201).json({
+    data: {
+      invite: {
+        ...invite,
+        acceptUrl: `/onboarding?invite=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`,
+      },
+    },
+  });
+});
+
+phase2Router.delete('/phase2/admin/invites/:inviteId', async (req: Request, res: Response) => {
+  let context;
+  try {
+    context = await requestContext(req);
+  } catch (error) {
+    return handleContextError(error, res);
+  }
+
+  const { user, membership, organization } = context;
+  if (!['owner', 'admin'].includes(membership.role)) {
+    logPhase2('admin.invite_revoke_forbidden', { userId: user.id, role: membership.role });
+    return res.status(403).json({ error: 'Only workspace owners and admins can revoke invites.' });
+  }
+
+  const invite = await prisma.invite.findFirst({
+    where: { id: req.params.inviteId, organizationId: organization.id, revokedAt: null },
+  });
+  if (!invite) {
+    return res.status(404).json({ error: 'That invite was not found or was already removed.' });
+  }
+
+  const revoked = await prisma.invite.update({
+    where: { id: invite.id },
+    data: { revokedAt: new Date() },
+  });
+
+  await auditLog({
+    organizationId: organization.id,
+    actorId: user.id,
+    action: 'phase2.admin_invite_revoked',
+    targetType: 'invite',
+    targetId: revoked.id,
+    metadata: { email: revoked.email, role: revoked.role },
+  });
+
+  logPhase2('admin.invite_revoked', {
+    actorId: user.id,
+    organizationId: organization.id,
+    inviteId: revoked.id,
+    email: revoked.email,
+  });
+
+  return res.json({ data: { invite: revoked } });
+});
+
+phase2Router.delete('/phase2/admin/audit/:auditLogId', async (req: Request, res: Response) => {
+  let context;
+  try {
+    context = await requestContext(req);
+  } catch (error) {
+    return handleContextError(error, res);
+  }
+
+  const { user, membership, organization } = context;
+  if (membership.role !== 'owner') {
+    logPhase2('admin.audit_delete_forbidden', { userId: user.id, role: membership.role });
+    return res.status(403).json({ error: 'Only workspace owners can remove audit items from this admin view.' });
+  }
+
+  const audit = await prisma.auditLog.findFirst({
+    where: { id: req.params.auditLogId, organizationId: organization.id },
+  });
+  if (!audit) {
+    return res.status(404).json({ error: 'That audit item was not found.' });
+  }
+
+  await prisma.auditLog.delete({ where: { id: audit.id } });
+  logPhase2('admin.audit_deleted', {
+    actorId: user.id,
+    organizationId: organization.id,
+    auditLogId: audit.id,
+    auditAction: audit.action,
+  });
+
+  return res.json({ data: { deleted: true, auditLogId: audit.id } });
+});
+
+phase2Router.get('/phase2/platform-admin/overview', async (req: Request, res: Response) => {
+  const email = typeof req.headers['x-dbugr-user-email'] === 'string'
+    ? req.headers['x-dbugr-user-email'].trim().toLowerCase()
+    : '';
+  if (!email) {
+    return res.status(401).json({ error: 'Sign in before opening the platform admin panel.' });
+  }
+
+  const viewer = await prisma.user.findUnique({ where: { email } });
+  if (!viewer || !isPlatformAdmin(viewer)) {
+    logPhase2('platform_admin.overview_forbidden', { email, userId: viewer?.id });
+    return res.status(403).json({ error: 'Only Dbugr platform admins can search across all organizations.' });
+  }
+
+  const query = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
+  const organizationId = typeof req.query.organizationId === 'string' ? req.query.organizationId : '';
+
+  const [users, organizations, memberships, invites, sessions, comments] = await Promise.all([
+    prisma.user.findMany({
+      where: query ? {
+        OR: [
+          { email: { contains: query } },
+          { name: { contains: query } },
+        ],
+      } : undefined,
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    }),
+    prisma.organization.findMany({
+      where: organizationId ? { id: organizationId } : query ? { name: { contains: query } } : undefined,
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    }),
+    prisma.organizationMembership.findMany({
+      where: organizationId ? { organizationId } : undefined,
+      include: { organization: true, team: true },
+    }),
+    prisma.invite.findMany({
+      where: { acceptedAt: null, revokedAt: null, ...(organizationId ? { organizationId } : {}) },
+    }),
+    prisma.feedbackSession.findMany({
+      where: organizationId ? { project: { organizationId } } : undefined,
+      select: { id: true, createdBy: true, project: { select: { organizationId: true } } },
+    }),
+    prisma.feedbackComment.findMany({
+      where: organizationId ? { session: { project: { organizationId } } } : undefined,
+      select: { id: true, authorId: true },
+    }),
+  ]);
+
+  const scopedOrganizationIds = new Set(organizations.map((organization) => organization.id));
+  const userSummaries = users.map((listedUser) => {
+    const userMemberships = memberships.filter((entry) =>
+      entry.userId === listedUser.id && (!organizationId || entry.organizationId === organizationId),
+    );
+
+    return {
+      user: listedUser,
+      memberships: userMemberships,
+      sessionCount: sessions.filter((session) => session.createdBy === listedUser.id).length,
+      commentCount: comments.filter((comment) => comment.authorId === listedUser.id).length,
+      lastSeenAt: listedUser.lastSeenAt?.toISOString() ?? null,
+    };
+  }).filter((summary) => !organizationId || summary.memberships.length > 0);
+
+  const organizationSummaries = organizations.map((organization) => ({
+    organization,
+    memberCount: memberships.filter((entry) => entry.organizationId === organization.id).length,
+    pendingInvites: invites.filter((invite) => invite.organizationId === organization.id).length,
+    sessionCount: sessions.filter((session) => session.project.organizationId === organization.id).length,
+  }));
+
+  logPhase2('platform_admin.overview_loaded', {
+    actorId: viewer.id,
+    query,
+    organizationId,
+    userCount: userSummaries.length,
+    organizationCount: organizationSummaries.length,
+  });
+
+  return res.json({
+    data: {
+      viewer,
+      users: userSummaries,
+      organizations: organizationSummaries,
+      totals: {
+        users: userSummaries.length,
+        organizations: organizationSummaries.length,
+        activeMemberships: memberships.filter((entry) =>
+          entry.status === 'active' && (!scopedOrganizationIds.size || scopedOrganizationIds.has(entry.organizationId)),
+        ).length,
+        pendingInvites: invites.length,
+        sessions: sessions.length,
+        comments: comments.length,
+      },
     },
   });
 });
@@ -931,6 +1618,7 @@ phase2Router.post('/phase2/desktop-link/redeem', async (req: Request, res: Respo
     return res.status(410).json({ error: 'Desktop link code expired. Create a new link from onboarding.' });
   }
 
+  const desktopLinkToken = createDesktopLinkToken();
   const redeemed = await prisma.desktopLink.update({
     where: { id: link.id },
     data: {
@@ -938,10 +1626,9 @@ phase2Router.post('/phase2/desktop-link/redeem', async (req: Request, res: Respo
       redeemedAt: new Date(),
       desktopDeviceId: parsed.data.desktopDeviceId ?? crypto.randomUUID(),
       desktopDeviceName: parsed.data.desktopDeviceName ?? 'Dbugr Mac app',
+      tokenHash: hashDesktopLinkToken(desktopLinkToken),
     },
   });
-
-  const desktopLinkToken = crypto.randomBytes(24).toString('base64url');
 
   await auditLog({
     organizationId: link.organizationId,
@@ -957,6 +1644,7 @@ phase2Router.post('/phase2/desktop-link/redeem', async (req: Request, res: Respo
     userId: link.userId,
     organizationId: link.organizationId,
     desktopDeviceId: redeemed.desktopDeviceId,
+    tokenPersisted: Boolean(redeemed.tokenHash),
   });
 
   return res.json({
@@ -965,6 +1653,203 @@ phase2Router.post('/phase2/desktop-link/redeem', async (req: Request, res: Respo
       organization: link.organization,
       desktopLink: redeemed,
       desktopLinkToken,
+    },
+  });
+});
+
+phase2Router.post('/phase2/desktop-sessions/sync', async (req: Request, res: Response) => {
+  const parsed = desktopSessionSyncSchema.safeParse(req.body);
+  if (!parsed.success) {
+    logPhase2('desktop_session_sync.validation_failed', { issues: parsed.error.issues.length });
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  let context;
+  try {
+    context = await requestContext(req);
+  } catch (error) {
+    return handleContextError(error, res);
+  }
+
+  const { user, membership, organization } = context;
+  const mapping = mapDesktopSubmissionFlow(parsed.data.submissionFlow);
+  const project = await ensureDefaultProject(organization.id, organization.defaultVisibility);
+  const desktopMetadata = {
+    source: 'desktop',
+    localSessionId: parsed.data.localSessionId,
+    providerTarget: parsed.data.providerTarget ?? null,
+    syncedAt: new Date().toISOString(),
+  };
+
+  logPhase2('desktop_session_sync.started', {
+    userId: user.id,
+    organizationId: organization.id,
+    localSessionId: parsed.data.localSessionId,
+    desktopFlow: parsed.data.submissionFlow,
+    visibility: mapping.visibility,
+    submissionFlow: mapping.submissionFlow,
+    captureCount: parsed.data.captures.length,
+  });
+
+  const existingSession = await prisma.feedbackSession.findFirst({
+    where: {
+      createdBy: user.id,
+      project: { organizationId: organization.id },
+      aiTaskBrief: { contains: parsed.data.localSessionId },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const session = existingSession
+    ? await prisma.feedbackSession.update({
+        where: { id: existingSession.id },
+        data: {
+          title: parsed.data.title,
+          about: parsed.data.about ?? parsed.data.sessionNote ?? existingSession.about,
+          projectFolder: parsed.data.projectFolder ?? null,
+          githubRepo: parsed.data.githubRepo ?? null,
+          teamId: membership.teamId ?? null,
+          visibility: mapping.visibility,
+          submissionFlow: mapping.submissionFlow,
+          reviewStatus: mapping.reviewStatus,
+          status: mapping.submissionFlow === 'direct' ? 'ready' : 'published',
+          publicPublishedAt: mapping.visibility === 'public'
+            ? (existingSession.publicPublishedAt ?? new Date())
+            : null,
+          aiTaskBrief: JSON.stringify(desktopMetadata),
+        },
+      })
+    : await prisma.feedbackSession.create({
+        data: {
+          projectId: project.id,
+          createdBy: user.id,
+          teamId: membership.teamId ?? null,
+          title: parsed.data.title,
+          about: parsed.data.about ?? parsed.data.sessionNote ?? null,
+          projectFolder: parsed.data.projectFolder ?? null,
+          githubRepo: parsed.data.githubRepo ?? null,
+          visibility: mapping.visibility,
+          submissionFlow: mapping.submissionFlow,
+          reviewStatus: mapping.reviewStatus,
+          status: mapping.submissionFlow === 'direct' ? 'ready' : 'published',
+          publicPublishedAt: mapping.visibility === 'public' ? new Date() : null,
+          aiTaskBrief: JSON.stringify(desktopMetadata),
+        },
+      });
+
+  await prisma.feedbackFrame.deleteMany({ where: { feedbackSessionId: session.id } });
+  const frameInputs = parsed.data.captures.map((capture, index) => {
+    const annotationSummary = capture.annotations
+      .filter((annotation) => annotation.text?.trim())
+      .map((annotation) => annotation.text?.trim())
+      .join('\n');
+    const description = [capture.note, annotationSummary].filter(Boolean).join('\n\n') || capture.title || 'Desktop capture';
+
+    return {
+      feedbackSessionId: session.id,
+      timestampMs: capture.timestampMs ?? index,
+      imageUrl: capture.screenshotUrl ?? capture.previewDataUrl ?? 'desktop-capture://pending-upload',
+      cursorX: 0,
+      cursorY: 0,
+      clickType: 'desktop-sync',
+      description,
+    };
+  });
+  if (frameInputs.length) {
+    await prisma.feedbackFrame.createMany({ data: frameInputs });
+  }
+
+  let syncedAnnotationCount = 0;
+  for (const capture of parsed.data.captures) {
+    for (const annotation of capture.annotations) {
+      const body = annotation.text?.trim();
+      if (!body) continue;
+      syncedAnnotationCount += 1;
+
+      const existingComment = await prisma.feedbackComment.findFirst({
+        where: {
+          feedbackSessionId: session.id,
+          authorId: user.id,
+          targetType: 'annotation',
+          targetId: annotation.id,
+        },
+      });
+
+      if (existingComment) {
+        await prisma.feedbackComment.update({
+          where: { id: existingComment.id },
+          data: {
+            body,
+            visibility: mapping.visibility,
+            sourceScope: 'owner',
+            contributionType: 'comment',
+          },
+        });
+      } else {
+        await prisma.feedbackComment.create({
+          data: {
+            feedbackSessionId: session.id,
+            authorId: user.id,
+            targetType: 'annotation',
+            targetId: annotation.id,
+            sourceScope: 'owner',
+            contributionType: 'comment',
+            body,
+            visibility: mapping.visibility,
+          },
+        });
+      }
+    }
+  }
+
+  await auditLog({
+    organizationId: organization.id,
+    actorId: user.id,
+    action: 'phase2.desktop_session_synced',
+    targetType: 'feedbackSession',
+    targetId: session.id,
+    metadata: {
+      localSessionId: parsed.data.localSessionId,
+      desktopFlow: parsed.data.submissionFlow,
+      visibility: mapping.visibility,
+      submissionFlow: mapping.submissionFlow,
+      captureCount: parsed.data.captures.length,
+      annotationCount: syncedAnnotationCount,
+    },
+  });
+
+  const syncedSession = await prisma.feedbackSession.findUniqueOrThrow({
+    where: { id: session.id },
+    include: {
+      creator: true,
+      project: { include: { organization: true } },
+      comments: { include: { author: true, curationDecisions: true }, orderBy: { createdAt: 'desc' } },
+      frames: true,
+      _count: { select: { comments: true, frames: true, curationDecisions: true, submissions: true } },
+    },
+  });
+
+  logPhase2('desktop_session_sync.completed', {
+    sessionId: session.id,
+    userId: user.id,
+    organizationId: organization.id,
+    nextAction: mapping.nextAction,
+    syncedFrameCount: frameInputs.length,
+    syncedAnnotationCount,
+  });
+
+  return res.status(existingSession ? 200 : 201).json({
+    data: {
+      session: syncedSession,
+      mapping: {
+        desktopFlow: parsed.data.submissionFlow,
+        visibility: mapping.visibility,
+        submissionFlow: mapping.submissionFlow,
+        reviewStatus: mapping.reviewStatus,
+      },
+      syncedFrameCount: frameInputs.length,
+      syncedAnnotationCount,
+      nextAction: mapping.nextAction,
     },
   });
 });

@@ -58,6 +58,38 @@ export interface Session {
   collaborationReady: boolean;
   lastTarget?: Target;
   lastExplicitSaveAt?: string | null;
+  webSessionId?: string | null;
+  webSyncedAt?: string | null;
+  webSyncStatus?: 'idle' | 'syncing' | 'synced' | 'failed';
+  webSyncError?: string | null;
+}
+
+export interface DesktopSessionSyncPayload {
+  localSessionId: string;
+  title: string;
+  about?: string;
+  sessionNote?: string;
+  projectFolder?: string | null;
+  githubRepo?: string;
+  submissionFlow: SubmissionFlow;
+  providerTarget?: Target;
+  captures: Array<{
+    id: string;
+    title?: string;
+    note?: string;
+    screenshotUrl?: string;
+    previewDataUrl?: string;
+    timestampMs?: number;
+    annotations: Array<{
+      id: string;
+      text?: string;
+      type?: string;
+      x?: number;
+      y?: number;
+      width?: number;
+      height?: number;
+    }>;
+  }>;
 }
 
 export interface AgentFeedback {
@@ -300,6 +332,12 @@ export function normalizePersistedSession(
     collaborationReady: Boolean(session.collaborationReady),
     lastTarget: session.lastTarget === 'codex' || session.lastTarget === 'cursor' ? session.lastTarget : 'claude',
     lastExplicitSaveAt: session.lastExplicitSaveAt ?? null,
+    webSessionId: session.webSessionId ?? null,
+    webSyncedAt: session.webSyncedAt ?? null,
+    webSyncStatus: session.webSyncStatus === 'syncing' || session.webSyncStatus === 'synced' || session.webSyncStatus === 'failed'
+      ? session.webSyncStatus
+      : 'idle',
+    webSyncError: session.webSyncError ?? null,
   };
 }
 
@@ -438,7 +476,55 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
     submissionFlow: 'direct',
     contributions: [],
     collaborationReady: false,
+    webSessionId: null,
+    webSyncedAt: null,
+    webSyncStatus: 'idle',
+    webSyncError: null,
     ...overrides,
+  };
+}
+
+export function buildDesktopSessionSyncPayload(
+  session: Session,
+  providerTarget?: Target,
+): DesktopSessionSyncPayload {
+  return {
+    localSessionId: session.id,
+    title: session.title,
+    about: session.about || undefined,
+    sessionNote: session.sessionNote || undefined,
+    projectFolder: session.projectFolder ?? undefined,
+    githubRepo: session.githubRepo || undefined,
+    submissionFlow: session.submissionFlow,
+    providerTarget: providerTarget ?? session.lastTarget,
+    captures: session.captures.map((capture, index) => {
+      const screenshotUrl = capture.screenshotUrl?.startsWith('data:image/')
+        ? undefined
+        : capture.screenshotUrl;
+      const previewDataUrl = capture.screenshotUrl?.startsWith('data:image/')
+        ? capture.screenshotUrl
+        : undefined;
+
+      return {
+        id: capture.id,
+        title: capture.title,
+        note: capture.preview,
+        screenshotUrl,
+        previewDataUrl,
+        timestampMs: Number.isFinite(new Date(capture.timestamp).getTime())
+          ? new Date(capture.timestamp).getTime()
+          : index,
+        annotations: capture.annotations.map((annotation) => ({
+          id: annotation.id,
+          text: annotation.text,
+          type: annotation.kind,
+          x: annotation.x,
+          y: annotation.y,
+          width: annotation.width,
+          height: annotation.height,
+        })),
+      };
+    }),
   };
 }
 

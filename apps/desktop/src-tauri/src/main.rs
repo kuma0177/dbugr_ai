@@ -181,17 +181,11 @@ fn log_backend(event: &str, details: impl AsRef<str>) {
 #[tauri::command]
 fn get_screen_capture_permission() -> bool {
     let preflight = unsafe { CGPreflightScreenCaptureAccess() };
-    let probe = if preflight {
-        false
-    } else {
-        can_capture_screen_now()
-    };
-    let granted = preflight || probe;
     log_backend(
         "permission.preflight",
-        format!("preflight={preflight} probe={probe} granted={granted}"),
+        format!("preflight={preflight} probe=skipped granted={preflight} reason=passive_check"),
     );
-    granted
+    preflight
 }
 
 #[derive(serde::Serialize)]
@@ -206,7 +200,7 @@ struct ScreenCaptureDiagnostics {
 #[tauri::command]
 fn get_screen_capture_diagnostics(app: AppHandle) -> ScreenCaptureDiagnostics {
     let preflight = unsafe { CGPreflightScreenCaptureAccess() };
-    let probe = can_capture_screen_now();
+    let probe = false;
     let bundle_identifier = app.config().identifier.clone();
     let executable_path = std::env::current_exe()
         .ok()
@@ -215,8 +209,7 @@ fn get_screen_capture_diagnostics(app: AppHandle) -> ScreenCaptureDiagnostics {
     log_backend(
         "permission.diagnostics",
         format!(
-            "preflight={preflight} probe={probe} granted={} bundle_id={} executable={}",
-            preflight || probe,
+            "preflight={preflight} probe=skipped granted={preflight} bundle_id={} executable={} reason=passive_check",
             bundle_identifier,
             executable_path
         ),
@@ -224,7 +217,7 @@ fn get_screen_capture_diagnostics(app: AppHandle) -> ScreenCaptureDiagnostics {
     ScreenCaptureDiagnostics {
         preflight,
         probe,
-        granted: preflight || probe,
+        granted: preflight,
         bundle_identifier,
         executable_path,
     }
@@ -304,6 +297,91 @@ fn open_auth_popup(app: AppHandle, url: String, title: String, label: String) ->
         .visible(true)
         .build()
         .map_err(|e| format!("Failed to open auth popup: {e}"))?;
+
+    Ok(())
+}
+
+const DESKTOP_LINK_KEYCHAIN_SERVICE: &str = "ai.dbugr.desktop-link-token";
+const DESKTOP_LINK_KEYCHAIN_ACCOUNT: &str = "dbugr.desktop";
+
+#[tauri::command]
+fn save_desktop_link_token(token: String) -> Result<(), String> {
+    if token.trim().is_empty() {
+        return Err("Desktop link token cannot be empty.".to_string());
+    }
+
+    let output = Command::new("security")
+        .args([
+            "add-generic-password",
+            "-a",
+            DESKTOP_LINK_KEYCHAIN_ACCOUNT,
+            "-s",
+            DESKTOP_LINK_KEYCHAIN_SERVICE,
+            "-w",
+            token.trim(),
+            "-U",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to invoke macOS Keychain: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to save desktop link token to macOS Keychain: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    log_backend(
+        "desktop_link.token_saved",
+        format!("service={DESKTOP_LINK_KEYCHAIN_SERVICE}"),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+fn load_desktop_link_token() -> Result<Option<String>, String> {
+    let output = Command::new("security")
+        .args([
+            "find-generic-password",
+            "-a",
+            DESKTOP_LINK_KEYCHAIN_ACCOUNT,
+            "-s",
+            DESKTOP_LINK_KEYCHAIN_SERVICE,
+            "-w",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to invoke macOS Keychain: {e}"))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if token.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(token))
+}
+
+#[tauri::command]
+fn clear_desktop_link_token() -> Result<(), String> {
+    let output = Command::new("security")
+        .args([
+            "delete-generic-password",
+            "-a",
+            DESKTOP_LINK_KEYCHAIN_ACCOUNT,
+            "-s",
+            DESKTOP_LINK_KEYCHAIN_SERVICE,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to invoke macOS Keychain: {e}"))?;
+
+    if output.status.success() {
+        log_backend(
+            "desktop_link.token_cleared",
+            format!("service={DESKTOP_LINK_KEYCHAIN_SERVICE}"),
+        );
+    }
 
     Ok(())
 }
@@ -727,7 +805,10 @@ fn capture_native_png_bytes_cropped(
 }
 
 /// Runtime probe: verifies that the current executable can really capture.
-/// This avoids false negatives from CGPreflight when macOS TCC state is stale.
+///
+/// Keep this out of passive permission/render paths. Calling it performs a real
+/// screen capture, which can summon Apple's Screen Recording modal.
+#[allow(dead_code)]
 fn can_capture_screen_now() -> bool {
     match capture_native_png_bytes() {
         Ok(bytes) => {
@@ -1779,12 +1860,23 @@ fn main() {
             load_screenshot_data_url,
             open_url,
             save_provider_config,
+            save_desktop_link_token,
+            load_desktop_link_token,
+            clear_desktop_link_token,
             get_provider_config,
             verify_claude_auth,
             verify_claude_api_key,
             verify_codex_key,
             check_cursor_installed,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running debugr.ai");
+        .build(tauri::generate_context!())
+        .expect("error while building debugr.ai")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Opened { urls } = event {
+                for url in urls {
+                    log_backend("desktop_link.deep_link_opened", format!("url_chars={}", url.as_str().len()));
+                    let _ = app_handle.emit("dbugr-deep-link", url.to_string());
+                }
+            }
+        });
 }

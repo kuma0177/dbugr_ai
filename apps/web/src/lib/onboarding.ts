@@ -12,6 +12,18 @@ export interface OnboardingState {
   completedAt: string;
 }
 
+export function displayOnboardingName(state: Pick<OnboardingState, 'userName' | 'userEmail'> | null): string {
+  if (!state?.userEmail) return '';
+  const normalizedName = state.userName.trim();
+  const normalizedEmail = state.userEmail.trim().toLowerCase();
+  const isDemoName = normalizedName.toLowerCase() === 'demo user';
+  const isDemoEmail = normalizedEmail === 'demo@example.com';
+  if (!normalizedName || (isDemoName && !isDemoEmail)) {
+    return normalizedEmail.split('@')[0] || normalizedEmail;
+  }
+  return normalizedName;
+}
+
 export function readOnboardingState(): OnboardingState | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -27,6 +39,7 @@ export function readOnboardingState(): OnboardingState | null {
 
 export function writeOnboardingState(state: OnboardingState) {
   window.localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(state));
+  window.dispatchEvent(new CustomEvent('dbugr-auth-changed'));
   console.info('[phase2-web] onboarding.local_state_saved', {
     organizationName: state.organizationName,
     teamName: state.teamName,
@@ -37,5 +50,6 @@ export function writeOnboardingState(state: OnboardingState) {
 
 export function clearOnboardingState() {
   window.localStorage.removeItem(ONBOARDING_STORAGE_KEY);
+  window.dispatchEvent(new CustomEvent('dbugr-auth-changed'));
   console.info('[phase2-web] onboarding.local_state_cleared');
 }

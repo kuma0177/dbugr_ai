@@ -96,8 +96,25 @@ async function main() {
   app.use('/api/api', systemRouter);
   app.use('/api/api', phase2Router);
 
+  app.get('/', (_req, res) => {
+    res.json({
+      ok: true,
+      service: 'Dbugr API',
+      message: 'API is running. Use /health or /api/health for health checks, and /api/* for product endpoints.',
+      endpoints: {
+        health: '/health',
+        apiHealth: '/api/health',
+        phase2: '/api/phase2',
+      },
+    });
+  });
+
   app.get('/health', (_req, res) => {
-    res.json({ ok: true });
+    res.json({ ok: true, service: 'Dbugr API' });
+  });
+
+  app.get('/api/health', (_req, res) => {
+    res.json({ ok: true, service: 'Dbugr API' });
   });
 
   app.listen(PORT, () => {
