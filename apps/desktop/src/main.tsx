@@ -92,6 +92,7 @@ interface DesktopLinkProfile {
 }
 
 const DEFAULT_API = 'http://127.0.0.1:3001/api';
+const WEB_APP_URL = (import.meta.env.VITE_DEBUGR_WEB_APP_URL as string | undefined)?.trim() || 'http://localhost:3000';
 const API_BASE_URL_KEY = 'debugr-desktop-api-base-url';
 const DESKTOP_LINK_PROFILE_KEY = 'debugr-desktop-link-profile';
 const DESKTOP_DEVICE_ID_KEY = 'debugr-desktop-device-id';
@@ -163,6 +164,7 @@ let lastPermissionCheckAt = 0;
 let lastPermissionMarkup = '';
 let lastPermissionClassName = 'perm-note';
 let lastPermissionExecutablePath = '';
+let lastSuccessfulScreenCaptureAt = 0;
 let authState: AuthState = {
   authenticated: false,
   profileInitialized: false,
@@ -193,6 +195,14 @@ function safeErrorMessage(error: unknown): string {
 
 function apiBaseUrl() {
   return localStorage.getItem(API_BASE_URL_KEY) || DEFAULT_API;
+}
+
+function desktopWebAuthUrl() {
+  const url = new URL('/onboarding', WEB_APP_URL);
+  url.searchParams.set('desktop', '1');
+  url.searchParams.set('flow', 'sign-in');
+  url.searchParams.set('source', 'desktop');
+  return url.toString();
 }
 
 function getDesktopDeviceId() {
@@ -761,21 +771,21 @@ function renderWelcome() {
         <div class="welcome-grid">
           <section class="welcome-panel">
             <div class="panel-kicker">Launch & sign in</div>
-            <h2>${authState.authenticated ? `Welcome back, ${escapeHtml(authState.name)}` : 'Continue with Google'}</h2>
+            <h2>${authState.authenticated ? `Welcome back, ${escapeHtml(authState.name)}` : 'Sign in to Debugr'}</h2>
             <p class="panel-copy">
               ${authState.authenticated
-                ? 'Your desktop profile is local to this build right now, but the rest of the journey is wired so we can validate the full app behavior end to end.'
-                : 'Sign in first so Debugr can attach captures, session notes, and downstream AI responses to your profile.'}
+                ? 'This Mac is linked to your Debugr workspace. Captures, session notes, and AI handoffs can now stay attached to your profile.'
+                : 'Continue in your browser to sign in, choose your workspace, and link this Mac back to the desktop app.'}
             </p>
-            <button class="btn-primary" id="google-auth-btn" ${authState.authenticated || isAuthenticating ? 'disabled' : ''}>
-              ${isAuthenticating ? 'Signing in…' : authState.authenticated ? 'Google connected' : 'Continue with Google'}
+            <button class="btn-primary" id="web-auth-btn" ${authState.authenticated || isAuthenticating ? 'disabled' : ''}>
+              ${isAuthenticating ? 'Opening browser…' : authState.authenticated ? 'Mac linked' : 'Continue in browser'}
             </button>
             <div class="onboarding-list">
               <div class="onboarding-item ${authState.authenticated ? 'done' : ''}">
                 <span class="onboarding-dot"></span>
                 <div>
-                  <strong>Authentication</strong>
-                  <span>${authState.authenticated ? escapeHtml(authState.email) : 'Sign in to unlock the rest of the journey.'}</span>
+                  <strong>Web sign-in</strong>
+                  <span>${authState.authenticated ? escapeHtml(authState.email) : 'Use the web app for Google, email, workspace, and team setup.'}</span>
                 </div>
               </div>
               <div class="onboarding-item ${connectedProviderCount() > 0 ? 'done' : ''}">
@@ -935,15 +945,21 @@ function renderWelcome() {
     </div>
   `;
 
-  document.getElementById('google-auth-btn')?.addEventListener('click', async () => {
+  document.getElementById('web-auth-btn')?.addEventListener('click', async () => {
     isAuthenticating = true;
     renderWelcome();
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-    authState.authenticated = true;
-    authState.profileInitialized = false;
-    isAuthenticating = false;
-    persistAppState();
-    renderWelcome();
+    const url = desktopWebAuthUrl();
+    logUi('desktop_web_auth_open_started', { url });
+    try {
+      await invoke('open_url', { url });
+      logUi('desktop_web_auth_open_completed', { url });
+    } catch (error) {
+      logUi('desktop_web_auth_open_failed', { error: safeErrorMessage(error).slice(0, 300) });
+      window.alert(`Could not open Debugr in your browser.\n\n${safeErrorMessage(error)}`);
+    } finally {
+      isAuthenticating = false;
+      renderWelcome();
+    }
   });
 
   document.getElementById('finish-setup-btn')?.addEventListener('click', () => {
@@ -2409,9 +2425,24 @@ function syncRepoContextChips(session: Session) {
   if (repoChip) repoChip.textContent = session.githubRepo?.trim() ? 'GitHub repo linked' : 'GitHub optional';
 }
 
+function renderPermissionReady(note: HTMLElement, detail = 'Debugr can capture your screen and create new annotations.') {
+  note.innerHTML = `
+    <strong>Screen capture ready</strong>
+    <span>${escapeHtml(detail)}</span>
+  `;
+  note.className = 'perm-note ok';
+  lastPermissionMarkup = note.innerHTML;
+  lastPermissionClassName = note.className;
+  lastPermissionCheckAt = Date.now();
+}
+
 async function checkPermission() {
   const note = document.getElementById('perm-note');
   if (!note) return;
+  if (lastSuccessfulScreenCaptureAt > 0) {
+    renderPermissionReady(note, 'A screenshot was captured successfully in this app session.');
+    return;
+  }
   if (lastPermissionMarkup && Date.now() - lastPermissionCheckAt < PERMISSION_REFRESH_INTERVAL_MS) {
     note.innerHTML = lastPermissionMarkup;
     note.className = lastPermissionClassName;
@@ -2433,25 +2464,23 @@ async function checkPermission() {
       logUi('workspace_permission_diagnostics', diagnostics);
       const granted = diagnostics.granted;
       if (granted) {
-        note.innerHTML = `
-        <strong>Screen capture ready</strong>
-        <span>Debugr can capture your screen and create new annotations.</span>
-      `;
-        note.className = 'perm-note ok';
-        lastPermissionMarkup = note.innerHTML;
-        lastPermissionClassName = note.className;
-        lastPermissionCheckAt = Date.now();
+        renderPermissionReady(note);
         return;
       }
       const executable = diagnostics.executable_path ?? '';
       lastPermissionExecutablePath = executable;
-      const isDevRuntime = executable.includes('/target/debug/') || executable.endsWith('/feedbackagent-desktop');
+      const isInstalledApp = executable.includes('/Applications/debugr.ai.app/');
+      const runtimeName = isInstalledApp ? 'debugr.ai' : 'this Debugr build';
+      const runtimeHint = isInstalledApp
+        ? 'If you already turned it on, quit Debugr completely and reopen it from Applications so macOS applies the permission.'
+        : 'macOS grants Screen Recording per app build. If you switch between the dev build and the packaged app, each one may need its own Screen Recording entry.';
       note.innerHTML = `
-      <strong>Screen capture blocked</strong>
-      <span>Debugr still cannot capture screenshots in this runtime.</span>
-      ${isDevRuntime ? '<span><strong>Why two entries:</strong> macOS treats the dev binary (<code>target/debug/feedbackagent-desktop</code>) separately from the bundled <code>.app</code> under <code>target/release/bundle/macos/</code> after you build.</span>' : ''}
-      <span><strong>ID:</strong> ${escapeHtml(diagnostics.bundle_identifier)}<br /><strong>Binary:</strong> ${escapeHtml(diagnostics.executable_path)}</span>
-      <span><strong>Not in the list?</strong> Click <strong>+</strong>, <strong>⌘⇧G</strong>, and select this binary. The bundled app lives under <code>src-tauri/target/release/bundle/macos/debugr.ai.app</code> after <code>pnpm build</code> — only <code>/Applications</code> if you copy it there.</span>
+      <strong>Screen capture status needs a refresh</strong>
+      <span>macOS says ${escapeHtml(runtimeName)} is not currently cleared for Screen Recording. If screenshots are working, this is a stale macOS permission check and you can keep using Debugr.</span>
+      <span>If captures fail, open Screen Recording settings, turn on <strong>debugr.ai</strong>, then quit and reopen Debugr.</span>
+      <span>${escapeHtml(runtimeHint)}</span>
+      <span class="perm-runtime-detail"><strong>Current app:</strong> ${escapeHtml(diagnostics.bundle_identifier || 'Unknown')}<br /><strong>Path:</strong> <code>${escapeHtml(diagnostics.executable_path || executable || 'Unknown')}</code></span>
+      <span class="perm-runtime-detail"><strong>Not listed?</strong> Click <strong>+</strong>, press <strong>⌘⇧G</strong>, then paste the path above.</span>
       <button type="button" class="perm-note-action" id="open-screen-settings-btn">Open Screen Recording settings</button>
       <button type="button" class="perm-note-action" id="reveal-runtime-btn">Reveal current runtime in Finder</button>
     `;
@@ -3152,6 +3181,13 @@ async function listenForAnnotations() {
       storedScreenshotChars: screenshotStored?.length ?? 0,
       preview_img_usable: Boolean(screenshotImgSrc(screenshotStored)),
     });
+    if (screenshotStored) {
+      lastSuccessfulScreenCaptureAt = Date.now();
+      const permissionNote = document.getElementById('perm-note');
+      if (permissionNote) {
+        renderPermissionReady(permissionNote, 'A screenshot was captured successfully in this app session.');
+      }
+    }
 
     let savedSession: Session | null = null;
     if (targetSession) {

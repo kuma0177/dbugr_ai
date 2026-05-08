@@ -67,6 +67,7 @@ export default function OnboardingPage() {
     const incomingInvite = params.get('invite') ?? '';
     const incomingEmail = params.get('email') ?? '';
     const incomingAuth = params.get('auth');
+    const launchedFromDesktop = params.get('desktop') === '1';
     const incomingFlow = params.get('flow') === 'sign-in' ? 'sign-in' : 'sign-up';
     const hasExplicitEntry = Boolean(incomingInvite || incomingAuth || incomingEmail);
     setAuthFlow(incomingFlow);
@@ -108,7 +109,7 @@ export default function OnboardingPage() {
     if (!hasExplicitEntry) {
       console.info('[phase2-web] onboarding.bootstrap.started');
       api.phase2.bootstrap()
-        .then((data) => {
+        .then(async (data) => {
           if (!localState) {
             setName(data.user.name);
             if (!incomingEmail) {
@@ -118,6 +119,14 @@ export default function OnboardingPage() {
             setOrganizationLogoPreview(data.organization.logoUrl ?? null);
             setOrganizationLogoName(data.organization.logoUrl ? 'Saved logo' : '');
             setDefaultVisibility((data.organization.defaultVisibility as 'private' | 'org' | 'public') ?? 'private');
+          }
+          if (launchedFromDesktop) {
+            setAuthMethod((current) => current ?? 'google');
+            setIdentityConnected(true);
+            setWorkspaceReady(true);
+            setCurrentStep('link');
+            setStatus(`Workspace ready: ${data.organization.name}. Link this Mac to continue in the desktop app.`);
+            await createDesktopLink();
           }
           console.info('[phase2-web] onboarding.bootstrap.completed', {
             organizationId: data.organization.id,

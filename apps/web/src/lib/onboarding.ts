@@ -28,7 +28,22 @@ export function readOnboardingState(): OnboardingState | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = window.localStorage.getItem(ONBOARDING_STORAGE_KEY);
-    return raw ? JSON.parse(raw) as OnboardingState : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<OnboardingState>;
+    if (!parsed || typeof parsed !== 'object' || !parsed.userEmail) return null;
+    return {
+      userName: typeof parsed.userName === 'string' ? parsed.userName : '',
+      userEmail: parsed.userEmail,
+      organizationName: typeof parsed.organizationName === 'string' ? parsed.organizationName : '',
+      organizationLogoUrl: typeof parsed.organizationLogoUrl === 'string' ? parsed.organizationLogoUrl : undefined,
+      role: typeof parsed.role === 'string' ? parsed.role : '',
+      teamName: typeof parsed.teamName === 'string' ? parsed.teamName : '',
+      inviteEmails: Array.isArray(parsed.inviteEmails) ? parsed.inviteEmails.filter((email) => typeof email === 'string') : [],
+      defaultVisibility: parsed.defaultVisibility === 'org' || parsed.defaultVisibility === 'public' || parsed.defaultVisibility === 'private'
+        ? parsed.defaultVisibility
+        : 'private',
+      completedAt: typeof parsed.completedAt === 'string' ? parsed.completedAt : new Date().toISOString(),
+    };
   } catch (error) {
     console.warn('[phase2-web] onboarding.local_state_read_failed', {
       message: error instanceof Error ? error.message : String(error),

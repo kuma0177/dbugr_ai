@@ -1,3 +1,6 @@
+import './local-env';
+import { prisma } from '@feedbackagent/db';
+
 const BASE = process.env.PHASE2_API_BASE_URL ?? 'http://127.0.0.1:3001/api';
 
 type ApiEnvelope<T> = {
@@ -50,6 +53,21 @@ type AdminOverview = {
 
 type AdminInviteResponse = {
   invite: { id: string; email: string; role: string; acceptUrl?: string };
+};
+
+type DesktopLinkResponse = {
+  linkId: string;
+  code: string;
+  deepLinkUrl: string;
+  expiresAt: string;
+  status: 'pending' | 'redeemed' | 'expired';
+};
+
+type DesktopLinkRedeemResponse = {
+  desktopLinkToken: string;
+  desktopLink: { id: string; status: string; redeemedAt?: string | null };
+  user: { email: string };
+  organization: { name: string };
 };
 
 type RequestOptions = RequestInit & {
@@ -283,12 +301,60 @@ async function scenarioPlatformAdminIsProtected(email: string) {
   log('scenario.passed', { scenario: 'platform_admin_is_protected' });
 }
 
+async function scenarioDesktopLinkHandshakePersistsAfterCodeExpiry(email: string) {
+  log('scenario.started', { scenario: 'desktop_link_handshake_persists_after_code_expiry', email: redactEmail(email) });
+
+  const created = await request<DesktopLinkResponse>('create desktop link', '/phase2/desktop-link', {
+    method: 'POST',
+    expectedStatus: 201,
+    headers: { 'x-dbugr-user-email': email },
+    body: JSON.stringify({ appUrl: 'http://localhost:3000' }),
+  });
+  assert(created.data.status === 'pending', 'New desktop link should start pending');
+  assert(created.data.deepLinkUrl.startsWith('dbugr://link?'), 'Desktop link should use the dbugr deep-link scheme');
+
+  const redeemed = await request<DesktopLinkRedeemResponse>('redeem desktop link', '/phase2/desktop-link/redeem', {
+    method: 'POST',
+    body: JSON.stringify({
+      code: created.data.code,
+      desktopDeviceId: `regression-${runId}`,
+      desktopDeviceName: 'Regression Mac',
+    }),
+  });
+  assert(redeemed.data.desktopLinkToken.length > 20, 'Redeemed desktop link should return a bearer token');
+  assert(redeemed.data.desktopLink.status === 'redeemed', 'Redeemed desktop link should be marked redeemed');
+  assert(redeemed.data.user.email === email, 'Redeemed desktop link should return the linked web user');
+
+  const duplicateRedeem = await request('redeem desktop link twice', '/phase2/desktop-link/redeem', {
+    method: 'POST',
+    expectedStatus: 409,
+    body: JSON.stringify({
+      code: created.data.code,
+      desktopDeviceName: 'Duplicate Regression Mac',
+    }),
+  });
+  assert(typeof duplicateRedeem.error === 'string' && duplicateRedeem.error.includes('already redeemed'), 'Redeeming the same desktop link twice should fail clearly');
+
+  await prisma.desktopLink.update({
+    where: { id: redeemed.data.desktopLink.id },
+    data: { expiresAt: new Date(Date.now() - 60_000) },
+  });
+
+  const bootstrap = await request<{ user: { email: string } }>('desktop token bootstrap after code expiry', '/phase2/bootstrap', {
+    headers: { Authorization: `Bearer ${redeemed.data.desktopLinkToken}` },
+  });
+  assert(bootstrap.data.user.email === email, 'Redeemed desktop token should remain valid after the one-time code expiry');
+
+  log('scenario.passed', { scenario: 'desktop_link_handshake_persists_after_code_expiry' });
+}
+
 async function main() {
   log('suite.started', { baseUrl: BASE });
   const primary = await scenarioNewUserSignupThenExistingDashboard();
   await scenarioExistingUserWithoutWorkspaceStillSetsUpWorkspace();
   await scenarioWrongCodeFriendlyError();
   await scenarioGoogleResolvesExistingEmail(primary.email, primary.organizationName);
+  await scenarioDesktopLinkHandshakePersistsAfterCodeExpiry(primary.email);
   await scenarioAdminOwnerCanInspectWorkspace(primary.email);
   await scenarioPlatformAdminIsProtected(primary.email);
   log('suite.passed', { baseUrl: BASE });

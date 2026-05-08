@@ -10,6 +10,25 @@ export function NavShell() {
   const [signedInName, setSignedInName] = useState('');
 
   useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations()
+        .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+        .catch((error) => {
+          console.warn('[phase2-web] service_worker_cleanup_failed', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }
+    if ('caches' in window) {
+      caches.keys()
+        .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+        .catch((error) => {
+          console.warn('[phase2-web] cache_storage_cleanup_failed', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }
+
     let cancelled = false;
     const sync = () => {
       const state = readOnboardingState();

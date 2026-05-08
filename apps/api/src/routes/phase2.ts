@@ -58,12 +58,6 @@ async function requestContext(req: Request) {
       throw error;
     }
 
-    if (desktopLink.expiresAt.getTime() < Date.now()) {
-      const error = new Error('This Mac link expired. Relink the Mac app from onboarding.');
-      error.name = 'UNAUTHENTICATED';
-      throw error;
-    }
-
     const membership = await prisma.organizationMembership.findFirst({
       where: {
         userId: desktopLink.userId,
@@ -1610,6 +1604,11 @@ phase2Router.post('/phase2/desktop-link/redeem', async (req: Request, res: Respo
   if (!link) {
     logPhase2('desktop_link.redeem_not_found', { codeChars: parsed.data.code.length });
     return res.status(404).json({ error: 'Desktop link code not found.' });
+  }
+
+  if (link.status === 'redeemed') {
+    logPhase2('desktop_link.redeem_already_redeemed', { linkId: link.id });
+    return res.status(409).json({ error: 'Desktop link code was already redeemed. Create a fresh link from onboarding to connect another app.' });
   }
 
   if (link.expiresAt.getTime() < Date.now()) {
