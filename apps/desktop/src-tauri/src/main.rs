@@ -1073,21 +1073,38 @@ async fn list_capture_sources() -> Result<CaptureSourceList, String> {
 
 #[cfg(target_os = "macos")]
 fn list_capture_sources_sync() -> Result<CaptureSourceList, String> {
-    // Preflight guard: check permission BEFORE calling SCK.
-    // If we skip this, SCShareableContent triggers the raw TCC dialog
-    // at an unexpected moment (e.g., while the user is picking a session).
-    // Instead we return a typed error the frontend can handle gracefully.
+    // Preflight guard: check permission BEFORE calling SCK so we return a typed
+    // error the frontend can handle gracefully rather than triggering a raw TCC
+    // dialog at an unexpected moment.
+    //
+    // IMPORTANT: CGPreflightScreenCaptureAccess() can return false even when the
+    // user has already granted Screen Recording permission, because it checks the
+    // ScreenCaptureKit TCC entry which lags behind actual state with ad-hoc
+    // signing (different CDHash per build). We therefore fall back to a
+    // CoreGraphics probe: if the probe succeeds, permission IS effectively
+    // granted and we allow the SCK call to proceed.
     let preflight = unsafe { CGPreflightScreenCaptureAccess() };
     log_backend(
         "capture_sources.preflight",
         format!("preflight={preflight}"),
     );
     if !preflight {
-        // Calling CGRequestScreenCaptureAccess here would show the system
-        // "Allow" prompt (on first ask) or silently fail (after denial).
-        // We return a sentinel error so the frontend can route to the
-        // permission onboarding screen instead.
-        return Err("ERR_SCREEN_RECORDING_NOT_GRANTED".into());
+        let probe = can_capture_screen_now();
+        log_backend(
+            "capture_sources.preflight_probe",
+            format!("preflight=false probe={probe}"),
+        );
+        if !probe {
+            // Both checks fail → permission genuinely not granted yet.
+            return Err("ERR_SCREEN_RECORDING_NOT_GRANTED".into());
+        }
+        // probe=true: CoreGraphics can capture even though CGPreflight is still
+        // false. Proceed to SCK; if SCK itself fails the error text will match
+        // isLikelyMacScreenRecordingDenied and the frontend hides the overlay.
+        log_backend(
+            "capture_sources.preflight_override",
+            "preflight=false but probe=true — continuing with SCK",
+        );
     }
 
     let mut json_ptr: *mut c_char = std::ptr::null_mut();
@@ -1188,14 +1205,19 @@ async fn capture_current_screen_snapshot(app: AppHandle) -> Result<String, Strin
     }
     tokio::time::sleep(Duration::from_millis(180)).await;
 
-    let data_url = tokio::task::spawn_blocking(take_silent_screenshot)
+    let data_url_result = tokio::task::spawn_blocking(take_silent_screenshot)
         .await
-        .map_err(|e| format!("capture_current_screen_snapshot: {e}"))??;
+        .map_err(|e| format!("capture_current_screen_snapshot: {e}"))
+        .and_then(|inner| inner);
 
+    // Always re-show the overlay and reset the guard, regardless of success or
+    // failure. Without this, a failed screencapture leaves OVERLAY_HIDDEN_FOR_SCREENSHOT=true
+    // permanently, causing every subsequent trigger_overlay call to be silently ignored.
     show_overlay_window(&app);
     tokio::time::sleep(Duration::from_millis(120)).await;
     OVERLAY_HIDDEN_FOR_SCREENSHOT.store(false, Ordering::SeqCst);
 
+    let data_url = data_url_result?;
     log_backend(
         "overlay.capture.current_screen",
         format!("data_url_len={}", data_url.len()),
