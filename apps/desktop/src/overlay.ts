@@ -639,14 +639,10 @@ async function hideOverlayForMacosPermissionUi(reason: string): Promise<void> {
   } catch (err) {
     addDebugLog(`permission.ui.hide_overlay_failed reason=${reason} error=${String(err)}`);
   }
-  // Show the main window so the app is still visible after the TCC dialog is dismissed.
-  // Without this, hiding the overlay leaves a blank desktop (LSUIElement=true, no dock icon)
-  // and users think the app has shut down.
-  try {
-    await invoke('show_session_window');
-  } catch {
-    // Non-fatal — main window may already be visible
-  }
+  // Do NOT call show_session_window here — doing so hijacks the main window to the
+  // home/session page in the middle of annotation flows that hit a permission error,
+  // and causes "goes to home page on starting a session" regression.
+  // Users can re-access the app from the menu-bar tray after dismissing the dialog.
 }
 
 /** When macOS refuses to list capture sources — clear, non-looping recovery UI. */
@@ -1172,9 +1168,9 @@ function deleteAnnotation(id: string) {
 
 function renderPickerSessions(list: Array<{ id: string; title: string; createdAt: string; annotationCount?: number }>) {
   clearPickerLoadingTimer();
-  const visibleSessions = list.filter((session) => (
-    typeof session.annotationCount !== 'number' || session.annotationCount > 0
-  ));
+  // Show all sessions including new ones with 0 annotations — filtering them out
+  // would prevent users from adding their first annotation to a brand-new session.
+  const visibleSessions = list;
   pickerSessions = visibleSessions;
   if (visibleSessions.length === 0) {
     pickerListEl.innerHTML = '<div class="picker-empty">No past sessions yet. Start a new one to create your first list item.</div>';
