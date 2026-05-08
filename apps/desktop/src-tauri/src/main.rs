@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![allow(unexpected_cfgs)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
@@ -180,17 +181,11 @@ fn log_backend(event: &str, details: impl AsRef<str>) {
 #[tauri::command]
 fn get_screen_capture_permission() -> bool {
     let preflight = unsafe { CGPreflightScreenCaptureAccess() };
-    let probe = if preflight {
-        false
-    } else {
-        can_capture_screen_now()
-    };
-    let granted = preflight || probe;
     log_backend(
         "permission.preflight",
-        format!("preflight={preflight} probe={probe} granted={granted}"),
+        format!("preflight={preflight} probe=skipped granted={preflight} reason=passive_check"),
     );
-    granted
+    preflight
 }
 
 #[derive(serde::Serialize)]
@@ -205,7 +200,7 @@ struct ScreenCaptureDiagnostics {
 #[tauri::command]
 fn get_screen_capture_diagnostics(app: AppHandle) -> ScreenCaptureDiagnostics {
     let preflight = unsafe { CGPreflightScreenCaptureAccess() };
-    let probe = can_capture_screen_now();
+    let probe = false;
     let bundle_identifier = app.config().identifier.clone();
     let executable_path = std::env::current_exe()
         .ok()
@@ -214,8 +209,7 @@ fn get_screen_capture_diagnostics(app: AppHandle) -> ScreenCaptureDiagnostics {
     log_backend(
         "permission.diagnostics",
         format!(
-            "preflight={preflight} probe={probe} granted={} bundle_id={} executable={}",
-            preflight || probe,
+            "preflight={preflight} probe=skipped granted={preflight} bundle_id={} executable={} reason=passive_check",
             bundle_identifier,
             executable_path
         ),
@@ -223,7 +217,7 @@ fn get_screen_capture_diagnostics(app: AppHandle) -> ScreenCaptureDiagnostics {
     ScreenCaptureDiagnostics {
         preflight,
         probe,
-        granted: preflight || probe,
+        granted: preflight,
         bundle_identifier,
         executable_path,
     }
@@ -303,6 +297,91 @@ fn open_auth_popup(app: AppHandle, url: String, title: String, label: String) ->
         .visible(true)
         .build()
         .map_err(|e| format!("Failed to open auth popup: {e}"))?;
+
+    Ok(())
+}
+
+const DESKTOP_LINK_KEYCHAIN_SERVICE: &str = "ai.dbugr.desktop-link-token";
+const DESKTOP_LINK_KEYCHAIN_ACCOUNT: &str = "dbugr.desktop";
+
+#[tauri::command]
+fn save_desktop_link_token(token: String) -> Result<(), String> {
+    if token.trim().is_empty() {
+        return Err("Desktop link token cannot be empty.".to_string());
+    }
+
+    let output = Command::new("security")
+        .args([
+            "add-generic-password",
+            "-a",
+            DESKTOP_LINK_KEYCHAIN_ACCOUNT,
+            "-s",
+            DESKTOP_LINK_KEYCHAIN_SERVICE,
+            "-w",
+            token.trim(),
+            "-U",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to invoke macOS Keychain: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to save desktop link token to macOS Keychain: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    log_backend(
+        "desktop_link.token_saved",
+        format!("service={DESKTOP_LINK_KEYCHAIN_SERVICE}"),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+fn load_desktop_link_token() -> Result<Option<String>, String> {
+    let output = Command::new("security")
+        .args([
+            "find-generic-password",
+            "-a",
+            DESKTOP_LINK_KEYCHAIN_ACCOUNT,
+            "-s",
+            DESKTOP_LINK_KEYCHAIN_SERVICE,
+            "-w",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to invoke macOS Keychain: {e}"))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if token.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(token))
+}
+
+#[tauri::command]
+fn clear_desktop_link_token() -> Result<(), String> {
+    let output = Command::new("security")
+        .args([
+            "delete-generic-password",
+            "-a",
+            DESKTOP_LINK_KEYCHAIN_ACCOUNT,
+            "-s",
+            DESKTOP_LINK_KEYCHAIN_SERVICE,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to invoke macOS Keychain: {e}"))?;
+
+    if output.status.success() {
+        log_backend(
+            "desktop_link.token_cleared",
+            format!("service={DESKTOP_LINK_KEYCHAIN_SERVICE}"),
+        );
+    }
 
     Ok(())
 }
@@ -726,7 +805,10 @@ fn capture_native_png_bytes_cropped(
 }
 
 /// Runtime probe: verifies that the current executable can really capture.
-/// This avoids false negatives from CGPreflight when macOS TCC state is stale.
+///
+/// Keep this out of passive permission/render paths. Calling it performs a real
+/// screen capture, which can summon Apple's Screen Recording modal.
+#[allow(dead_code)]
 fn can_capture_screen_now() -> bool {
     match capture_native_png_bytes() {
         Ok(bytes) => {
@@ -991,6 +1073,40 @@ async fn list_capture_sources() -> Result<CaptureSourceList, String> {
 
 #[cfg(target_os = "macos")]
 fn list_capture_sources_sync() -> Result<CaptureSourceList, String> {
+    // Preflight guard: check permission BEFORE calling SCK so we return a typed
+    // error the frontend can handle gracefully rather than triggering a raw TCC
+    // dialog at an unexpected moment.
+    //
+    // IMPORTANT: CGPreflightScreenCaptureAccess() can return false even when the
+    // user has already granted Screen Recording permission, because it checks the
+    // ScreenCaptureKit TCC entry which lags behind actual state with ad-hoc
+    // signing (different CDHash per build). We therefore fall back to a
+    // CoreGraphics probe: if the probe succeeds, permission IS effectively
+    // granted and we allow the SCK call to proceed.
+    let preflight = unsafe { CGPreflightScreenCaptureAccess() };
+    log_backend(
+        "capture_sources.preflight",
+        format!("preflight={preflight}"),
+    );
+    if !preflight {
+        let probe = can_capture_screen_now();
+        log_backend(
+            "capture_sources.preflight_probe",
+            format!("preflight=false probe={probe}"),
+        );
+        if !probe {
+            // Both checks fail → permission genuinely not granted yet.
+            return Err("ERR_SCREEN_RECORDING_NOT_GRANTED".into());
+        }
+        // probe=true: CoreGraphics can capture even though CGPreflight is still
+        // false. Proceed to SCK; if SCK itself fails the error text will match
+        // isLikelyMacScreenRecordingDenied and the frontend hides the overlay.
+        log_backend(
+            "capture_sources.preflight_override",
+            "preflight=false but probe=true — continuing with SCK",
+        );
+    }
+
     let mut json_ptr: *mut c_char = std::ptr::null_mut();
     let mut err_ptr: *mut c_char = std::ptr::null_mut();
     let ok = unsafe { debugr_list_capture_sources_json(&mut json_ptr, &mut err_ptr) };
@@ -1062,10 +1178,8 @@ async fn capture_selected_source(app: AppHandle, kind: String, source_id: u64) -
     .await
     .map_err(|e| format!("capture_selected_source: {e}"))?;
 
-    if let Some(ov) = app.get_webview_window("overlay") {
-        let _ = ov.show();
-    }
-    tokio::time::sleep(Duration::from_millis(80)).await;
+    show_overlay_window(&app);
+    tokio::time::sleep(Duration::from_millis(120)).await;
     OVERLAY_HIDDEN_FOR_SCREENSHOT.store(false, Ordering::SeqCst);
 
     let png_bytes = png_result?;
@@ -1077,6 +1191,38 @@ async fn capture_selected_source(app: AppHandle, kind: String, source_id: u64) -
         ),
     );
     Ok(encode_png_bytes_to_data_url(&png_bytes))
+}
+
+/// Captures the current screen silently for the default annotation flow.
+/// Unlike source listing, this does not depend on ScreenCaptureKit returning
+/// a window/display index first; it simply freezes what the user is already
+/// looking at and lets the overlay crop on top.
+#[tauri::command]
+async fn capture_current_screen_snapshot(app: AppHandle) -> Result<String, String> {
+    OVERLAY_HIDDEN_FOR_SCREENSHOT.store(true, Ordering::SeqCst);
+    if let Some(ov) = app.get_webview_window("overlay") {
+        let _ = ov.hide();
+    }
+    tokio::time::sleep(Duration::from_millis(180)).await;
+
+    let data_url_result = tokio::task::spawn_blocking(take_silent_screenshot)
+        .await
+        .map_err(|e| format!("capture_current_screen_snapshot: {e}"))
+        .and_then(|inner| inner);
+
+    // Always re-show the overlay and reset the guard, regardless of success or
+    // failure. Without this, a failed screencapture leaves OVERLAY_HIDDEN_FOR_SCREENSHOT=true
+    // permanently, causing every subsequent trigger_overlay call to be silently ignored.
+    show_overlay_window(&app);
+    tokio::time::sleep(Duration::from_millis(120)).await;
+    OVERLAY_HIDDEN_FOR_SCREENSHOT.store(false, Ordering::SeqCst);
+
+    let data_url = data_url_result?;
+    log_backend(
+        "overlay.capture.current_screen",
+        format!("data_url_len={}", data_url.len()),
+    );
+    Ok(data_url)
 }
 
 #[tauri::command]
@@ -1520,10 +1666,7 @@ fn open_in_cursor(project_folder: Option<String>) -> Result<(), String> {
 }
 
 fn tray_template_icon() -> Image<'static> {
-    // Embed the PNG bytes at compile time so the installed .app bundle does not
-    // depend on the build-time CARGO_MANIFEST_DIR path being present at runtime.
     static PNG_BYTES: &[u8] = include_bytes!("../icons/trayTemplate.png");
-
     let mut decoder = png::Decoder::new(std::io::Cursor::new(PNG_BYTES));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
     let mut reader = decoder.read_info().expect("Failed to read tray template PNG");
@@ -1659,6 +1802,9 @@ fn trigger_overlay(app: &AppHandle, source: &str, launch: Option<OverlayLaunchPa
 
 fn main() {
     if std::env::var("DEBUGR_CAPTURE_SMOKE").ok().as_deref() == Some("1") {
+        eprintln!(
+            "debugr_capture_smoke_legacy_deprecated This CoreGraphics smoke is retained only as a legacy diagnostic. Phase 1 capture validation now uses apps/desktop-native-mac: swift run debugr-native-mac --capture-smoke."
+        );
         match capture_native_png_bytes() {
             Ok(bytes) => {
                 println!("debugr_capture_smoke_ok bytes={}", bytes.len());
@@ -1756,6 +1902,7 @@ fn main() {
             hide_overlay,
             list_capture_sources,
             capture_selected_source,
+            capture_current_screen_snapshot,
             suspend_overlay,
             resume_overlay,
             append_overlay_debug_log,
@@ -1775,12 +1922,23 @@ fn main() {
             load_screenshot_data_url,
             open_url,
             save_provider_config,
+            save_desktop_link_token,
+            load_desktop_link_token,
+            clear_desktop_link_token,
             get_provider_config,
             verify_claude_auth,
             verify_claude_api_key,
             verify_codex_key,
             check_cursor_installed,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running debugr.ai");
+        .build(tauri::generate_context!())
+        .expect("error while building debugr.ai")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Opened { urls } = event {
+                for url in urls {
+                    log_backend("desktop_link.deep_link_opened", format!("url_chars={}", url.as_str().len()));
+                    let _ = app_handle.emit("dbugr-deep-link", url.to_string());
+                }
+            }
+        });
 }

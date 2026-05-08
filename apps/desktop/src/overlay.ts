@@ -791,13 +791,11 @@ async function loadCaptureSources() {
     const errMsg = String(err);
     addDebugLog(`capture_sources.error msg=${errMsg.slice(0, 200)}`);
 
-    // If permission is not yet granted, hide the overlay FIRST so the macOS
-    // TCC dialog is accessible. The error UI will be visible once the overlay
-    // drops behind other windows.
-    if (
-      errMsg.includes('ERR_SCREEN_RECORDING_NOT_GRANTED') ||
-      isLikelyMacScreenRecordingDenied(errMsg)
-    ) {
+    // Only hide the overlay for our pre-SCK sentinel ERR_SCREEN_RECORDING_NOT_GRANTED.
+    // SCK errors that include "declined" (e.g. -3801) arrive AFTER the TCC dialog was
+    // already shown and dismissed by SCK itself — hiding the overlay at that point
+    // makes the app appear to shut down (LSUIElement=true, no dock icon).
+    if (errMsg.includes('ERR_SCREEN_RECORDING_NOT_GRANTED')) {
       addDebugLog('capture_sources.permission_denied — hiding overlay for TCC dialog');
       await hideOverlayForMacosPermissionUi('load_capture_sources_permission_denied');
     }
