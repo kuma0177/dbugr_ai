@@ -113,19 +113,63 @@ describe('macOS screen-recording permission flow', () => {
     expect(listSourcesBlock).toContain('SCShareableContent');
   });
 
+  it('does not run a real capture probe before listing capture sources', () => {
+    const listSourcesBlock = rustFunctionBlock('list_capture_sources_sync');
+
+    expect(listSourcesBlock).toContain('CGPreflightScreenCaptureAccess');
+    expect(listSourcesBlock).toContain('ERR_SCREEN_RECORDING_NOT_GRANTED');
+    expect(listSourcesBlock).not.toContain('can_capture_screen_now');
+    expect(listSourcesBlock).not.toContain('capture_native_png_bytes');
+  });
+
+  it('uses native capture for the automatic current-screen annotation flow', () => {
+    const currentScreenCommandBlock = rustFunctionBlock('capture_current_screen_snapshot');
+
+    expect(currentScreenCommandBlock).toContain('capture_native_png_bytes');
+    expect(currentScreenCommandBlock).toContain('mode=native');
+    expect(currentScreenCommandBlock).not.toContain('take_silent_screenshot');
+    expect(currentScreenCommandBlock).not.toContain('screencapture');
+  });
+
   it('restores the overlay before enabling current-screen annotation controls', () => {
     const currentScreenBlock = overlayFunctionBlock(/async function beginCurrentScreenCapture\(\)/);
     const readyControlsBlock = overlayFunctionBlock(/function ensureAnnotatingControlsReady/);
 
-    expect(currentScreenBlock).toContain("invoke<string>('capture_current_screen_snapshot')");
+    expect(currentScreenBlock).not.toContain("invoke<string>('capture_current_screen_snapshot')");
+    expect(currentScreenBlock).toContain('transparent_live_overlay=true');
+    expect(currentScreenBlock).toContain('already_in_progress=true');
+    expect(currentScreenBlock).toContain("applySourceFrameDisplay('')");
     expect(currentScreenBlock).toContain('await resumeOverlayVisible()');
     expect(currentScreenBlock.indexOf('await resumeOverlayVisible()')).toBeLessThan(currentScreenBlock.indexOf("showStep('annotating')"));
-    expect(currentScreenBlock).toContain("ensureAnnotatingControlsReady('current_screen_snapshot')");
+    expect(currentScreenBlock).toContain("ensureAnnotatingControlsReady('transparent_live_overlay')");
 
     expect(readyControlsBlock).toContain("toolbarEl.style.display = 'flex'");
     expect(readyControlsBlock).toContain("root.style.pointerEvents = 'auto'");
     expect(readyControlsBlock).toContain("root.classList.add('cursor-annotating')");
     expect(readyControlsBlock).toContain('overlay.annotating_controls.ready');
+  });
+
+  it('hides the main Debugr window before automatic current-screen capture', () => {
+    const currentScreenCommandBlock = rustFunctionBlock('capture_current_screen_snapshot');
+
+    expect(currentScreenCommandBlock).toContain('get_webview_window("main")');
+    expect(currentScreenCommandBlock).toContain('main.hide()');
+    expect(currentScreenCommandBlock).toContain('main.hide_for_capture');
+  });
+
+  it('keeps screenshot capture out of the live overlay toolbar', () => {
+    const currentScreenBlock = overlayFunctionBlock(/async function beginCurrentScreenCapture\(\)/);
+    const overlayMarkup = overlaySource.slice(
+      overlaySource.indexOf('<!-- Bottom toolbar -->'),
+      overlaySource.indexOf('<!-- Note inspector:'),
+    );
+
+    expect(currentScreenBlock).not.toContain('capture_screen_region_snapshot');
+    expect(overlayMarkup).toContain('tool-region');
+    expect(overlayMarkup).not.toContain('tool-pin');
+    expect(overlayMarkup).not.toContain('tool-shot');
+    expect(overlaySource).not.toContain('attachScreenshotEvidence');
+    expect(rustMainSource).not.toContain('capture_screen_region_snapshot');
   });
 
   it('keeps passive permission checks from running screenshot probes', () => {

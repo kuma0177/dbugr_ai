@@ -35,7 +35,7 @@ fn macos_activate() {
 #[cfg(not(target_os = "macos"))]
 fn macos_activate() {}
 
-/// While true, the overlay window was hidden only so `screencapture` sees the desktop.
+/// While true, the overlay window was hidden only so screen capture sees the desktop.
 /// During this window `trigger_overlay` must not run its "show fresh overlay" path:
 /// that emits `overlay-will-show` and resets annotation UI (picker), which races ⌃⌘Z /
 /// tray clicks while the capture pipeline briefly hides the overlay.
@@ -1075,36 +1075,16 @@ async fn list_capture_sources() -> Result<CaptureSourceList, String> {
 fn list_capture_sources_sync() -> Result<CaptureSourceList, String> {
     // Preflight guard: check permission BEFORE calling SCK so we return a typed
     // error the frontend can handle gracefully rather than triggering a raw TCC
-    // dialog at an unexpected moment.
-    //
-    // IMPORTANT: CGPreflightScreenCaptureAccess() can return false even when the
-    // user has already granted Screen Recording permission, because it checks the
-    // ScreenCaptureKit TCC entry which lags behind actual state with ad-hoc
-    // signing (different CDHash per build). We therefore fall back to a
-    // CoreGraphics probe: if the probe succeeds, permission IS effectively
-    // granted and we allow the SCK call to proceed.
+    // dialog at an unexpected moment. Do not run a real capture probe here:
+    // this path runs after the user picks a session, and probes can summon the
+    // blocking Apple Screen Recording modal over the annotation flow.
     let preflight = unsafe { CGPreflightScreenCaptureAccess() };
     log_backend(
         "capture_sources.preflight",
         format!("preflight={preflight}"),
     );
     if !preflight {
-        let probe = can_capture_screen_now();
-        log_backend(
-            "capture_sources.preflight_probe",
-            format!("preflight=false probe={probe}"),
-        );
-        if !probe {
-            // Both checks fail → permission genuinely not granted yet.
-            return Err("ERR_SCREEN_RECORDING_NOT_GRANTED".into());
-        }
-        // probe=true: CoreGraphics can capture even though CGPreflight is still
-        // false. Proceed to SCK; if SCK itself fails the error text will match
-        // isLikelyMacScreenRecordingDenied and the frontend hides the overlay.
-        log_backend(
-            "capture_sources.preflight_override",
-            "preflight=false but probe=true — continuing with SCK",
-        );
+        return Err("ERR_SCREEN_RECORDING_NOT_GRANTED".into());
     }
 
     let mut json_ptr: *mut c_char = std::ptr::null_mut();
@@ -1200,18 +1180,31 @@ async fn capture_selected_source(app: AppHandle, kind: String, source_id: u64) -
 #[tauri::command]
 async fn capture_current_screen_snapshot(app: AppHandle) -> Result<String, String> {
     OVERLAY_HIDDEN_FOR_SCREENSHOT.store(true, Ordering::SeqCst);
+    if let Some(main) = app.get_webview_window("main") {
+        if main.is_visible().unwrap_or(false) {
+            log_backend("main.hide_for_capture", "source=current_screen_snapshot");
+            let _ = main.hide();
+        }
+    }
     if let Some(ov) = app.get_webview_window("overlay") {
         let _ = ov.hide();
     }
     tokio::time::sleep(Duration::from_millis(180)).await;
 
-    let data_url_result = tokio::task::spawn_blocking(take_silent_screenshot)
+    let data_url_result = tokio::task::spawn_blocking(|| {
+        let png_bytes = capture_native_png_bytes()?;
+        log_backend(
+            "screenshot.silent.success",
+            format!("mode=native bytes={}", png_bytes.len()),
+        );
+        Ok::<String, String>(encode_png_bytes_to_data_url(&png_bytes))
+    })
         .await
         .map_err(|e| format!("capture_current_screen_snapshot: {e}"))
         .and_then(|inner| inner);
 
     // Always re-show the overlay and reset the guard, regardless of success or
-    // failure. Without this, a failed screencapture leaves OVERLAY_HIDDEN_FOR_SCREENSHOT=true
+    // failure. Without this, a failed capture leaves OVERLAY_HIDDEN_FOR_SCREENSHOT=true
     // permanently, causing every subsequent trigger_overlay call to be silently ignored.
     show_overlay_window(&app);
     tokio::time::sleep(Duration::from_millis(120)).await;
@@ -1845,9 +1838,10 @@ fn main() {
                 .item(&quit)
                 .build()?;
 
-            let _tray = TrayIconBuilder::new()
+            let tray = TrayIconBuilder::new()
                 .icon(tray_template_icon())
                 .icon_as_template(true)   // renders correctly in both light & dark menu bar
+                .title("Debugr")
                 .menu(&menu)
                 .tooltip("Debugr — ⌃⌘Z to annotate")
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -1873,6 +1867,8 @@ fn main() {
                     }
                 })
                 .build(app)?;
+            app.manage(tray);
+            log_backend("tray.ready", "title=Debugr menu_items=4");
 
             // ── Global shortcut ⌃⌘Z (Control + Command + Z) ───────────────
             let handle = app.handle().clone();

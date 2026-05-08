@@ -58,7 +58,7 @@ type CaptureSourceMode = 'screen' | 'browser' | 'app';
 let step: OverlayStep = 'picking';
 let captureSourceMode: CaptureSourceMode = 'screen';
 let annotations: Annotation[] = [];
-let activeTool: 'pin' | 'region' = 'region';
+let activeTool: 'region' = 'region';
 let selectedId: string | null = null;
 let screenshotCaptured = false;
 let captureInProgress = false;
@@ -223,7 +223,7 @@ root.innerHTML = `
     <div class="hud-popover" id="hud-capture" style="display:none;">
       <div class="step-card step-card-hud" id="step-capture">
         <div class="step-card-title">Choose screen or window</div>
-        <div class="step-card-sub" id="capture-step-sub">Refresh to see the current screen, browser pages, and open app windows. Pick one, then crop or pin the exact area you want to annotate.</div>
+        <div class="step-card-sub" id="capture-step-sub">Refresh to see the current screen, browser pages, and open app windows. Pick one, then mark the exact region you want to annotate.</div>
         <div class="capture-mode-bar" id="capture-mode-bar" role="tablist" aria-label="Capture source type">
           <button type="button" class="capture-mode-btn active" id="capture-mode-screen" data-capture-mode="screen" aria-selected="true">Current screen</button>
           <button type="button" class="capture-mode-btn" id="capture-mode-browser" data-capture-mode="browser" aria-selected="false">Browser tabs/pages</button>
@@ -258,9 +258,6 @@ root.innerHTML = `
 
     <!-- Bottom toolbar -->
     <div class="toolbar" id="toolbar">
-      <button class="tool-btn" id="tool-pin" title="Pin">
-        ●<div class="tool-label">Pin</div>
-      </button>
       <button class="tool-btn" id="tool-region" title="Region">
         ▢<div class="tool-label">Region</div>
       </button>
@@ -320,15 +317,18 @@ const setupAboutEl   = document.getElementById('setup-about') as HTMLTextAreaEle
 const setupAboutCount = document.getElementById('setup-about-count')!;
 const setupGithubEl  = document.getElementById('setup-github') as HTMLInputElement;
 
-function applySourceFrameDisplay(dataUrl: string) {
+function applySourceFrameDisplay(dataUrl: string, options: { visible?: boolean } = {}) {
   sourceFrameDataUrl = dataUrl || null;
   if (sourceFrameDataUrl) {
+    const visible = options.visible ?? true;
     screenshotImgEl.src = sourceFrameDataUrl;
     screenshotImgEl.style.display = 'block';
+    screenshotImgEl.classList.toggle('source-frame-hidden', !visible);
     screenshotBg.style.backgroundImage = '';
   } else {
     screenshotImgEl.removeAttribute('src');
     screenshotImgEl.style.display = 'none';
+    screenshotImgEl.classList.remove('source-frame-hidden');
     screenshotBg.style.backgroundImage = '';
   }
 }
@@ -500,29 +500,20 @@ async function showCaptureSourceStep() {
 }
 
 async function beginCurrentScreenCapture() {
-  captureInProgress = true;
-  setToast('Freezing your current screen…');
-  addDebugLog('capture.current_screen.start');
-  try {
-    const dataUrl = await invoke<string>('capture_current_screen_snapshot');
-    applySourceFrameDisplay(dataUrl);
-    await screenshotImgEl.decode().catch(() => {});
-    await resumeOverlayVisible();
-    screenshotCaptured = false;
-    currentScreenshotDataUrl = '';
-    showStep('annotating');
-    setTool(activeTool, true);
-    ensureAnnotatingControlsReady('current_screen_snapshot');
-    setToast('Draw a region or pin on the snapshot. The saved image uses your crop.');
-    updateCounter();
-    addDebugLog(`capture.current_screen.success len=${dataUrl.length}`);
-  } catch (err) {
-    addDebugLog(`capture.current_screen.failed error=${String(err)}`);
-    setToast('Could not freeze the current screen. Pick a display or window instead.');
-    await showCaptureSourceStep();
-  } finally {
-    captureInProgress = false;
+  if (captureInProgress) {
+    addDebugLog('capture.current_screen.skip already_in_progress=true');
+    return;
   }
+  addDebugLog('capture.current_screen.deferred transparent_live_overlay=true');
+  applySourceFrameDisplay('');
+  screenshotCaptured = false;
+  currentScreenshotDataUrl = '';
+  await resumeOverlayVisible();
+  showStep('annotating');
+  setTool(activeTool, true);
+  ensureAnnotatingControlsReady('transparent_live_overlay');
+  setToast('Draw a region over the current screen.');
+  updateCounter();
 }
 
 function ensureAnnotatingControlsReady(reason: string) {
@@ -795,14 +786,11 @@ async function loadCaptureSources() {
     const errMsg = String(err);
     addDebugLog(`capture_sources.error msg=${errMsg.slice(0, 200)}`);
 
-    // Hide the overlay for any permission-denied signal so the TCC dialog (shown by
-    // SCK or earlier sentinel) is not covered by the fullscreen overlay. After hiding,
-    // hideOverlayForMacosPermissionUi also calls show_session_window so the app remains
-    // visible and doesn't look like it shut down (LSUIElement=true, no dock icon).
-    if (
-      errMsg.includes('ERR_SCREEN_RECORDING_NOT_GRANTED') ||
-      isLikelyMacScreenRecordingDenied(errMsg)
-    ) {
+    // Hide the overlay only when macOS/ScreenCaptureKit likely opened a blocking
+    // permission UI. Our own ERR_SCREEN_RECORDING_NOT_GRANTED sentinel is
+    // preflight-only and does not open a system dialog, so keep the recovery UI
+    // visible inside Debugr instead of making the app appear to disappear.
+    if (isLikelyMacScreenRecordingDenied(errMsg) && !errMsg.includes('ERR_SCREEN_RECORDING_NOT_GRANTED')) {
       addDebugLog('capture_sources.permission_denied — hiding overlay for TCC dialog');
       await hideOverlayForMacosPermissionUi('load_capture_sources_permission_denied');
     }
@@ -862,10 +850,10 @@ function setCaptureSourceMode(mode: CaptureSourceMode) {
   });
   captureStepSubEl.textContent =
     mode === 'screen'
-      ? "Capture the current screen, freeze it once, then crop or pin the exact area you want to annotate."
+      ? "Capture the current screen, freeze it once, then mark the exact region you want to annotate."
       : mode === 'browser'
         ? 'Refresh to show browser windows/pages by app and page title when macOS exposes them. Pick the page, then crop the exact region.'
-        : 'Refresh to show Terminal, Cursor, Figma, and other open app windows. Pick an app window, then crop or pin the area.';
+        : 'Refresh to show Terminal, Cursor, Figma, and other open app windows. Pick an app window, then mark the area.';
 }
 
 function parseCaptureWindowLabel(label: string): { appName: string; title: string } {
@@ -912,7 +900,7 @@ async function captureSourceRow(row: CaptureSourceRow) {
     screenshotCaptured = false;
     currentScreenshotDataUrl = '';
     showStep('annotating');
-    setToast('Draw a region or pin on the snapshot. The saved image uses your crop.');
+    setToast('Draw a region on the snapshot. The saved image uses your crop.');
     updateCounter();
   } catch (err) {
     const msg = String(err);
@@ -1026,7 +1014,7 @@ function updateCounter() {
     return;
   }
   if (step === 'annotating' && n === 0 && !sourceFrameDataUrl) {
-    setToast('Choose a screen or window to snapshot before annotating (capture step).');
+    setToast('Draw a region over the current screen.');
   } else if (targetSessionId && remainingAnnotationSlots() <= 0) {
     setToast(`"${newSessionName}" is full at ${MAX_ANNOTATIONS} annotations. Start a new session to keep going.`);
   } else if (n > 0) {
@@ -1399,13 +1387,10 @@ function enterAnnotating() {
 
 function setTool(t: typeof activeTool, markActive = true) {
   activeTool = t;
-  (['pin', 'region'] as const).forEach(id => {
-    document.getElementById(`tool-${id}`)?.classList.toggle('active', markActive && id === t);
-  });
-  root.style.cursor = t === 'pin' ? 'crosshair' : 'cell';
+  document.getElementById('tool-region')?.classList.toggle('active', markActive && t === 'region');
+  root.style.cursor = 'cell';
 }
 
-document.getElementById('tool-pin')?.addEventListener('click',    e => { e.stopPropagation(); setTool('pin'); });
 document.getElementById('tool-region')?.addEventListener('click', e => { e.stopPropagation(); setTool('region'); });
 
 // ── Cancel / Escape ───────────────────────────────────────────────────────────
@@ -1570,97 +1555,6 @@ async function resumeOverlayVisible(): Promise<void> {
 
 // ── Place annotation ──────────────────────────────────────────────────────────
 
-async function placePin(x: number, y: number) {
-  if (annotations.length >= MAX_ANNOTATIONS) {
-    setToast(`Maximum ${MAX_ANNOTATIONS} annotations per session.`);
-    return;
-  }
-  if (remainingAnnotationSlots() <= 0) {
-    setToast(targetSessionId
-      ? `"${newSessionName}" already has the maximum ${MAX_ANNOTATIONS} annotations.`
-      : `Maximum ${MAX_ANNOTATIONS} annotations per session.`);
-    return;
-  }
-
-  const ann: Annotation = {
-    id: `ann_${Date.now()}`,
-    number: annotations.length + 1,
-    x, y, kind: 'pin',
-    text: '', tags: [],
-    timestamp: new Date().toISOString(),
-  };
-
-  // First annotation: crop from the picked snapshot (image pixel space)
-  if (!screenshotCaptured) {
-    captureInProgress = true;
-    setToast('Preparing crop…');
-    let dataUrl: string | null = null;
-    try {
-      if (!sourceFrameDataUrl) {
-        setToast('Choose a screen or window before annotating.');
-        captureInProgress = false;
-        void showCaptureSourceStep();
-        return;
-      }
-      await ensureScreenshotImgReady();
-      const layout = viewportLayoutSnapshot();
-      logAnnotationPipeline('place_pin_capture_start', {
-        ann_id: ann.id,
-        pin_x: x,
-        pin_y: y,
-        ...layout,
-      });
-      const cropBox = clampBox({ left: x - 60, top: y - 30, width: 120, height: 60 });
-      const { sx, sy, sw, sh } = clientRectToImageRect(
-        cropBox.left,
-        cropBox.top,
-        cropBox.width,
-        cropBox.height,
-      );
-      logAnnotationPipeline('place_pin_crop_box', {
-        left: cropBox.left,
-        top: cropBox.top,
-        width: cropBox.width,
-        height: cropBox.height,
-        img_sx: sx,
-        img_sy: sy,
-        img_sw: sw,
-        img_sh: sh,
-      });
-      dataUrl = await cropImageDataUrl(sourceFrameDataUrl, sx, sy, sw, sh);
-      const got = describeScreenshotRef(dataUrl);
-      logAnnotationPipeline('place_pin_capture_ok', { data_kind: got.kind, data_len: got.len });
-    } catch (err) {
-      logAnnotationPipeline('place_pin_capture_failed', { error: String(err).slice(0, 300) });
-      setToast(`Screenshot unavailable — you can still add your note. (${err})`);
-    } finally {
-      captureInProgress = false;
-    }
-    if (dataUrl) {
-      currentScreenshotDataUrl = dataUrl;
-      screenshotCaptured = true;
-    }
-    logAnnotationPipeline('annotation_created', {
-      ann_id: ann.id,
-      ann_number: ann.number,
-      kind: ann.kind,
-      screenshotCaptured,
-      screenshot_kind: describeScreenshotRef(currentScreenshotDataUrl).kind,
-    });
-    annotations.push(ann);
-    renderPin(ann);
-    await resumeOverlayVisible();
-    selectAnnotation(ann);
-    updateCounter();
-    return;
-  }
-
-  annotations.push(ann);
-  renderPin(ann);
-  selectAnnotation(ann);
-  updateCounter();
-}
-
 async function placeRegion(x: number, y: number, w: number, h: number) {
   if (annotations.length >= MAX_ANNOTATIONS) {
     setToast(`Maximum ${MAX_ANNOTATIONS} annotations per session.`);
@@ -1690,35 +1584,37 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
     let dataUrl: string | null = null;
     try {
       if (!sourceFrameDataUrl) {
-        setToast('Choose a screen or window before annotating.');
-        captureInProgress = false;
-        void showCaptureSourceStep();
-        return;
+        logAnnotationPipeline('place_region_capture_skipped', {
+          reason: 'transparent_live_overlay_without_snapshot',
+          ann_id: ann.id,
+        });
+        dataUrl = '';
+      } else {
+        await ensureScreenshotImgReady();
+        const layout = viewportLayoutSnapshot();
+        logAnnotationPipeline('place_region_capture_start', {
+          ann_id: ann.id,
+          raw_left: x,
+          raw_top: y,
+          raw_w: w,
+          raw_h: h,
+          ...layout,
+        });
+        const { sx, sy, sw, sh } = clientRectToImageRect(box.left, box.top, box.width, box.height);
+        logAnnotationPipeline('place_region_crop_box', {
+          left: box.left,
+          top: box.top,
+          width: box.width,
+          height: box.height,
+          img_sx: sx,
+          img_sy: sy,
+          img_sw: sw,
+          img_sh: sh,
+        });
+        dataUrl = await cropImageDataUrl(sourceFrameDataUrl, sx, sy, sw, sh);
+        const got = describeScreenshotRef(dataUrl);
+        logAnnotationPipeline('place_region_capture_ok', { data_kind: got.kind, data_len: got.len });
       }
-      await ensureScreenshotImgReady();
-      const layout = viewportLayoutSnapshot();
-      logAnnotationPipeline('place_region_capture_start', {
-        ann_id: ann.id,
-        raw_left: x,
-        raw_top: y,
-        raw_w: w,
-        raw_h: h,
-        ...layout,
-      });
-      const { sx, sy, sw, sh } = clientRectToImageRect(box.left, box.top, box.width, box.height);
-      logAnnotationPipeline('place_region_crop_box', {
-        left: box.left,
-        top: box.top,
-        width: box.width,
-        height: box.height,
-        img_sx: sx,
-        img_sy: sy,
-        img_sw: sw,
-        img_sh: sh,
-      });
-      dataUrl = await cropImageDataUrl(sourceFrameDataUrl, sx, sy, sw, sh);
-      const got = describeScreenshotRef(dataUrl);
-      logAnnotationPipeline('place_region_capture_ok', { data_kind: got.kind, data_len: got.len });
     } catch (err) {
       logAnnotationPipeline('place_region_capture_failed', { error: String(err).slice(0, 300) });
       setToast(`Screenshot unavailable — you can still add your note. (${err})`);
@@ -2078,18 +1974,14 @@ root.addEventListener('pointerdown', e => {
   if (target.closest('.toolbar, .note-panel, .session-mode-bar, .ann-pin, .ann-highlight, .ann-delete, .step-card')) return;
 
   if (e.button === 0) {
-    if (activeTool === 'pin') {
-      void placePin(e.clientX, e.clientY);
-    } else if (activeTool === 'region') {
-      dragging = true;
-      dragStart = { x: e.clientX, y: e.clientY };
-      selRectEl.style.display = 'block';
-      updateSelRect(e.clientX, e.clientY, e.clientX, e.clientY);
-      // Capture pointer so pointermove/pointerup fire reliably on Tauri's
-      // transparent macOS overlay window even when cursor drifts over areas
-      // that would otherwise pass events through to apps underneath.
-      try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
-    }
+    dragging = true;
+    dragStart = { x: e.clientX, y: e.clientY };
+    selRectEl.style.display = 'block';
+    updateSelRect(e.clientX, e.clientY, e.clientX, e.clientY);
+    // Capture pointer so pointermove/pointerup fire reliably on Tauri's
+    // transparent macOS overlay window even when cursor drifts over areas
+    // that would otherwise pass events through to apps underneath.
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
     return;
   }
 

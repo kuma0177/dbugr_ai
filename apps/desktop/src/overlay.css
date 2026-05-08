@@ -69,6 +69,10 @@ html, body {
   vertical-align: middle;
 }
 
+#screenshot-img.source-frame-hidden {
+  opacity: 0;
+}
+
 .capture-list {
   max-height: min(52vh, 520px);
   overflow-y: auto;
