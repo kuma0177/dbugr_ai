@@ -1073,6 +1073,23 @@ async fn list_capture_sources() -> Result<CaptureSourceList, String> {
 
 #[cfg(target_os = "macos")]
 fn list_capture_sources_sync() -> Result<CaptureSourceList, String> {
+    // Preflight guard: check permission BEFORE calling SCK.
+    // If we skip this, SCShareableContent triggers the raw TCC dialog
+    // at an unexpected moment (e.g., while the user is picking a session).
+    // Instead we return a typed error the frontend can handle gracefully.
+    let preflight = unsafe { CGPreflightScreenCaptureAccess() };
+    log_backend(
+        "capture_sources.preflight",
+        format!("preflight={preflight}"),
+    );
+    if !preflight {
+        // Calling CGRequestScreenCaptureAccess here would show the system
+        // "Allow" prompt (on first ask) or silently fail (after denial).
+        // We return a sentinel error so the frontend can route to the
+        // permission onboarding screen instead.
+        return Err("ERR_SCREEN_RECORDING_NOT_GRANTED".into());
+    }
+
     let mut json_ptr: *mut c_char = std::ptr::null_mut();
     let mut err_ptr: *mut c_char = std::ptr::null_mut();
     let ok = unsafe { debugr_list_capture_sources_json(&mut json_ptr, &mut err_ptr) };

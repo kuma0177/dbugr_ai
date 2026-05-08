@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Screen Recording — required for ScreenCaptureKit.
+        With this entitlement + a consistent code signature, TCC associates
+        the permission with the signing identity rather than the binary hash,
+        so permission survives rebuilds as long as the signing identity stays
+        the same.
+    -->
+    <key>com.apple.security.screen-capture</key>
+    <true/>
+
+    <!--
+        Automation — required so Terminal/iTerm AppleScript handoffs work
+        without an additional TCC prompt.
+    -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+
+    <!--
+        Disable App Sandbox for the desktop app — Tauri desktop apps are
+        not sandboxed; sandboxing would block file I/O, Terminal launch,
+        and other required capabilities.
+    -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+</dict>
+</plist>
