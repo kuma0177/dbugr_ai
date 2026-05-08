@@ -1,5 +1,11 @@
 # Native macOS Migration Guide
 
+## Design Source Of Truth
+
+The desktop client design source of truth now lives in [docs/design/desktop-client/README.md](./design/desktop-client/README.md). Use that packet before changing Swift/AppKit capture, annotation, session, permission, or local sync code.
+
+Key rule: the gray native AppKit prototype is only an engineering harness. The target native experience is the polished stable annotation overlay from `stable-macos-claude-codex-cli` / `45b262ff47b769b6801eff493ab1f55b59c55e38`.
+
 ## Purpose
 
 Debugr should be macOS-native first. The current desktop app is a Tauri 2 + TypeScript application with native Rust and Objective-C capture code, but the fragile product surface is the exact surface macOS should own directly: screen/window capture, overlay windows, global shortcuts, focus behavior, and Screen Recording permission diagnostics.
