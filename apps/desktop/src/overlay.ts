@@ -788,6 +788,20 @@ async function loadCaptureSources() {
     const list = await invoke<CaptureSourceListPayload>('list_capture_sources');
     renderCaptureSourceList(list);
   } catch (err) {
+    const errMsg = String(err);
+    addDebugLog(`capture_sources.error msg=${errMsg.slice(0, 200)}`);
+
+    // If permission is not yet granted, hide the overlay FIRST so the macOS
+    // TCC dialog is accessible. The error UI will be visible once the overlay
+    // drops behind other windows.
+    if (
+      errMsg.includes('ERR_SCREEN_RECORDING_NOT_GRANTED') ||
+      isLikelyMacScreenRecordingDenied(errMsg)
+    ) {
+      addDebugLog('capture_sources.permission_denied — hiding overlay for TCC dialog');
+      await hideOverlayForMacosPermissionUi('load_capture_sources_permission_denied');
+    }
+
     let systemReportsCaptureAllowed = false;
     try {
       systemReportsCaptureAllowed = await invoke<boolean>('get_screen_capture_permission');
@@ -2066,6 +2080,10 @@ root.addEventListener('pointerdown', e => {
       dragStart = { x: e.clientX, y: e.clientY };
       selRectEl.style.display = 'block';
       updateSelRect(e.clientX, e.clientY, e.clientX, e.clientY);
+      // Capture pointer so pointermove/pointerup fire reliably on Tauri's
+      // transparent macOS overlay window even when cursor drifts over areas
+      // that would otherwise pass events through to apps underneath.
+      try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
     }
     return;
   }
@@ -2076,6 +2094,7 @@ root.addEventListener('pointerdown', e => {
     dragStart = { x: e.clientX, y: e.clientY };
     selRectEl.style.display = 'block';
     updateSelRect(e.clientX, e.clientY, e.clientX, e.clientY);
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
   }
 });
 
