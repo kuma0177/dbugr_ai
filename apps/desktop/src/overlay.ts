@@ -639,6 +639,14 @@ async function hideOverlayForMacosPermissionUi(reason: string): Promise<void> {
   } catch (err) {
     addDebugLog(`permission.ui.hide_overlay_failed reason=${reason} error=${String(err)}`);
   }
+  // Show the main window so the app is still visible after the TCC dialog is dismissed.
+  // Without this, hiding the overlay leaves a blank desktop (LSUIElement=true, no dock icon)
+  // and users think the app has shut down.
+  try {
+    await invoke('show_session_window');
+  } catch {
+    // Non-fatal — main window may already be visible
+  }
 }
 
 /** When macOS refuses to list capture sources — clear, non-looping recovery UI. */
@@ -791,11 +799,14 @@ async function loadCaptureSources() {
     const errMsg = String(err);
     addDebugLog(`capture_sources.error msg=${errMsg.slice(0, 200)}`);
 
-    // Only hide the overlay for our pre-SCK sentinel ERR_SCREEN_RECORDING_NOT_GRANTED.
-    // SCK errors that include "declined" (e.g. -3801) arrive AFTER the TCC dialog was
-    // already shown and dismissed by SCK itself — hiding the overlay at that point
-    // makes the app appear to shut down (LSUIElement=true, no dock icon).
-    if (errMsg.includes('ERR_SCREEN_RECORDING_NOT_GRANTED')) {
+    // Hide the overlay for any permission-denied signal so the TCC dialog (shown by
+    // SCK or earlier sentinel) is not covered by the fullscreen overlay. After hiding,
+    // hideOverlayForMacosPermissionUi also calls show_session_window so the app remains
+    // visible and doesn't look like it shut down (LSUIElement=true, no dock icon).
+    if (
+      errMsg.includes('ERR_SCREEN_RECORDING_NOT_GRANTED') ||
+      isLikelyMacScreenRecordingDenied(errMsg)
+    ) {
       addDebugLog('capture_sources.permission_denied — hiding overlay for TCC dialog');
       await hideOverlayForMacosPermissionUi('load_capture_sources_permission_denied');
     }
