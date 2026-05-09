@@ -3575,7 +3575,6 @@ body [class] {
 .hv2-hero-copy {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
 }
 
 .hv2-eyebrow {
@@ -3603,7 +3602,7 @@ body [class] {
 }
 
 .hv2-title {
-  font-size: 64px;
+  font-size: clamp(48px, 4.5vw, 64px);
   font-weight: 700;
   line-height: 1.02;
   letter-spacing: -2px;
@@ -4241,8 +4240,10 @@ body [class] {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-width: 420px;
+  width: 420px;
+  max-width: 100%;
   margin: 0;
+  align-self: flex-start;
 }
 
 .hv2-google-btn {
@@ -4382,7 +4383,9 @@ body:has(.hv2) .nav-auth-button {
   background: #fff;
   border-radius: 16px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.07), inset 0 0 0 1px rgba(0,0,0,0.07);
-  max-width: 420px;
+  width: 420px;
+  max-width: 100%;
+  align-self: flex-start;
   padding: 14px 16px;
   flex-direction: column;
   align-items: flex-start;
