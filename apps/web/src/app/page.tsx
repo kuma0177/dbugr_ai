@@ -225,8 +225,14 @@ export default function HomePage() {
           <p className="hv2-cta-body">
             Download the Mac app, connect your AI in under a minute, and start capturing.
           </p>
-          <div className="hv2-cta-strip">
-            <HomeSignupStrip />
+          <div className="hv2-cta-buttons">
+            <a className="hv2-cta-btn-primary" href="/onboarding?flow=sign-up&auth=google">
+              <img src="/brand/google-g.svg" alt="" width={18} height={18} aria-hidden="true" />
+              Continue with Google
+            </a>
+            <a className="hv2-cta-btn-secondary" href="#">
+              Download Mac app
+            </a>
           </div>
           <p className="hv2-cta-note">Free · macOS 13+ · No credit card needed</p>
         </div>
