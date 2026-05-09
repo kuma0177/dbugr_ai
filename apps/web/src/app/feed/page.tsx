@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { api } from '@/lib/api';
+import { api, apiAssetUrl } from '@/lib/api';
 import { displayOnboardingName, readOnboardingState } from '@/lib/onboarding';
-import type { AIReviewSummary, FeedbackComment, FeedbackSession, Submission } from '@feedbackagent/shared';
+import type { AIReviewSummary, FeedbackComment, FeedbackFrame, FeedbackSession, Submission } from '@feedbackagent/shared';
 
 type Scope = 'private' | 'organization' | 'public';
 type ProviderTarget = 'claude' | 'codex' | 'cursor';
@@ -20,6 +20,12 @@ const providerLabels: Record<ProviderTarget, string> = {
   cursor: 'Cursor',
 };
 
+function visibilityLabel(visibility: FeedbackSession['visibility']) {
+  if (visibility === 'org') return 'Visibility: Team';
+  if (visibility === 'public') return 'Visibility: Public';
+  return 'Visibility: Private';
+}
+
 function acceptedComments(session?: FeedbackSession) {
   return (session?.comments ?? []).filter((comment) =>
     comment.curationDecisions?.some((decision) => decision.includedInPayload),
@@ -31,8 +37,25 @@ function commentDecision(comment: FeedbackComment) {
   return latest?.decision ?? 'needs_review';
 }
 
-function sessionImage(session?: FeedbackSession) {
-  return session?.frames?.find((frame) => frame.imageUrl)?.imageUrl ?? '';
+function decisionLabel(comment: FeedbackComment) {
+  return commentDecision(comment).replace('_', ' ');
+}
+
+function initials(value?: string | null) {
+  const source = value?.trim() || 'Teammate';
+  return source
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('');
+}
+
+function sessionFrame(session?: FeedbackSession) {
+  return session?.frames?.find((frame) => frame.imageUrl) ?? session?.frames?.[0] ?? null;
+}
+
+function framePreviewUrl(frame?: FeedbackFrame | null) {
+  return frame ? apiAssetUrl(`/phase2/frames/${frame.id}/image`) : '';
 }
 
 function updatedCopy(value?: string) {
@@ -48,7 +71,7 @@ export default function FeedPage() {
   const [scope, setScope] = useState<Scope>('organization');
   const [sessions, setSessions] = useState<FeedbackSession[]>([]);
   const [selectedId, setSelectedId] = useState('');
-  const [commentBody, setCommentBody] = useState('I think this should be accepted before the final AI handoff.');
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [status, setStatus] = useState('Loading review workspace...');
   const [summary, setSummary] = useState<AIReviewSummary | null>(null);
   const [providerTarget, setProviderTarget] = useState<ProviderTarget>('claude');
@@ -59,11 +82,9 @@ export default function FeedPage() {
   const [signedInAs, setSignedInAs] = useState('');
 
   const selected = useMemo(
-    () => sessions.find((session) => session.id === selectedId) ?? sessions[0],
+    () => sessions.find((session) => session.id === selectedId),
     [selectedId, sessions],
   );
-  const accepted = useMemo(() => acceptedComments(selected), [selected]);
-  const selectedImage = sessionImage(selected);
 
   async function load(nextScope = scope) {
     setWorking('Loading workspace');
@@ -72,7 +93,7 @@ export default function FeedPage() {
     try {
       const data = await api.phase2.feed(nextScope);
       setSessions(data.sessions);
-      setSelectedId((current) => data.sessions.some((session) => session.id === current) ? current : data.sessions[0]?.id ?? '');
+      setSelectedId((current) => data.sessions.some((session) => session.id === current) ? current : '');
       setStatus(data.sessions.length
         ? `${data.sessions.length} session(s) ready in ${scopeLabels[nextScope].toLowerCase()}.`
         : `No sessions are in ${scopeLabels[nextScope].toLowerCase()} yet.`);
@@ -109,26 +130,28 @@ export default function FeedPage() {
     return () => window.removeEventListener('dbugr-auth-changed', syncWorkspaceIdentity);
   }, [scope]);
 
-  async function addContribution() {
-    if (!selected || !commentBody.trim()) return;
+  async function addContribution(session: FeedbackSession) {
+    const body = commentDrafts[session.id]?.trim();
+    if (!body) return;
+    setSelectedId(session.id);
     setWorking('Posting note');
     setStatus('Adding your note to the review thread...');
-    console.info('[phase2-web] review_feed.contribution.started', { sessionId: selected.id, scope });
+    console.info('[phase2-web] review_feed.contribution.started', { sessionId: session.id, scope });
     try {
-      await api.phase2.contribute(selected.id, {
+      await api.phase2.contribute(session.id, {
         targetType: 'session',
         contributionType: 'suggested_edit',
-        body: commentBody.trim(),
-        visibility: selected.visibility === 'public' ? 'public' : selected.visibility === 'private' ? 'private' : 'org',
+        body,
+        visibility: session.visibility === 'public' ? 'public' : session.visibility === 'private' ? 'private' : 'org',
       });
-      setCommentBody('');
+      setCommentDrafts((current) => ({ ...current, [session.id]: '' }));
       await load(scope);
       setStatus('Note added. It will be emailed in the next digest batch if it needs team attention.');
-      console.info('[phase2-web] review_feed.contribution.completed', { sessionId: selected.id });
+      console.info('[phase2-web] review_feed.contribution.completed', { sessionId: session.id });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus(`Contribution failed: ${message}`);
-      console.warn('[phase2-web] review_feed.contribution.failed', { sessionId: selected.id, message });
+      console.warn('[phase2-web] review_feed.contribution.failed', { sessionId: session.id, message });
     } finally {
       setWorking('');
     }
@@ -154,44 +177,46 @@ export default function FeedPage() {
     }
   }
 
-  async function preflight(target: ProviderTarget) {
-    if (!selected) return;
+  async function preflight(target: ProviderTarget, session = selected) {
+    if (!session) return;
+    setSelectedId(session.id);
+    const acceptedForSession = acceptedComments(session);
     setWorking('Generating AI preview');
     setProviderTarget(target);
     setStatus(`Generating a clean ${providerLabels[target]} prompt from accepted feedback...`);
     console.info('[phase2-web] review_feed.preflight.started', {
-      sessionId: selected.id,
+      sessionId: session.id,
       providerTarget: target,
-      acceptedCount: accepted.length,
+      acceptedCount: acceptedForSession.length,
     });
     try {
-      const result = await api.phase2.preflight(selected.id, target);
+      const result = await api.phase2.preflight(session.id, target);
       setSummary(result);
       setStatus('AI prompt preview is ready. Review it before freezing the submission.');
       console.info('[phase2-web] review_feed.preflight.completed', {
-        sessionId: selected.id,
+        sessionId: session.id,
         providerTarget: target,
         promptChars: result.finalPromptDraft.length,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus(`Preflight failed: ${message}`);
-      console.warn('[phase2-web] review_feed.preflight.failed', { sessionId: selected.id, providerTarget: target, message });
+      console.warn('[phase2-web] review_feed.preflight.failed', { sessionId: session.id, providerTarget: target, message });
     } finally {
       setWorking('');
     }
   }
 
-  async function changeVisibility(visibility: 'private' | 'org' | 'public') {
-    if (!selected) return;
+  async function changeVisibility(session: FeedbackSession, visibility: 'private' | 'org' | 'public') {
+    setSelectedId(session.id);
     const submissionFlow = visibility === 'public' ? 'public_feed' : visibility === 'org' ? 'internal_review' : 'direct';
     setWorking('Updating route');
     setStatus(visibility === 'public'
       ? 'Publishing to the public feed with redaction confirmation...'
       : `Moving session to ${visibility === 'org' ? 'team review' : 'private/direct'}...`);
-    console.info('[phase2-web] review_feed.visibility.started', { sessionId: selected.id, visibility, submissionFlow });
+    console.info('[phase2-web] review_feed.visibility.started', { sessionId: session.id, visibility, submissionFlow });
     try {
-      await api.phase2.visibility(selected.id, {
+      await api.phase2.visibility(session.id, {
         visibility,
         submissionFlow,
         redactionConfirmed: visibility === 'public',
@@ -201,27 +226,28 @@ export default function FeedPage() {
       setStatus(visibility === 'public'
         ? 'Public feed route is ready. Review redaction before final AI handoff.'
         : `Session route updated to ${visibility === 'org' ? 'team review' : 'direct/private'}.`);
-      console.info('[phase2-web] review_feed.visibility.completed', { sessionId: selected.id, visibility });
+      console.info('[phase2-web] review_feed.visibility.completed', { sessionId: session.id, visibility });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus(`Visibility update failed: ${message}`);
-      console.warn('[phase2-web] review_feed.visibility.failed', { sessionId: selected.id, visibility, message });
+      console.warn('[phase2-web] review_feed.visibility.failed', { sessionId: session.id, visibility, message });
     } finally {
       setWorking('');
     }
   }
 
-  async function submitToAI() {
-    if (!selected) return;
+  async function submitToAI(session = selected) {
+    if (!session) return;
+    setSelectedId(session.id);
     setWorking('Freezing prompt');
     setStatus(`Freezing prompt snapshot for ${providerLabels[providerTarget]}...`);
     console.info('[phase2-web] review_feed.submission.started', {
-      sessionId: selected.id,
+      sessionId: session.id,
       providerTarget,
       summaryId: summary?.id,
     });
     try {
-      const result = await api.phase2.submit(selected.id, {
+      const result = await api.phase2.submit(session.id, {
         providerTarget,
         aiReviewSummaryId: summary?.id,
         finalPrompt: summary?.editedPrompt ?? summary?.finalPromptDraft,
@@ -231,14 +257,14 @@ export default function FeedPage() {
       await load(scope);
       setStatus(`Submission snapshot created for ${providerLabels[providerTarget]}. The Mac app can hand it to the local CLI.`);
       console.info('[phase2-web] review_feed.submission.completed', {
-        sessionId: selected.id,
+        sessionId: session.id,
         submissionId: result.id,
         providerTarget,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus(`Submission failed: ${message}`);
-      console.warn('[phase2-web] review_feed.submission.failed', { sessionId: selected.id, providerTarget, message });
+      console.warn('[phase2-web] review_feed.submission.failed', { sessionId: session.id, providerTarget, message });
     } finally {
       setWorking('');
     }
@@ -321,161 +347,189 @@ export default function FeedPage() {
           </div>
         </div>
 
-        <section className="review-grid">
-          <div className="review-session-list">
-            {sessions.map((session) => {
-              const isSelected = selected?.id === session.id;
-              const acceptedCount = acceptedComments(session).length;
-              const image = sessionImage(session);
-              return (
-                <button
-                  key={session.id}
-                  className={`review-session-card ${isSelected ? 'active' : ''}`}
-                  onClick={() => {
-                    setSelectedId(session.id);
-                    setSummary(null);
-                    setSubmission(null);
-                    console.info('[phase2-web] review_feed.session_selected', { sessionId: session.id });
-                  }}
-                >
-                  <div className="review-session-thumb">
-                    {image ? <img src={image} alt={`${session.title} screenshot preview`} /> : <span>▣</span>}
-                  </div>
-                  <div className="review-session-body">
-                    <div className="review-session-title">
-                      <h2>{session.title}</h2>
-                      <span>{session.visibility === 'org' ? 'Team' : session.visibility}</span>
+        <section className="review-feed-stack">
+          {sessions.map((session) => {
+            const isSelected = selected?.id === session.id;
+            const acceptedForSession = acceptedComments(session);
+            const sessionSummary = isSelected ? summary : null;
+            const sessionSubmission = isSelected ? submission : null;
+            const draft = commentDrafts[session.id] ?? '';
+            const frames = session.frames?.length ? session.frames : [];
+            return (
+              <article key={session.id} className={`review-post ${isSelected ? 'expanded' : 'collapsed'}`}>
+                <header className="review-post-header">
+                  <div className="review-comment-avatar" aria-hidden="true">{initials(signedInAs || 'Dbugr')}</div>
+                  <div className="review-post-heading">
+                    <div className="review-post-author">
+                      <strong>{signedInAs || 'Dbugr.ai'}</strong>
+                      <span>{updatedCopy(session.updatedAt)} · {visibilityLabel(session.visibility)}</span>
                     </div>
+                    <h2>{session.title}</h2>
                     <p>{session.about || session.aiSummary || 'No session note yet. Add context before handoff.'}</p>
-                    <div className="review-card-meta">
-                      <span>💬 {session.comments?.length ?? 0} notes</span>
-                      <span>✅ {acceptedCount} accepted</span>
-                      <span>Updated {updatedCopy(session.updatedAt)}</span>
-                    </div>
                   </div>
-                </button>
-              );
-            })}
-            {sessions.length === 0 ? (
-              <div className="review-empty">
-                <strong>No sessions here yet.</strong>
-                <p>Choose Team or Public in the Mac app submission flow, and Dbugr will sync the session into this feed.</p>
-              </div>
-            ) : null}
-          </div>
+                  <div className="review-post-controls">
+                    <span className="review-pill">{session.reviewStatus?.replaceAll('_', ' ') ?? 'draft'}</span>
+                    <button
+                      type="button"
+                      className="review-collapse-toggle"
+                      aria-expanded={isSelected}
+                      onClick={() => {
+                        setSelectedId(isSelected ? '' : session.id);
+                        setSummary(null);
+                        setSubmission(null);
+                      }}
+                    >
+                      {isSelected ? 'Collapse' : 'Expand'}
+                    </button>
+                  </div>
+                </header>
 
-          <aside className="review-detail-panel">
-            {selected ? (
-              <>
-                <div className="review-detail-header">
+                <div className="review-card-meta">
                   <div>
-                    <div className="phase2-kicker">Selected session</div>
-                    <h2>{selected.title}</h2>
+                    <span>{session.comments?.length ?? 0} comments</span>
+                    <span>{acceptedForSession.length} accepted</span>
+                    <span>{frames.length} captures</span>
                   </div>
-                  <span className="review-pill">{selected.reviewStatus?.replaceAll('_', ' ') ?? 'draft'}</span>
-                </div>
-
-                <div className="review-route-card">
-                  <div className="phase2-kicker">Where should this go?</div>
-                  <div className="review-route-buttons">
-                    <button onClick={() => changeVisibility('private')} className={selected.visibility === 'private' ? 'active' : ''}>
-                      Direct
-                    </button>
-                    <button onClick={() => changeVisibility('org')} className={selected.visibility === 'org' ? 'active' : ''}>
-                      Team
-                    </button>
-                    <button onClick={() => changeVisibility('public')} className={selected.visibility === 'public' ? 'active' : ''}>
-                      Public
-                    </button>
-                  </div>
-                  <p>
-                    Direct stays private for local CLI handoff. Team opens internal review.
-                    Public asks the builder community after redaction approval.
-                  </p>
-                </div>
-
-                <div className="review-preview-frame">
-                  {selectedImage ? (
-                    <img src={selectedImage} alt={`${selected.title} annotated screenshot`} />
-                  ) : (
-                    <div className="review-preview-empty">
-                      <span>📸</span>
-                      <strong>Screenshot preview will appear here</strong>
-                      <p>Native Mac captures sync frames into this review board.</p>
-                    </div>
-                  )}
-                </div>
-
-                <div className="review-comment-box">
-                  <div className="phase2-kicker">Add team note</div>
-                  <textarea value={commentBody} onChange={(event) => setCommentBody(event.target.value)} />
-                  <button className="btn btn-primary" onClick={addContribution}>Post note</button>
-                </div>
-
-                <div className="review-comment-list">
-                  {(selected.comments ?? []).map((comment) => {
-                    const decision = commentDecision(comment);
-                    return (
-                      <article key={comment.id} className="review-comment">
-                        <div className="review-comment-head">
-                          <strong>{comment.author?.name ?? 'Teammate'}</strong>
-                          <span className={`review-decision decision-${decision}`}>{decision.replace('_', ' ')}</span>
-                        </div>
-                        <p>{comment.body}</p>
-                        <div className="review-comment-actions">
-                          <button onClick={() => curate(comment, 'accepted')}>Accept</button>
-                          <button onClick={() => curate(comment, 'rejected')}>Decline</button>
-                          <button onClick={() => curate(comment, 'duplicate')}>Duplicate</button>
-                        </div>
-                      </article>
-                    );
-                  })}
-                  {(selected.comments ?? []).length === 0 ? (
-                    <p className="phase2-muted">No comments yet. Add the first review note.</p>
-                  ) : null}
-                </div>
-
-                <div className="review-synthesis">
-                  <div>
-                    <div className="phase2-kicker">Accepted notes</div>
-                    <h3>{accepted.length} item(s) ready for synthesis</h3>
-                  </div>
-                  <div className="review-provider-row">
-                    {(['claude', 'codex', 'cursor'] as const).map((provider) => (
-                      <button
-                        key={provider}
-                        className={providerTarget === provider ? 'active' : ''}
-                        onClick={() => setProviderTarget(provider)}
-                      >
-                        {providerLabels[provider]}
-                      </button>
-                    ))}
-                  </div>
-                  <button className="btn btn-primary" onClick={() => preflight(providerTarget)}>
-                    Generate AI-ready prompt
+                  <button
+                    type="button"
+                    className="review-collapse-toggle"
+                    aria-expanded={isSelected}
+                    onClick={() => {
+                      setSelectedId(isSelected ? '' : session.id);
+                      setSummary(null);
+                      setSubmission(null);
+                    }}
+                  >
+                    {isSelected ? 'Collapse comments' : 'Expand comments'}
                   </button>
-                  {summary ? (
-                    <>
-                      <pre>{summary.finalPromptDraft}</pre>
-                      <button className="btn btn-primary" onClick={submitToAI}>
-                        Freeze and send snapshot
-                      </button>
-                    </>
-                  ) : (
-                    <p>Accept the best notes, then generate a clean implementation prompt for Claude, Codex, or Cursor.</p>
-                  )}
-                  {submission ? (
-                    <p className="review-success">Snapshot created for {providerLabels[submission.providerTarget]}.</p>
-                  ) : null}
                 </div>
-              </>
-            ) : (
-              <div className="review-empty">
-                <strong>Choose a session.</strong>
-                <p>The curation panel will show screenshots, comments, accepted notes, and AI handoff controls.</p>
-              </div>
-            )}
-          </aside>
+
+                {isSelected ? (
+                  <div className="review-post-expanded">
+                    <div className="review-route-card">
+                      <div className="phase2-kicker">Session visibility</div>
+                      <div className="review-route-buttons">
+                        <button onClick={() => changeVisibility(session, 'private')} className={session.visibility === 'private' ? 'active' : ''}>
+                          Direct
+                        </button>
+                        <button onClick={() => changeVisibility(session, 'org')} className={session.visibility === 'org' ? 'active' : ''}>
+                          Team
+                        </button>
+                        <button onClick={() => changeVisibility(session, 'public')} className={session.visibility === 'public' ? 'active' : ''}>
+                          Public
+                        </button>
+                      </div>
+                      <p>Comments inherit this session setting.</p>
+                    </div>
+
+                    <div className="review-frame-strip" aria-label={`${session.title} captures`}>
+                      {frames.length ? frames.map((frame, index) => {
+                        const image = framePreviewUrl(frame);
+                        return (
+                          <figure key={frame.id} className="review-frame-card">
+                            <div className="review-frame-media">
+                              <img src={image} alt={`${session.title} capture ${index + 1}`} />
+                            </div>
+                            <figcaption>
+                              <strong>Capture {index + 1}</strong>
+                              <span>{frame.description || session.about || 'Primary note will appear here.'}</span>
+                            </figcaption>
+                          </figure>
+                        );
+                      }) : (
+                        <figure className="review-frame-card">
+                          <div className="review-frame-media review-preview-empty">
+                            <strong>Screenshot preview will appear here</strong>
+                            <p>Native Mac captures sync frames into this review board.</p>
+                          </div>
+                          <figcaption>
+                            <strong>Capture pending</strong>
+                            <span>{session.about || 'Add the first annotation from the Mac app.'}</span>
+                          </figcaption>
+                        </figure>
+                      )}
+                    </div>
+
+                    <div className="review-comment-list">
+                      {(session.comments ?? []).map((comment) => {
+                        const author = comment.author?.name ?? 'Teammate';
+                        return (
+                          <article key={comment.id} className="review-comment">
+                            <div className="review-comment-avatar" aria-hidden="true">{initials(author)}</div>
+                            <div className="review-comment-head">
+                              <div>
+                                <strong>{author}</strong>
+                                <span>{updatedCopy(comment.createdAt)} · {decisionLabel(comment)}</span>
+                              </div>
+                            </div>
+                            <p>{comment.body}</p>
+                            <div className="review-comment-actions">
+                              <button onClick={() => curate(comment, 'accepted')}>Accept</button>
+                              <button onClick={() => curate(comment, 'rejected')}>Decline</button>
+                              <button onClick={() => curate(comment, 'duplicate')}>Duplicate</button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+
+                    <div className="review-comment-box">
+                      <div className="phase2-kicker">Add review note</div>
+                      <textarea
+                        value={draft}
+                        onChange={(event) => setCommentDrafts((current) => ({ ...current, [session.id]: event.target.value }))}
+                        placeholder="Write a comment for this session..."
+                      />
+                      <button className="btn btn-primary" onClick={() => addContribution(session)}>Post comment</button>
+                    </div>
+
+                    <div className="review-synthesis">
+                      <div>
+                        <div className="phase2-kicker">Accepted notes</div>
+                        <h3>{acceptedForSession.length} item(s) ready for synthesis</h3>
+                      </div>
+                      <div className="review-provider-row">
+                        {(['claude', 'codex', 'cursor'] as const).map((provider) => (
+                          <button
+                            key={provider}
+                            className={providerTarget === provider && isSelected ? 'active' : ''}
+                            onClick={() => {
+                              setSelectedId(session.id);
+                              setProviderTarget(provider);
+                            }}
+                          >
+                            {providerLabels[provider]}
+                          </button>
+                        ))}
+                      </div>
+                      <button className="btn btn-primary" onClick={() => preflight(providerTarget, session)}>
+                        Generate AI-ready prompt
+                      </button>
+                      {sessionSummary ? (
+                        <>
+                          <pre>{sessionSummary.finalPromptDraft}</pre>
+                          <button className="btn btn-primary" onClick={() => submitToAI(session)}>
+                            Freeze and send snapshot
+                          </button>
+                        </>
+                      ) : (
+                        <p>Accept the best notes, then generate a clean implementation prompt for Claude, Codex, or Cursor.</p>
+                      )}
+                      {sessionSubmission ? (
+                        <p className="review-success">Snapshot created for {providerLabels[sessionSubmission.providerTarget]}.</p>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
+          {sessions.length === 0 ? (
+            <div className="review-empty">
+              <strong>No sessions here yet.</strong>
+              <p>Choose Team or Public in the Mac app submission flow, and Dbugr will sync the session into this feed.</p>
+            </div>
+          ) : null}
         </section>
       </main>
     </section>

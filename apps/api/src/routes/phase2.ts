@@ -2,11 +2,15 @@ import { Router, Request, Response } from 'express';
 import { prisma } from '@feedbackagent/db';
 import { z } from 'zod';
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { auditLog } from '../lib/audit';
 
 export const phase2Router = Router();
 
 const DEMO_USER_ID = 'user_demo';
+const SVG_PLACEHOLDER = 'image/svg+xml; charset=utf-8';
 
 function logPhase2(event: string, details: Record<string, unknown> = {}) {
   const stamp = new Date().toISOString();
@@ -23,6 +27,62 @@ function logPhase2(event: string, details: Record<string, unknown> = {}) {
       }),
   );
   console.info(`[phase2] ${stamp} ${event}`, safeDetails);
+}
+
+function svgPlaceholder(title: string, description?: string) {
+  const safeTitle = title
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .slice(0, 80);
+  const safeDescription = (description || 'Screenshot preview unavailable')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .slice(0, 120);
+  return `
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-label="${safeTitle}">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#fdfcfc"/>
+      <stop offset="1" stop-color="#f5f3f1"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="540" rx="32" fill="url(#bg)"/>
+  <rect x="72" y="74" width="816" height="392" rx="24" fill="#fff" stroke="rgba(0,0,0,0.08)"/>
+  <circle cx="126" cy="126" r="12" fill="#e5e5e5"/>
+  <circle cx="164" cy="126" r="12" fill="#e5e5e5"/>
+  <circle cx="202" cy="126" r="12" fill="#e5e5e5"/>
+  <rect x="118" y="178" width="420" height="22" rx="11" fill="#d9d6d2"/>
+  <rect x="118" y="224" width="674" height="18" rx="9" fill="#eeeae6"/>
+  <rect x="118" y="260" width="608" height="18" rx="9" fill="#eeeae6"/>
+  <rect x="118" y="318" width="198" height="56" rx="28" fill="#0663FB"/>
+  <text x="118" y="430" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="700" fill="#000">${safeTitle}</text>
+  <text x="118" y="464" font-family="Inter, Arial, sans-serif" font-size="18" fill="#777169">${safeDescription}</text>
+</svg>`.trim();
+}
+
+function isProbablyLocalPath(value: string) {
+  return value.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(value);
+}
+
+function isAllowedScreenshotPath(value: string) {
+  const resolved = path.resolve(value);
+  const debugrScreenshotRoot = path.resolve(os.homedir(), 'Library/Application Support/debugr/screenshots');
+  const tmpScreenshotRoot = path.resolve(os.tmpdir());
+  const isImage = /\.(png|jpe?g|webp)$/i.test(resolved);
+  const inDebugrRoot = resolved === debugrScreenshotRoot || resolved.startsWith(`${debugrScreenshotRoot}${path.sep}`);
+  const inDebugrTmp = resolved.startsWith(`${tmpScreenshotRoot}${path.sep}debugr_screenshot_`);
+  return isImage && (inDebugrRoot || inDebugrTmp);
+}
+
+async function canReadFile(value: string) {
+  try {
+    const stat = await fs.stat(value);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
 }
 
 async function demoContext() {
@@ -1890,6 +1950,61 @@ phase2Router.get('/phase2/feed', async (req: Request, res: Response) => {
   });
 
   return res.json({ data: { scope, sessions } });
+});
+
+phase2Router.get('/phase2/frames/:id/image', async (req: Request, res: Response) => {
+  let context;
+  try {
+    context = await requestContext(req);
+  } catch (error) {
+    return handleContextError(error, res);
+  }
+  const { user, organization } = context;
+
+  const frame = await prisma.feedbackFrame.findFirst({
+    where: {
+      id: req.params.id,
+      session: {
+        OR: [
+          { createdBy: user.id },
+          { visibility: 'public' },
+          { project: { organizationId: organization.id }, visibility: { in: ['org', 'public'] } },
+        ],
+      },
+    },
+    include: { session: true },
+  });
+
+  if (!frame) {
+    return res.status(404).type(SVG_PLACEHOLDER).send(svgPlaceholder('Capture not found'));
+  }
+
+  const imageUrl = frame.imageUrl || '';
+  if (imageUrl.startsWith('data:image/')) {
+    const [meta, data] = imageUrl.split(',', 2);
+    const mime = meta.match(/^data:([^;]+)/)?.[1] || 'image/png';
+    return res.type(mime).send(Buffer.from(data || '', imageUrl.includes(';base64,') ? 'base64' : 'utf8'));
+  }
+
+  if (/^https?:\/\//i.test(imageUrl)) {
+    return res.redirect(imageUrl);
+  }
+
+  if (isProbablyLocalPath(imageUrl)) {
+    const resolved = path.resolve(imageUrl);
+    if (isAllowedScreenshotPath(resolved) && await canReadFile(resolved)) {
+      return res.sendFile(resolved);
+    }
+  }
+
+  logPhase2('frame_image.placeholder_returned', {
+    frameId: frame.id,
+    sessionId: frame.feedbackSessionId,
+    imageUrlScheme: imageUrl.split(':')[0] || 'empty',
+  });
+  return res
+    .type(SVG_PLACEHOLDER)
+    .send(svgPlaceholder(frame.session.title, frame.description || 'Capture exists, but the original image is not available to the browser.'));
 });
 
 phase2Router.post('/phase2/sessions/:id/contributions', async (req: Request, res: Response) => {

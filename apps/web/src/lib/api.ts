@@ -20,6 +20,10 @@ import type {
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:3001/api';
 
+export function apiAssetUrl(path: string) {
+  return `${BASE}${path}`;
+}
+
 function formatApiError(error: unknown): string | null {
   if (!error) return null;
   if (typeof error === 'string') return error;
