@@ -330,12 +330,6 @@ export default function FeedPage() {
             <span>Search</span>
             <input placeholder="Search annotations, notes, or sessions..." />
           </label>
-          <div className="review-top-actions">
-            <button className="btn btn-ghost">Settings</button>
-            <button className="btn btn-primary" onClick={() => selected && preflight(providerTarget)}>
-              Export prompt
-            </button>
-          </div>
         </header>
 
         <div className="review-hero">

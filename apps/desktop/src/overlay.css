@@ -34,7 +34,7 @@
 }
 
 :root {
-  --color-eggshell: #fdfcfc;
+  --color-eggshell: #fafaf9;
   --color-powder: #f5f3f1;
   --color-chalk: #e5e5e5;
   --color-fog: #b1b0b0;
@@ -70,7 +70,17 @@
   --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   --display: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
   --font-label: Inter, ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, "Cascadia Code", Consolas, monospace;
+  --db-font: var(--font);
+  --db-font-mono: var(--font-mono);
+  --db-text-display: 44px;
+  --db-text-h1: 26px;
+  --db-text-h2: 20px;
+  --db-text-h3: 16px;
+  --db-text-body: 14px;
+  --db-text-sm: 13px;
+  --db-text-xs: 12px;
+  --db-text-label: 11px;
   --font-sohne-var: var(--font);
   --font-display: var(--display);
   font-family: var(--font);
@@ -1306,17 +1316,17 @@ select:focus {
   box-shadow: 0 0 0 9999px rgba(6, 27, 49, 0.12);
 }
 
-body [class] {
-  letter-spacing: 0;
-}
-
-/* Final typography pass: mirror web tokens; local Inter 300 is our safe Waldenburg fallback. */
+/* Final typography pass: mirror Debugr typography v2. */
 body,
 button,
 input,
 textarea,
 select {
-  font-family: var(--font);
+  font-family: var(--db-font);
+  font-size: var(--db-text-body);
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: -0.1px;
   font-feature-settings: "ss01" on, "tnum" on;
 }
 
@@ -1327,15 +1337,16 @@ h3,
 .picker-session-title,
 .note-panel-title strong,
 .session-title-input {
-  font-family: var(--display);
-  font-weight: 300;
-  letter-spacing: 0;
+  font-family: var(--db-font);
+  font-weight: 700;
+  letter-spacing: -0.5px;
   color: var(--text);
 }
 
 .step-card-title {
-  font-size: 24px;
-  line-height: 1.05;
+  font-size: var(--db-text-h1);
+  line-height: 1.1;
+  letter-spacing: -0.8px;
 }
 
 .step-card-title-picker {
@@ -1343,9 +1354,10 @@ h3,
   max-width: none;
   overflow: visible !important;
   text-overflow: clip !important;
-  font-size: clamp(17px, 4.35cqw, 18px) !important;
+  font-size: var(--db-text-h2) !important;
   font-weight: 700;
-  line-height: 1.08;
+  line-height: 1.2;
+  letter-spacing: -0.3px;
   white-space: nowrap;
 }
 
@@ -1363,8 +1375,9 @@ h3,
 
 #step-picker .picker-hint {
   margin: 0 0 16px;
-  font-size: 13px;
-  line-height: 1.35;
+  font-size: var(--db-text-sm);
+  line-height: 1.5;
+  letter-spacing: 0;
 }
 
 #step-picker .picker-list {
@@ -1381,8 +1394,8 @@ h3,
   justify-items: start;
   min-height: 54px;
   padding: 0;
-  font-size: 13px;
-  line-height: 1.35;
+  font-size: var(--db-text-sm);
+  line-height: 1.5;
   text-align: left;
 }
 
@@ -1401,14 +1414,18 @@ h3,
 }
 
 #step-picker .picker-session-title {
-  font-size: 13px;
-  line-height: 1.25;
+  font-size: var(--db-text-h3);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.2px;
 }
 
 #step-picker .picker-session-sub,
 #step-picker .picker-session-time {
-  font-size: 12px;
-  line-height: 1.25;
+  font-size: var(--db-text-xs);
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0;
 }
 
 #step-picker .picker-session-item:hover {
@@ -1452,7 +1469,10 @@ h3,
 
 .debug-log,
 .coord-chip {
-  font-family: var(--font-mono);
+  font-family: var(--db-font-mono);
+  font-size: var(--db-text-xs);
+  font-weight: 500;
+  letter-spacing: 0;
 }
 
 /* Final toolbar contrast pass. */

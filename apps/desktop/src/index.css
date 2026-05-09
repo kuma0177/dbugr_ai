@@ -37,7 +37,7 @@
 }
 
 :root {
-  --color-eggshell: #fdfcfc;
+  --color-eggshell: #fafaf9;
   --color-powder: #f5f3f1;
   --color-chalk: #e5e5e5;
   --color-fog: #b1b0b0;
@@ -89,7 +89,17 @@
   --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   --display: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
   --font-label: Inter, ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, "Cascadia Code", Consolas, monospace;
+  --db-font: var(--font);
+  --db-font-mono: var(--font-mono);
+  --db-text-display: 44px;
+  --db-text-h1: 26px;
+  --db-text-h2: 20px;
+  --db-text-h3: 16px;
+  --db-text-body: 14px;
+  --db-text-sm: 13px;
+  --db-text-xs: 12px;
+  --db-text-label: 11px;
   --font-sohne-var: var(--font);
   --font-display: var(--display);
 
@@ -105,6 +115,11 @@ html, body, #app {
   height: 100%;
   min-height: 100%;
   background: var(--bg);
+  font-family: var(--db-font);
+  font-size: var(--db-text-body);
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: -0.1px;
 }
 
 button, input, textarea, select {
@@ -176,11 +191,11 @@ input, textarea {
 
 .welcome-hero-copy h1,
 .welcome-card h1 {
-  font-family: var(--font-display);
-  font-size: 44px;
-  font-weight: 500;
-  line-height: 1.09;
-  letter-spacing: -1.14px;
+  font-family: var(--db-font);
+  font-size: var(--db-text-display);
+  font-weight: 700;
+  line-height: 1.02;
+  letter-spacing: -2px;
 }
 
 .welcome-hero-copy p,
@@ -188,10 +203,10 @@ input, textarea {
 .panel-copy,
 .confirm-sub {
   color: var(--text-secondary);
-  font-size: 15px;
-  font-weight: 400;
-  line-height: 1.47;
-  letter-spacing: -0.2px;
+  font-size: var(--db-text-body);
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: -0.1px;
 }
 
 .welcome-grid {
@@ -229,10 +244,10 @@ input, textarea {
 .session-group-label,
 .feedback-label {
   color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: -0.14px;
-  text-transform: none;
+  font-size: var(--db-text-label);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
 }
 
 .sidebar-title-row {
@@ -244,10 +259,10 @@ input, textarea {
 }
 
 .sidebar-title-row strong {
-  font-size: 23px;
-  font-weight: 600;
+  font-size: var(--db-text-h2);
+  font-weight: 700;
   color: var(--text);
-  letter-spacing: -0.44px;
+  letter-spacing: -0.3px;
 }
 
 .sidebar-title-row span {
@@ -2759,17 +2774,17 @@ select:focus {
   box-shadow: var(--shadow-md);
 }
 
-body [class] {
-  letter-spacing: 0;
-}
-
-/* Final typography pass: mirror web tokens; local Inter 300 is our safe Waldenburg fallback. */
+/* Final typography pass: mirror Debugr typography v2. */
 body,
 button,
 input,
 textarea,
 select {
-  font-family: var(--font);
+  font-family: var(--db-font);
+  font-size: var(--db-text-body);
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: -0.1px;
   font-feature-settings: "ss01" on, "tnum" on;
 }
 
@@ -2788,27 +2803,30 @@ h3,
 .connect-card-title,
 .prompt-preview-title,
 .empty-title {
-  font-family: var(--display);
-  font-weight: 300;
-  letter-spacing: 0;
+  font-family: var(--db-font);
+  font-weight: 700;
+  letter-spacing: -0.5px;
   color: var(--text);
 }
 
 .welcome-hero-copy h1,
 .welcome-card h1 {
-  font-size: clamp(42px, 5vw, 72px);
-  line-height: 0.98;
+  font-size: var(--db-text-display);
+  line-height: 1.02;
+  letter-spacing: -2px;
 }
 
 .session-title,
 .session-title-inline {
-  font-size: clamp(34px, 4.4vw, 56px);
-  line-height: 1;
+  font-size: clamp(var(--db-text-h1), 4vw, var(--db-text-display));
+  line-height: 1.1;
+  letter-spacing: -0.8px;
 }
 
 .welcome-panel h2 {
-  font-size: clamp(28px, 3vw, 42px);
-  line-height: 1.05;
+  font-size: var(--db-text-h2);
+  line-height: 1.2;
+  letter-spacing: -0.3px;
 }
 
 .session-title-inline,
@@ -2825,5 +2843,8 @@ h3,
 .prompt-preview-text,
 .inline-code,
 .provider-env-value {
-  font-family: var(--font-mono);
+  font-family: var(--db-font-mono);
+  font-size: var(--db-text-sm);
+  font-weight: 500;
+  letter-spacing: 0;
 }

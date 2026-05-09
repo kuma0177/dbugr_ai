@@ -1,110 +1,257 @@
 import type { Metadata } from 'next';
-import { JourneyInfographic } from './journey-infographic';
 import { HomeSignupStrip } from './home-signup-strip';
 
 export const metadata: Metadata = {
-  title: 'Dbugr.ai | From screenshot to shippable prompt',
+  title: 'Dbugr.ai | Capture feedback. Ship it to AI.',
   description:
-    'Dbugr.ai helps product teams capture screenshots, review feedback, and turn approved changes into AI-ready prompts for Claude, Codex, and Cursor.',
+    'Annotate any screen on your Mac and send a structured, repo-aware feedback session to Claude Code, Codex, or Cursor — in under 30 seconds.',
   openGraph: {
-    title: 'Dbugr.ai | From screenshot to shippable prompt',
+    title: 'Dbugr.ai | Capture feedback. Ship it to AI.',
     description:
-      'Capture visual feedback, review it together, and send approved product changes to Claude, Codex, or Cursor.',
+      'Annotate any screen on your Mac and send a structured, repo-aware feedback session to Claude Code, Codex, or Cursor — in under 30 seconds.',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Dbugr.ai | From screenshot to shippable prompt',
+    title: 'Dbugr.ai | Capture feedback. Ship it to AI.',
     description:
-      'Capture visual feedback, review it together, and send approved product changes to Claude, Codex, or Cursor.',
+      'Annotate any screen on your Mac and send a structured, repo-aware feedback session to Claude Code, Codex, or Cursor.',
   },
 };
 
+const FLOW_STEPS = [
+  { n: '01', title: 'Capture',  body: 'Press ⌃⌘Z from any app. Pick the region.',           phase: 'blue'  },
+  { n: '02', title: 'Annotate', body: 'Draw boxes, add notes. One frame = one task.',          phase: 'blue'  },
+  { n: '03', title: 'Frame',    body: 'Name the session. Add a one-line context note.',        phase: 'blue'  },
+  { n: '04', title: 'Route',    body: 'Direct to AI, team review, or public feed.',            phase: 'ember' },
+  { n: '05', title: 'Review',   body: 'Teammates curate before the agent sees it.',            phase: 'ember' },
+  { n: '06', title: 'Ship',     body: 'Claude, Codex, or Cursor picks it up directly.',       phase: 'green' },
+] as const;
+
+const AI_TARGETS = [
+  {
+    name: 'Claude CLI',
+    desc: 'Anthropic API key stored locally. Opens Claude in Terminal on Send.',
+    status: 'Connected',
+    statusPhase: 'green' as const,
+    logoSrc: '/brand/logo-claude.png',
+  },
+  {
+    name: 'Codex CLI',
+    desc: 'OpenAI API key stored locally. Opens Codex CLI in Terminal on Send.',
+    status: 'Connected',
+    statusPhase: 'green' as const,
+    logoSrc: '/brand/logo-codex.png',
+  },
+  {
+    name: 'Cursor',
+    desc: 'Sends the annotated session directly into your active Cursor workspace.',
+    status: 'Ready',
+    statusPhase: 'yellow' as const,
+    logoSrc: '/brand/logo-cursor.png',
+  },
+];
+
+const FEATURES = [
+  { emoji: '⌃⌘Z', title: 'Global shortcut',   body: 'Press from any app. Dbugr overlays the screen immediately without stealing focus.' },
+  { emoji: '📋',   title: 'Session framing',   body: 'One session note travels with all captures. Claude / Codex knows the full context.' },
+  { emoji: '👥',   title: 'Team review',       body: 'Share to team feed before AI sees it. Teammates accept or flag annotations.' },
+  { emoji: '🌐',   title: 'Public feed',       body: 'Share with your community for signal. Curate the best notes into the final prompt.' },
+  { emoji: '🔗',   title: 'MCP server',        body: 'Your captures are exposed as an MCP context source for Claude, Codex, and Cursor.' },
+  { emoji: '🔒',   title: 'Local-first',       body: 'API keys never leave your Mac. Screenshots stay in your workspace until you submit.' },
+];
+
+function AnnotationPreview() {
+  return (
+    <div className="hv2-preview" aria-label="Annotation capture preview">
+      <div className="hv2-preview-browser">
+        <div className="hv2-preview-dots">
+          <span style={{ background: '#FF5F57' }} />
+          <span style={{ background: '#FFBD2E' }} />
+          <span style={{ background: '#28C840' }} />
+        </div>
+        <div className="hv2-preview-urlbar" />
+      </div>
+      <div className="hv2-preview-screen">
+        <div className="hv2-preview-nav">
+          <div className="hv2-preview-nav-logo" />
+          <div className="hv2-preview-nav-links">
+            <div className="hv2-preview-nav-link" />
+            <div className="hv2-preview-nav-link" />
+          </div>
+          <div className="hv2-preview-nav-cta" />
+        </div>
+        <div className="hv2-preview-body">
+          <div className="hv2-preview-card">
+            <div className="hv2-preview-line" style={{ width: '75%', height: 9 }} />
+            <div className="hv2-preview-line" style={{ width: '55%', height: 7, marginTop: 8 }} />
+            <div className="hv2-preview-line" style={{ width: '40%', height: 7, marginTop: 6 }} />
+          </div>
+          <div className="hv2-preview-card hv2-preview-card--annotated">
+            <div className="hv2-preview-line" style={{ width: '80%', height: 9 }} />
+            <div className="hv2-preview-line" style={{ width: '60%', height: 7, marginTop: 8 }} />
+            <div className="hv2-preview-annotation-box">
+              <span className="hv2-preview-annotation-pin">1</span>
+            </div>
+          </div>
+        </div>
+        <div className="hv2-preview-footer">
+          <div className="hv2-preview-footer-status">
+            <span className="hv2-preview-dot ember" />
+            Annotation added
+          </div>
+          <div className="hv2-preview-footer-actions">
+            <span className="hv2-preview-ghost-btn">Discard</span>
+            <span className="hv2-preview-send-btn">Send to AI →</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function HomePage() {
   return (
-    <div className="marketing-shell">
-      <section className="home-hero">
-        <div className="home-hero-copy">
-          <div className="home-eyebrow">Capture locally. Review together.</div>
-          <h1 className="phase2-title home-title">From screenshot to shippable prompt.</h1>
-          <p className="phase2-lede home-lede">
-            Dbugr.ai helps app builders capture visual feedback, annotate product changes, and
-            turn approved comments into clean instructions for Claude, Codex, and Cursor through MCP.
-          </p>
-          <HomeSignupStrip />
-          <p className="home-note">
-            Create a private workspace for your team, or share publicly to get feedback from the builder community.
-          </p>
+    <div className="hv2">
+
+      {/* ── Hero ───────────────────────────────────── */}
+      <section className="hv2-hero">
+        <div className="hv2-hero-inner">
+          <div className="hv2-hero-copy">
+            <div className="hv2-eyebrow">
+              <span className="hv2-eyebrow-dot" />
+              Now with Claude, Codex &amp; Cursor
+            </div>
+            <h1 className="hv2-title">
+              Capture feedback.<br />Ship it to{' '}
+              <span className="hv2-title-accent">AI.</span>
+            </h1>
+            <p className="hv2-lede">
+              Annotate any screen on your Mac and send a structured, repo-aware
+              feedback session to Claude Code, Codex, or Cursor — in under 30 seconds.
+            </p>
+            <HomeSignupStrip />
+            <div className="hv2-trust">
+              <span className="hv2-trust-item">
+                <span className="hv2-trust-dot green" />
+                Free to start
+              </span>
+              <span className="hv2-trust-sep">·</span>
+              <span>macOS 13+</span>
+              <span className="hv2-trust-sep">·</span>
+              <span>No credit card</span>
+            </div>
+          </div>
+          <AnnotationPreview />
         </div>
-        <div className="product-card product-story" aria-label="Annotated screenshot, review board, and AI handoff preview">
-          <div className="annotated-screen">
-            <div className="screen-toolbar">
-              <span />
-              <span />
-              <span />
-            </div>
-            <div className="screen-hero-block">
-              <span className="annotation-pin pin-primary">1</span>
-              <div className="screen-copy-line wide" />
-              <div className="screen-copy-line" />
-              <button className="screen-cta">Get started</button>
-            </div>
-            <div className="screen-grid">
-              <div>
-                <span className="annotation-pin pin-secondary">2</span>
-              </div>
-              <div>
-                <span className="annotation-pin pin-tertiary">3</span>
-              </div>
-            </div>
-          </div>
+      </section>
 
-          <div className="session-board-preview">
-            <div className="phase2-kicker">Session board</div>
-            <h2>Landing page cleanup</h2>
-            <div className="feedback-item accepted">
-              <span className="feedback-status">Accepted</span>
-              <p>Make the CTA read “Get started with Google.”</p>
-            </div>
-            <div className="feedback-item review">
-              <span className="feedback-status">Needs review</span>
-              <p>Tighten the hero copy around MCP handoff.</p>
-            </div>
-            <div className="feedback-item ready">
-              <span className="feedback-status">Ready for AI</span>
-              <p>Export approved comments as implementation steps.</p>
-            </div>
-          </div>
-
-          <div className="handoff-bar">
-            <div>
-              <span className="phase2-kicker">Approved prompt</span>
-              <p>3 changes ready for Claude, Codex, or Cursor.</p>
-            </div>
-            <button type="button">Send to Cursor</button>
+      {/* ── How it works ──────────────────────────── */}
+      <section className="hv2-flow">
+        <div className="hv2-section-inner">
+          <div className="hv2-section-label">How it works</div>
+          <h2 className="hv2-section-title">From screen to agent in 6 steps.</h2>
+          <div className="hv2-flow-grid">
+            <div className="hv2-flow-connector" aria-hidden="true" />
+            {FLOW_STEPS.map((s) => (
+              <div key={s.n} className={`hv2-flow-step hv2-flow-step--${s.phase}`}>
+                <div className="hv2-flow-num">{s.n}</div>
+                <div className="hv2-flow-step-title">{s.title}</div>
+                <p className="hv2-flow-step-body">{s.body}</p>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      <section className="home-steps">
-        <div className="phase2-card home-step">
-          <div className="step-number">01</div>
-          <h2>Annotate visually</h2>
-          <p className="phase2-muted">Point, comment, and explain product issues directly on screenshots.</p>
-        </div>
-        <div className="phase2-card home-step">
-          <div className="step-number">02</div>
-          <h2>Decide together</h2>
-          <p className="phase2-muted">Share feedback privately with your team or publicly with the builder community.</p>
-        </div>
-        <div className="phase2-card home-step">
-          <div className="step-number">03</div>
-          <h2>Send to your AI stack</h2>
-          <p className="phase2-muted">Export clear prompts through MCP to Claude, Codex, or Cursor.</p>
+      {/* ── AI Targets ────────────────────────────── */}
+      <section className="hv2-targets">
+        <div className="hv2-targets-inner">
+          <div className="hv2-targets-header">
+            <div className="hv2-section-label">AI targets</div>
+            <h2 className="hv2-section-title large">
+              Connect once.<br />Route anywhere.
+            </h2>
+            <p className="hv2-targets-desc">
+              Your API keys stay on your Mac. Dbugr opens the right CLI in Terminal
+              and hands off the annotated session. No cloud middleman.
+            </p>
+          </div>
+          <div className="hv2-targets-list">
+            {AI_TARGETS.map((t) => (
+              <div key={t.name} className="hv2-target-row">
+                <div className="hv2-target-icon">
+                  <img src={t.logoSrc} alt="" width={20} height={20} />
+                </div>
+                <div className="hv2-target-info">
+                  <div className="hv2-target-header-row">
+                    <span className="hv2-target-name">{t.name}</span>
+                    <span className={`hv2-target-status hv2-target-status--${t.statusPhase}`}>
+                      <span className="hv2-target-status-dot" />
+                      {t.status}
+                    </span>
+                  </div>
+                  <p className="hv2-target-desc">{t.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
-      <JourneyInfographic className="home-journey" />
+      {/* ── Features ──────────────────────────────── */}
+      <section className="hv2-features">
+        <div className="hv2-section-inner">
+          <div className="hv2-features-header">
+            <div className="hv2-section-label">Features</div>
+            <h2 className="hv2-section-title">Built for fast-moving teams.</h2>
+          </div>
+          <div className="hv2-features-grid">
+            {FEATURES.map((f) => (
+              <div key={f.title} className="hv2-feature-cell">
+                <div className="hv2-feature-emoji" aria-hidden="true">{f.emoji}</div>
+                <div className="hv2-feature-title">{f.title}</div>
+                <p className="hv2-feature-body">{f.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── CTA Banner ────────────────────────────── */}
+      <section className="hv2-cta">
+        <div className="hv2-cta-inner">
+          <h2 className="hv2-cta-title">Ship feedback faster.</h2>
+          <p className="hv2-cta-body">
+            Download the Mac app, connect your AI in under a minute, and start capturing.
+          </p>
+          <div className="hv2-cta-buttons">
+            <a className="hv2-cta-btn-primary" href="/onboarding?flow=sign-up&auth=google">
+              <img src="/brand/google-g.svg" alt="" width={18} height={18} aria-hidden="true" />
+              Continue with Google
+            </a>
+            <a className="hv2-cta-btn-secondary" href="#">
+              Download Mac app
+            </a>
+          </div>
+          <p className="hv2-cta-note">Free · macOS 13+ · No credit card needed</p>
+        </div>
+      </section>
+
+      {/* ── Footer ────────────────────────────────── */}
+      <footer className="hv2-footer">
+        <div className="hv2-footer-brand">
+          <img src="/brand/icon-32.png" alt="Dbugr" width={20} height={20} className="hv2-footer-icon" />
+          <span className="hv2-footer-name">Dbugr</span>
+          <span className="hv2-footer-ai">· ai</span>
+        </div>
+        <nav className="hv2-footer-links" aria-label="Footer navigation">
+          {['Privacy', 'Terms', 'Docs', 'GitHub', 'Status'].map((l) => (
+            <a key={l} className="hv2-footer-link">{l}</a>
+          ))}
+        </nav>
+      </footer>
+
     </div>
   );
 }
