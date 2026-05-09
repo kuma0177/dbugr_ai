@@ -37,7 +37,7 @@
 }
 
 :root {
-  --color-eggshell: #fdfcfc;
+  --color-eggshell: #fafaf9;
   --color-powder: #f5f3f1;
   --color-chalk: #e5e5e5;
   --color-fog: #b1b0b0;
@@ -68,7 +68,9 @@
 
   --success: #1f7a3a;
   --warning: #b88400;
-  --danger: var(--color-ember);
+  --danger: #e02020;
+  --danger-bg: rgba(224,32,32,0.08);
+  --danger-border: rgba(224,32,32,0.2);
   --purple: var(--color-obsidian);
   --green: var(--success);
 
@@ -322,9 +324,10 @@ input, textarea {
 }
 
 .mini-action-danger {
-  background: #fdf1ef;
-  color: #ff2b3a;
-  box-shadow: inset 0 0 0 1px rgba(255, 43, 58, 0.14);
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: inset 0 0 0 1px transparent;
+  transition: background 0.12s, box-shadow 0.12s, color 0.12s;
 }
 
 .mini-action:hover:not(:disabled) {
@@ -332,7 +335,9 @@ input, textarea {
 }
 
 .mini-action-danger:hover:not(:disabled) {
-  background: #fbe7e4;
+  background: var(--danger-bg);
+  color: var(--danger);
+  box-shadow: inset 0 0 0 1px var(--danger-border);
 }
 
 .wide-btn {
@@ -824,29 +829,46 @@ kbd {
   border-radius: 32px;
   border: none;
   background: transparent;
-  color: var(--muted-strong);
+  color: var(--text-muted);
   font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
   box-shadow: inset 0 0 0 1px transparent;
+  cursor: pointer;
 }
 
 .journey-tab.active {
   background: var(--blue-soft);
   color: var(--blue);
-  box-shadow: inset 0 0 0 1px rgba(0, 144, 255, 0.14);
+  box-shadow: inset 0 0 0 1px var(--blue-ring);
+  font-weight: 600;
+}
+
+.journey-tab.completed {
+  color: var(--text-secondary);
 }
 
 .journey-step {
   width: 22px;
   height: 22px;
   border-radius: 999px;
-  background: var(--blue-soft);
+  background: rgba(0,0,0,0.08);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 11px;
   font-weight: 600;
+  flex-shrink: 0;
+}
+
+.journey-tab.active .journey-step {
+  background: var(--blue);
+  color: #fff;
+}
+
+.journey-tab.completed .journey-step {
+  background: var(--success);
+  color: #fff;
 }
 
 .app-body {
@@ -912,18 +934,21 @@ kbd {
 
 .session-item-delete {
   flex-shrink: 0;
-  border: 1px solid rgba(255, 0, 0, 0.25);
-  background: rgba(255, 0, 0, 0.06);
-  color: #f00;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
   border-radius: 999px;
   padding: 5px 8px;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 
 .session-item-delete:hover {
-  background: rgba(255, 0, 0, 0.12);
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
 }
 
 .view-all-link {
@@ -1388,19 +1413,22 @@ kbd {
 
 .capture-card-delete {
   align-self: flex-start;
-  border: 1px solid rgba(255, 0, 0, 0.25);
-  background: rgba(255, 0, 0, 0.06);
-  color: #f00;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
   border-radius: 999px;
   padding: 6px 10px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.01em;
   cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 
 .capture-card-delete:hover {
-  background: rgba(255, 0, 0, 0.12);
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
 }
 
 .capture-payload {
@@ -1550,18 +1578,21 @@ kbd {
 
 .annotation-row-delete {
   justify-self: end;
-  border: 1px solid rgba(255, 0, 0, 0.25);
-  background: rgba(255, 0, 0, 0.06);
-  color: #f00;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
   border-radius: 999px;
   padding: 5px 9px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 
 .annotation-row-delete:hover {
-  background: rgba(255, 0, 0, 0.12);
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger);
 }
 
 .capture-payload-note {
