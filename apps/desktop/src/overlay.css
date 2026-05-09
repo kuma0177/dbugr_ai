@@ -1351,7 +1351,7 @@ h3,
 
 #step-picker.step-card-hud {
   width: min(420px, calc(100vw - 32px));
-  padding: 22px 26px 20px;
+  padding: 22px 28px 22px;
   border-radius: 14px;
   overflow: visible;
 }
@@ -1362,30 +1362,76 @@ h3,
 }
 
 #step-picker .picker-hint {
-  margin: 0 0 24px;
+  margin: 0 0 16px;
   font-size: 13px;
   line-height: 1.35;
 }
 
 #step-picker .picker-list {
   max-height: min(220px, 38vh);
-  min-height: 72px;
-  margin: 0 0 22px;
+  min-height: 54px;
+  margin: 0 0 16px;
   padding-right: 0;
 }
 
 #step-picker .picker-loading,
 #step-picker .picker-empty {
   display: grid;
-  place-items: center;
-  min-height: 72px;
+  align-items: center;
+  justify-items: start;
+  min-height: 54px;
   padding: 0;
   font-size: 13px;
   line-height: 1.35;
+  text-align: left;
 }
 
 #step-picker .picker-actions {
   gap: 18px;
+  align-items: center;
+}
+
+#step-picker .picker-session-item {
+  min-height: 54px;
+  padding: 12px 14px;
+  border: 1px solid rgba(18, 18, 18, 0.08);
+  border-radius: 14px;
+  background: #f8f7f5;
+  box-shadow: 0 1px 0 rgba(18, 18, 18, 0.04), 0 8px 22px rgba(18, 18, 18, 0.04);
+}
+
+#step-picker .picker-session-title {
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+#step-picker .picker-session-sub,
+#step-picker .picker-session-time {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+#step-picker .picker-session-item:hover {
+  background: #ffffff;
+  border-color: rgba(6, 99, 251, 0.28);
+  box-shadow: 0 0 0 3px rgba(6, 99, 251, 0.08), 0 10px 24px rgba(18, 18, 18, 0.08);
+}
+
+#step-picker .picker-session-chevron {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(6, 99, 251, 0.1);
+  color: var(--blue);
+  font-size: 16px;
+}
+
+#step-picker .picker-session-item:hover .picker-session-chevron {
+  background: var(--blue);
+  color: #ffffff;
 }
 
 #step-picker .picker-cancel-btn,
