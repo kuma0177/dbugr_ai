@@ -77,6 +77,7 @@ interface PersistedState {
   authState: AuthState;
   providerConnections: Record<Target, ProviderConnectionState>;
   target: Target;
+  deletedSessionIds?: string[];
 }
 
 interface DesktopLinkProfile {
@@ -107,6 +108,7 @@ const LOADING_INDICATOR_DELAY_MS = 500;
 
 let appMode: AppMode = 'welcome';
 let sessions: Session[] = [];
+let deletedSessionIds = new Set<string>();
 let activeSessionId: string | null = null;
 let activeCaptureId: string | null = null;
 let activeAnnotationId: string | null = null;
@@ -469,8 +471,10 @@ function deleteCaptureFromSession(session: Session, captureId: string) {
 
 function deleteSession(sessionId: string) {
   const index = sessions.findIndex((session) => session.id === sessionId);
-  if (index === -1) return;
-  sessions.splice(index, 1);
+  deletedSessionIds.add(sessionId);
+  if (index !== -1) {
+    sessions.splice(index, 1);
+  }
   if (activeSessionId === sessionId) {
     const nextSession = sessions[index] ?? sessions[index - 1] ?? sessions[0] ?? null;
     activeSessionId = nextSession?.id ?? null;
@@ -555,6 +559,7 @@ function persistAppState() {
     authState,
     providerConnections,
     target,
+    deletedSessionIds: Array.from(deletedSessionIds),
   };
   try {
     localStorage.setItem(APP_STATE_KEY, JSON.stringify(payload));
@@ -595,8 +600,9 @@ function hydrateAppState() {
     const raw = localStorage.getItem(APP_STATE_KEY);
     if (!raw) return;
     const parsed = JSON.parse(raw) as Partial<PersistedState>;
+    deletedSessionIds = new Set(Array.isArray(parsed.deletedSessionIds) ? parsed.deletedSessionIds.filter((id): id is string => typeof id === 'string') : []);
     if (Array.isArray(parsed.sessions)) {
-      sessions = hydratePersistedSessions(parsed.sessions);
+      sessions = hydratePersistedSessions(parsed.sessions).filter((session) => !deletedSessionIds.has(session.id));
     }
     if (parsed.authState) {
       authState = {
@@ -1443,9 +1449,21 @@ function renderSessionList() {
           selectSession();
         }
       });
-      row.querySelector<HTMLButtonElement>('[data-delete-session]')?.addEventListener('click', (event) => {
+      const deleteButton = row.querySelector<HTMLButtonElement>('[data-delete-session]');
+      deleteButton?.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
         event.stopPropagation();
+      });
+      deleteButton?.addEventListener('keydown', (event) => {
+        event.stopPropagation();
+      });
+      deleteButton?.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        logUi('workspace_sidebar_delete_session_click', { sessionId: session.id });
         deleteSession(session.id);
+        renderSessionList();
         renderSession();
       });
       list.appendChild(row);
@@ -2537,6 +2555,9 @@ async function loadSessionsFromApi(options: { force?: boolean } = {}) {
     };
     const byId = new Map(sessions.map((session) => [session.id, session]));
     for (const remote of json.data ?? []) {
+      if (deletedSessionIds.has(remote.id)) {
+        continue;
+      }
       const existing = byId.get(remote.id);
       if (existing) {
         existing.title = remote.title || existing.title;
@@ -3103,6 +3124,56 @@ async function listenForAnnotations() {
     const targetSession = targetSessionId
       ? sessions.find((session) => session.id === targetSessionId)
       : null;
+    const payloadTitle = event.payload.newSessionName?.trim() || '';
+    const payloadAbout = event.payload.newSessionAbout?.trim() || '';
+    const payloadGithubRepo = normalizeGithubRepoInput(event.payload.githubRepo);
+    const payloadProjectFolder = normalizeProjectFolderInput(event.payload.localFolder);
+    if ((event.payload.annotations ?? []).length === 0) {
+      if (!targetSessionId || !payloadTitle) return;
+      const existing = sessions.find((session) => session.id === targetSessionId);
+      if (existing) {
+        existing.title = payloadTitle;
+        existing.about = payloadAbout || existing.about;
+        existing.projectFolder = payloadProjectFolder ?? existing.projectFolder ?? null;
+        existing.githubRepo = payloadGithubRepo || existing.githubRepo || '';
+        activeSessionId = existing.id;
+      } else {
+        const session: Session = {
+          id: targetSessionId,
+          title: payloadTitle,
+          createdAt: new Date().toISOString(),
+          status: 'draft',
+          captures: [],
+          about: payloadAbout,
+          sessionNote: '',
+          projectFolder: payloadProjectFolder,
+          githubRepo: payloadGithubRepo,
+          submissionFlow: 'direct',
+          contributions: [],
+          collaborationReady: false,
+          lastTarget: target,
+          lastExplicitSaveAt: null,
+          webSessionId: null,
+          webSyncedAt: null,
+          webSyncStatus: 'idle',
+          webSyncError: null,
+        };
+        sessions.unshift(session);
+        activeSessionId = session.id;
+      }
+      sessions = sortedSessions();
+      persistAppState();
+      renderSessionList();
+      renderSession();
+      logUi('workspace_session_prepared_from_overlay', {
+        sessionId: targetSessionId,
+        title: payloadTitle,
+        hasAbout: Boolean(payloadAbout),
+        hasLocalFolder: Boolean(payloadProjectFolder),
+        hasGithubRepo: Boolean(payloadGithubRepo),
+      });
+      return;
+    }
     const appendPlan = planAnnotationAppend(
       targetSession ? totalAnnotations(targetSession) : 0,
       event.payload.annotations?.length ?? 0,
@@ -3113,9 +3184,6 @@ async function listenForAnnotations() {
     const priorAppMode = appMode;
     const priorWorkspaceSection = workspaceSection;
     const priorActiveSessionId = activeSessionId;
-    const payloadTitle = event.payload.newSessionName?.trim() || '';
-    const payloadAbout = event.payload.newSessionAbout?.trim() || '';
-    const payloadGithubRepo = normalizeGithubRepoInput(event.payload.githubRepo);
     const rawShot = event.payload.screenshotUrl?.trim();
 
     const rawShotKind = classifyScreenshotRef(rawShot);
@@ -3194,7 +3262,7 @@ async function listenForAnnotations() {
       const session = targetSession;
       session.captures.unshift(capture);
       session.about = payloadAbout || (session.about ?? '');
-      session.projectFolder = normalizeProjectFolderInput(event.payload.localFolder) ?? session.projectFolder ?? null;
+      session.projectFolder = payloadProjectFolder ?? session.projectFolder ?? null;
       session.githubRepo = payloadGithubRepo || (session.githubRepo ?? '');
       savedSession = session;
       activeSessionId = session.id;
@@ -3220,7 +3288,7 @@ async function listenForAnnotations() {
         captures: [capture],
         about: payloadAbout,
         sessionNote: '',
-        projectFolder: normalizeProjectFolderInput(event.payload.localFolder),
+        projectFolder: payloadProjectFolder,
         githubRepo: payloadGithubRepo,
         submissionFlow: 'direct',
         contributions: [],

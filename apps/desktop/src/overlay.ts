@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { requestScreenRecordingPermission } from 'tauri-plugin-macos-permissions-api';
+import { uid } from './core';
 import './overlay.css';
 
 declare const __DEBUGR_BUILD_STAMP__: string;
@@ -115,6 +116,7 @@ let newSessionName = '';
 let newSessionAbout = '';
 let localFolder: string | null = null;
 let githubRepo = '';
+let preparedNewSessionId: string | null = null;
 let currentScreenshotDataUrl = '';
 let pickerSessions: PickerSession[] = [];
 let lastSavedSessionTitle = '';
@@ -177,8 +179,7 @@ root.innerHTML = `
 
     <div class="hud-popover" id="hud-picker" style="display:none;">
       <div class="step-card step-card-hud" id="step-picker">
-        <div class="step-card-title">Where should this go?</div>
-        <div class="step-card-sub">Choose an existing session or start a new one.</div>
+        <div class="step-card-title step-card-title-picker">Add to a new or existing session.</div>
         <div class="picker-hint">Click a session row to continue. Scroll for more.</div>
         <div class="picker-list" id="picker-list">
           <div class="picker-loading">${sandclockMarkup('Loading sessions…')}</div>
@@ -1207,6 +1208,7 @@ function relativeTime(iso: string) {
 document.getElementById('picker-new')!.addEventListener('click', e => {
   e.stopPropagation();
   targetSessionId = null;
+  preparedNewSessionId = null;
   newSessionName = '';
   newSessionAbout = '';
   localFolder = null;
@@ -1240,6 +1242,7 @@ sessionModeAppendBtn.addEventListener('click', e => {
 sessionModeNewBtn.addEventListener('click', e => {
   e.stopPropagation();
   targetSessionId = null;
+  preparedNewSessionId = null;
   setupNameEl.value = newSessionName;
   setupAboutEl.value = newSessionAbout;
   setupGithubEl.value = githubRepo;
@@ -1320,7 +1323,7 @@ document.getElementById('capture-back')!.addEventListener('click', e => {
 
 document.getElementById('setup-start')!.addEventListener('click', e => {
   e.stopPropagation();
-  void enterAnnotating();
+  void prepareNewSessionAndEnterAnnotating();
 });
 
 document.getElementById('saved-close')!.addEventListener('click', e => {
@@ -1364,6 +1367,60 @@ function showSavedStep() {
   savedStepSubEl.innerHTML = `<strong>${escapeHtml(lastSavedSessionTitle || 'Current session')}</strong> · added ${lastSavedAnnotationCount} annotation${lastSavedAnnotationCount === 1 ? '' : 's'}.`;
   savedStepHintEl.innerHTML = `Nothing was sent yet. Open the current session board when you are ready, then go to <strong>${escapeHtml(nextLabel)}</strong>.`;
   showStep('saved');
+}
+
+async function prepareNewSessionAndEnterAnnotating() {
+  updateSetupState();
+  if (!newSessionName || !newSessionAbout) {
+    setToast('Add a session name and context before continuing.');
+    setupNameEl.focus();
+    return;
+  }
+  if (!targetSessionId) {
+    preparedNewSessionId = preparedNewSessionId ?? uid('session');
+    targetSessionId = preparedNewSessionId;
+    const prevLabel = setupStartBtn.innerHTML;
+    setupStartBtn.disabled = true;
+    setupStartBtn.innerHTML = sandclockMarkup('Saving…');
+    try {
+      await invoke('finish_annotations', {
+        payload: {
+          annotations: [],
+          targetSessionId,
+          newSessionName,
+          newSessionAbout,
+          localFolder,
+          githubRepo,
+          screenshotUrl: '',
+        },
+      });
+      pickerSessions = [
+        {
+          id: targetSessionId,
+          title: newSessionName,
+          createdAt: new Date().toISOString(),
+          annotationCount: 0,
+        },
+        ...pickerSessions.filter((session) => session.id !== targetSessionId),
+      ];
+      try {
+        localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(pickerSessions));
+      } catch {
+        // Ignore cache write failures.
+      }
+      setToast(`Created "${newSessionName}". Draw a region to add the first annotation.`);
+    } catch (err) {
+      preparedNewSessionId = null;
+      targetSessionId = null;
+      setupStartBtn.disabled = false;
+      setupStartBtn.innerHTML = prevLabel;
+      setToast(`Could not save session: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    setupStartBtn.innerHTML = prevLabel;
+    updateSetupState();
+  }
+  enterAnnotating();
 }
 
 // If the user switches apps before placing any annotations, step out of the

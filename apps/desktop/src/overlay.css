@@ -67,10 +67,13 @@
   --shadow: var(--shadow-soft);
   --shadow-lg: var(--shadow-float);
   --dock-offset: 12px;
-  --font-sohne-var: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", sans-serif;
-  --font-display: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --display: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
   --font-label: Inter, ui-sans-serif, system-ui, sans-serif;
-  font-family: var(--font-sohne-var);
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-sohne-var: var(--font);
+  --font-display: var(--display);
+  font-family: var(--font);
   font-feature-settings: "ss01" on, "tnum" on;
   -webkit-font-smoothing: antialiased;
 }
@@ -551,12 +554,39 @@ html, body {
   top: auto;
   left: auto;
   transform: none;
-  width: min(360px, calc(100vw - 28px));
+  width: min(410px, calc(100vw - 32px));
+  container-type: inline-size;
   pointer-events: auto;
 }
 
 .step-card-setup {
-  width: min(420px, calc(100vw - 28px));
+  width: min(390px, calc(100vw - 32px));
+  max-height: min(660px, calc(100vh - var(--dock-offset) - 150px));
+  padding: 22px 24px 20px;
+  border-radius: 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.step-card-setup::-webkit-scrollbar {
+  width: 8px;
+}
+
+.step-card-setup::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 999px;
+}
+
+#step-setup .step-card-title {
+  font-size: clamp(21px, 6.2cqw, 24px);
+  line-height: 1.05;
+}
+
+#step-setup .step-card-sub {
+  margin-bottom: 18px;
+  font-size: 14px;
+  line-height: 1.38;
 }
 .step-card-title {
   font-family: var(--font-display);
@@ -606,9 +636,10 @@ html, body {
   border-radius: 999px;
 }
 .picker-hint {
-  margin-top: -8px;
-  margin-bottom: 10px;
-  font-size: 11.5px;
+  margin-top: 0;
+  margin-bottom: 18px;
+  font-size: 13px;
+  line-height: 1.35;
   color: var(--muted);
 }
 .picker-session-item {
@@ -689,7 +720,7 @@ html, body {
   }
 }
 .picker-actions {
-  display: flex; gap: 8px; justify-content: space-between; align-items: center;
+  display: flex; gap: 14px; justify-content: space-between; align-items: center;
 }
 .saved-actions {
   display: grid;
@@ -740,10 +771,16 @@ html, body {
   font-weight: 500; text-transform: none; letter-spacing: 0;
 }
 .setup-input {
-  width: 100%; height: 36px; padding: 0 12px;
-  border: 1px solid var(--border); border-radius: 8px;
-  background: #fbfaf9; font-size: 14px; color: var(--text);
-  outline: none; transition: border 0.15s ease, box-shadow 0.15s ease;
+  width: 100%;
+  height: 46px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fbfaf9;
+  font-size: 15px;
+  color: var(--text);
+  outline: none;
+  transition: border 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 .setup-input:focus {
   border-color: var(--blue);
@@ -751,7 +788,7 @@ html, body {
   background: #fff;
 }
 .setup-textarea {
-  width: 100%; min-height: 84px; padding: 10px 12px;
+  width: 100%; min-height: 88px; padding: 10px 12px;
   border: 1px solid var(--border); border-radius: 8px;
   background: #fbfaf9; font-size: 14px; color: var(--text);
   outline: none; transition: border 0.15s ease, box-shadow 0.15s ease;
@@ -782,11 +819,14 @@ html, body {
   color: var(--muted);
 }
 .setup-start-btn {
-  margin-top: 20px; width: 100%; padding: 11px;
+  position: sticky;
+  bottom: -1px;
+  z-index: 2;
+  margin-top: 18px; width: 100%; padding: 12px;
   border: none; border-radius: 32px;
   background: var(--blue); color: #fff;
   font-size: 14px; font-weight: 600; cursor: pointer;
-  box-shadow: none;
+  box-shadow: 0 -10px 24px rgba(255, 255, 255, 0.96), 0 8px 20px rgba(6, 99, 251, 0.2);
   transition: background 0.15s ease;
 }
 .setup-start-btn:hover { background: var(--blue-hover); }
@@ -1268,4 +1308,146 @@ select:focus {
 
 body [class] {
   letter-spacing: 0;
+}
+
+/* Final typography pass: mirror web tokens; local Inter 300 is our safe Waldenburg fallback. */
+body,
+button,
+input,
+textarea,
+select {
+  font-family: var(--font);
+  font-feature-settings: "ss01" on, "tnum" on;
+}
+
+h1,
+h2,
+h3,
+.step-card-title,
+.picker-session-title,
+.note-panel-title strong,
+.session-title-input {
+  font-family: var(--display);
+  font-weight: 300;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+.step-card-title {
+  font-size: 24px;
+  line-height: 1.05;
+}
+
+.step-card-title-picker {
+  width: 100%;
+  max-width: none;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  font-size: clamp(17px, 4.35cqw, 18px) !important;
+  font-weight: 700;
+  line-height: 1.08;
+  white-space: nowrap;
+}
+
+#step-picker.step-card-hud {
+  width: min(420px, calc(100vw - 32px));
+  padding: 22px 26px 20px;
+  border-radius: 14px;
+  overflow: visible;
+}
+
+#step-picker .step-card-title-picker {
+  margin: 0 0 8px;
+  letter-spacing: 0;
+}
+
+#step-picker .picker-hint {
+  margin: 0 0 24px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+#step-picker .picker-list {
+  max-height: min(220px, 38vh);
+  min-height: 72px;
+  margin: 0 0 22px;
+  padding-right: 0;
+}
+
+#step-picker .picker-loading,
+#step-picker .picker-empty {
+  display: grid;
+  place-items: center;
+  min-height: 72px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+#step-picker .picker-actions {
+  gap: 18px;
+}
+
+#step-picker .picker-cancel-btn,
+#step-picker .picker-new-btn {
+  min-height: 44px;
+  padding-inline: 22px;
+  font-size: 14px;
+}
+
+.session-title-input,
+.session-title-input:focus {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
+.debug-log,
+.coord-chip {
+  font-family: var(--font-mono);
+}
+
+/* Final toolbar contrast pass. */
+.toolbar {
+  background: linear-gradient(180deg, #4b4f56 0%, #2f3338 100%);
+  color: #fdfcfc;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(255, 255, 255, 0.12) inset;
+}
+
+.toolbar .tool-btn {
+  color: rgba(253, 252, 252, 0.86);
+}
+
+.toolbar .tool-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.toolbar .tool-btn.save-btn {
+  min-width: 112px;
+  background: var(--blue);
+  color: #ffffff;
+  box-shadow: 0 8px 22px rgba(6, 99, 251, 0.32), inset 0 0 0 0.5px rgba(255, 255, 255, 0.24);
+}
+
+.toolbar .tool-btn.save-btn:hover {
+  background: var(--blue-hover);
+}
+
+.toolbar .tool-btn.cancel {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.toolbar .tool-btn.cancel:hover {
+  background: rgba(255, 71, 4, 0.14);
+  color: var(--danger);
+}
+
+.toolbar #tool-region.active {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  box-shadow: none;
 }
