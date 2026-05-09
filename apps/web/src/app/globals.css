@@ -151,6 +151,21 @@ a:hover { color: var(--blue-hover); }
   display: block;
   image-rendering: auto;
 }
+.nav-center {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+.nav-center-link {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: -0.1px;
+  transition: color 0.15s;
+}
+.nav-center-link:hover { color: var(--text); }
+
 .nav-links { display: flex; align-items: center; gap: 12px; }
 .nav-signed-in {
   display: inline-flex;
@@ -1738,15 +1753,15 @@ a:hover { color: var(--blue-hover); }
 .review-shell {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
-  min-height: calc(100vh - 58px);
+  min-height: calc(100vh - 124px);
   margin: -48px -52px -72px;
   background: var(--db-bg);
 }
 
 .review-sidebar {
   position: sticky;
-  top: 58px;
-  height: calc(100vh - 58px);
+  top: 124px;
+  height: calc(100vh - 124px);
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -3560,6 +3575,7 @@ body [class] {
 .hv2-hero-copy {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
 }
 
 .hv2-eyebrow {
@@ -4332,6 +4348,10 @@ body [class] {
 /* ── Section inner padding consistent ─────────────────────── */
 .hv2-flow .hv2-section-inner,
 .hv2-features .hv2-section-inner { max-width: 1200px; }
+
+/* ── Hide nav center links on app pages, show only on homepage ── */
+.nav-center { display: none; }
+body:has(.hv2) .nav-center { display: flex; }
 
 /* ── Nav bar size reduction on homepage ───────────────────── */
 body:has(.hv2) .nav {

@@ -77,6 +77,11 @@ export function NavShell() {
         <img src="/brand/icon-nav-1024.png" alt="" className="nav-brand-icon" />
         <span>Dbugr.ai</span>
       </Link>
+      <div className="nav-center">
+        {(['Docs', 'Pricing', 'Blog', 'Changelog'] as const).map((l) => (
+          <a key={l} className="nav-center-link">{l}</a>
+        ))}
+      </div>
       <div className="nav-links">
         {signedInEmail ? (
           <>
@@ -89,11 +94,8 @@ export function NavShell() {
           </>
         ) : (
           <>
-            <Link className="nav-auth-button nav-auth-button-secondary" href="/onboarding?flow=sign-in&auth=email">Sign in with email</Link>
-            <Link className="nav-auth-button nav-auth-button-google" href="/onboarding?flow=sign-in&auth=google">
-              <img src="/brand/google-g.svg" alt="" className="nav-google-mark" aria-hidden="true" />
-              <span>Sign in with Google</span>
-            </Link>
+            <Link className="nav-auth-button nav-auth-button-secondary" href="/onboarding?flow=sign-in">Sign in</Link>
+            <Link className="nav-auth-button nav-auth-button-primary" href="/onboarding?flow=sign-up">Get started free</Link>
           </>
         )}
       </div>
