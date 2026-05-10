@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { HomeSignupStrip } from './home-signup-strip';
 
 export const metadata: Metadata = {
@@ -246,9 +247,16 @@ export default function HomePage() {
           <span className="hv2-footer-ai">· ai</span>
         </div>
         <nav className="hv2-footer-links" aria-label="Footer navigation">
-          {['Privacy', 'Terms', 'Docs', 'GitHub', 'Status'].map((l) => (
-            <a key={l} className="hv2-footer-link">{l}</a>
-          ))}
+          <Link className="hv2-footer-link" href="/privacy">Privacy</Link>
+          <Link className="hv2-footer-link" href="/terms">Terms</Link>
+          <a
+            className="hv2-footer-link"
+            href="https://github.com/kuma0177/debgr_ai"
+            rel="noreferrer"
+            target="_blank"
+          >
+            GitHub
+          </a>
         </nav>
       </footer>
 

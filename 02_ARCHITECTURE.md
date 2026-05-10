@@ -1,118 +1,226 @@
 # Architecture
 
-## Apps
+Dbugr is a local-first macOS capture system with a web review surface and agent handoff layer. The core path is:
 
-### 1. Desktop App
+```text
+capture screen context
+-> annotate what matters
+-> attach repo/workspace context
+-> persist a session
+-> review or curate it
+-> hand structured context to an AI coding agent
+```
+
+## System Overview
+
+```text
++-------------------+
+| macOS Desktop App |
+| apps/desktop      |
++---------+---------+
+          |
+          | creates sessions, captures, annotations
+          v
++-------------------+       +-------------------+
+| API Server        | ----> | SQLite / Prisma   |
+| apps/api          |       | packages/db       |
++---------+---------+       +-------------------+
+          |
+          | queues or requests processing
+          v
++-------------------+
+| Worker            |
+| apps/worker       |
++---------+---------+
+          |
+          | summaries, task briefs, metadata
+          v
++-------------------+       +-------------------+
+| Web Dashboard     | <---> | MCP Servers       |
+| apps/web          |       | apps/mcp-server   |
++-------------------+       | apps/desktop-mcp  |
+                            +-------------------+
+```
+
+## Applications
+
+### Desktop App
 
 Path: `apps/desktop`
 
-Use Tauri + TypeScript.
+Stack: Tauri 2, Vite, TypeScript, Rust.
 
 Responsibilities:
 
-- Serve as the primary DMG-based product entry point on macOS
-- Let the user open a browser page or point to any other app or screen experience
-- Start native screen capture with the macOS picker
-- Freeze a screenshot for annotation
-- Collect box-based notes on the captured frame
-- Load linked GitHub repo context for Claude/Codex handoff
-- Require explicit user confirmation that the capture belongs to the active AI coding work
-- Submit the feedback package and show the immediate response from Claude/Codex
+- serve as the primary macOS product entry point
+- capture visible screen state through macOS APIs
+- freeze captured screenshots for annotation
+- collect box-based notes on a captured frame
+- collect or confirm project/repo context
+- save annotation sessions through the local API
+- initiate handoff to Claude, Codex, Cursor, or MCP consumers
+- request macOS permissions needed for capture and shortcut flows
 
-### 2. Web Dashboard
+### Native macOS Prototype
+
+Path: `apps/desktop-native-mac`
+
+Stack: Swift Package, AppKit.
+
+Responsibilities:
+
+- explore the native replacement for the Tauri desktop shell
+- validate capture, overlay, persistence, and prompt-preview UX in AppKit
+- provide a migration path toward a smaller and more native macOS app
+
+The current production-like local path still uses `apps/desktop`; the Swift app is a prototype and migration track.
+
+### Web Dashboard
 
 Path: `apps/web`
 
-Use Next.js + TypeScript.
+Stack: Next.js, React, TypeScript.
 
 Responsibilities:
 
-- Review saved sessions
-- Show annotation summaries and screenshots
-- Display handoff state and follow-up feedback
-- Comments and upvotes
-- Task history and approval flows
-- Public or organization-visible session pages
+- render the public homepage
+- show saved sessions and annotation notes
+- support team/public review surfaces
+- expose summaries, handoff state, and follow-up actions
+- provide admin and onboarding surfaces used by the local prototype
 
-### 3. API Server
+### API Server
 
 Path: `apps/api`
 
-Use Node.js + TypeScript.
+Stack: Express, TypeScript.
 
 Responsibilities:
 
-- Auth placeholder
-- Feedback sessions CRUD
-- Linked repo and target handoff context
-- Comments and votes
-- Task creation, approval, and sending
-- Claude/Codex handoff response generation
-- Audit logging
+- session, capture, comment, task, and integration endpoints
+- local identity/onboarding state used by the prototype
+- repo and handoff context orchestration
+- GitHub/Jira integration adapters
+- Claude/Codex style prompt package generation
+- audit and admin-oriented endpoints
+- seed script for local development data
 
-### 4. Worker
+### Worker
 
 Path: `apps/worker`
 
-Responsibilities:
-
-- Process uploaded feedback artifacts
-- Generate AI summary
-- Generate task brief
-- Prepare downstream metadata for agents
-
-For the current MVP, mocked processing is acceptable.
-
-### 5. MCP Server
-
-Path: `apps/mcp-server`
+Stack: Express, TypeScript.
 
 Responsibilities:
 
-- Expose feedback context to coding agents
-- Provide read tools over sessions and assets
-- Provide write tools only where explicitly allowed
+- process saved feedback artifacts
+- generate summaries and task briefs
+- prepare downstream metadata for coding agents
+- provide mock processing when provider keys are not configured
 
-## Packages
+The current worker is intentionally lightweight; durable queue-backed processing is a future production concern.
+
+### MCP Servers
+
+Paths:
+
+- `apps/mcp-server`
+- `apps/desktop-mcp`
+
+Responsibilities:
+
+- expose feedback sessions and annotation context to MCP-aware clients
+- provide read tools over sessions, assets, and prepared prompts
+- keep write behavior constrained to explicitly supported flows
+- experiment with local desktop-client bridges for Claude/Codex-style workflows
+
+## Shared Packages
 
 ### `packages/db`
 
-Database schema and client.
+Owns the Prisma schema, SQLite client, generated Prisma client, and database build output.
 
 ### `packages/shared`
 
-Shared TypeScript types and schemas.
+Owns shared TypeScript types and schemas used across apps.
 
 ### `packages/ai`
 
-AI provider interfaces and mock AI provider.
+Owns AI provider interfaces and mock provider behavior.
 
 ### `packages/integrations`
 
-Integration provider interfaces, handoff config, and mock providers.
+Owns integration interfaces and provider configuration for GitHub, Jira, and handoff targets.
 
-## Storage
+## Data And Storage
 
-- Relational store for sessions, tasks, and comments
-- Local filesystem or object storage for screenshots and generated artifacts
-- Optional Redis/BullMQ for background processing jobs
+Local development uses SQLite:
 
-## Pipeline
+```text
+packages/db/prisma/dev.db
+```
+
+The data model centers on:
+
+- sessions
+- captures/screenshots
+- annotation notes
+- comments and votes
+- task briefs
+- integration/handoff state
+- audit/admin records
+
+Screenshots and generated artifacts are local-first today. Production storage is expected to move behind a provider abstraction such as S3, R2, Supabase Storage, or Vercel Blob.
+
+## Runtime Flow
 
 ```text
 desktop_app_opened
-→ native_screen_picker_opened
-→ screenshot_frozen
-→ annotation_boxes_saved
-→ repo_context_loaded
-→ user_confirms_capture_matches_claude_or_codex_work
-→ feedback_session_created
-→ handoff_sent
-→ immediate_agent_feedback_returned
-→ summary_available_in_dashboard
-→ optional_worker_processing
-→ task_brief_created
-→ feedback_ready
-→ follow_up_agent_work_registered
-→ status_updated
+-> macos_capture_permission_checked
+-> native_screen_picker_opened
+-> screenshot_frozen
+-> annotation_boxes_created
+-> session_context_selected
+-> repo_or_workspace_context_attached
+-> feedback_session_saved
+-> optional_team_or_public_review
+-> prompt_package_generated
+-> handoff_target_selected
+-> claude_codex_cursor_or_mcp_context_sent
+-> immediate_handoff_feedback_returned
+-> dashboard_summary_updated
 ```
+
+## Local Development Topology
+
+```text
+apps/web      http://localhost:3000
+apps/api      http://localhost:3001
+apps/worker   http://localhost:3002
+apps/desktop  http://127.0.0.1:5173 through Tauri dev
+```
+
+The desktop app should be run with the API and worker for the full local product experience. The web dashboard can run by itself for homepage and UI work, but feed/session data expects the API.
+
+## Boundary Principles
+
+- Desktop owns capture UX and local user intent.
+- API owns persistence, integration routing, and session-level orchestration.
+- Worker owns heavier processing and generated artifacts.
+- Web owns review, admin, onboarding, and public/team presentation.
+- Shared packages own cross-app contracts; app-specific UI state should stay inside apps.
+- MCP surfaces should expose prepared context, not become a second source of truth.
+
+## Production Gaps
+
+Before a public hosted version, the architecture needs:
+
+- formal auth and session management
+- organization membership and role enforcement
+- durable object storage for screenshots
+- queue-backed background jobs
+- production observability and audit retention
+- explicit data deletion and export flows
+- clearer provider credential isolation
+
+These gaps do not block local development, but they matter before inviting broad external usage.

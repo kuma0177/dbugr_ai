@@ -1,127 +1,145 @@
 # Dbugr.ai
 
-Native macOS feedback capture for AI coding workflows. Dbugr lets you capture the exact browser tab, app window, or visible screen content you want help with, annotate it, attach project context, and send the session to Claude, Codex, or Cursor.
+Dbugr.ai is a macOS screen-capture and annotation tool for AI coding workflows. It lets you capture what is on screen, mark the exact area that needs attention, attach project context, and hand the resulting session to Claude, Codex, Cursor, or an MCP-aware coding agent.
 
-## GitHub About
+The project is currently a local-first monorepo with a Tauri desktop app, a Next.js review surface, local API and worker services, shared packages, and MCP server experiments.
 
-Suggested GitHub repository description:
+## Why It Exists
 
-`Native macOS screenshot annotation and AI handoff tool for Claude, Codex, and Cursor.`
+AI coding agents are strongest when they receive the same context a human reviewer would ask for: the screen state, the affected product surface, the repo or workspace, and a clear note about what should change. Dbugr turns visual feedback into structured agent context instead of loose screenshots and scattered notes.
 
-Suggested repository website / docs link:
+## Current Status
 
-- `README.md` for local install and run instructions
-- `docs/native-macos-migration.md` for the native-app roadmap
+Dbugr is usable for local development and product iteration on macOS. It is not yet a polished public cloud service.
 
-## What You Can Run Today
+What works today:
 
-- `apps/desktop` — the main Tauri desktop app used for the current local product flow
-- `apps/desktop-native-mac` — the Swift/AppKit native macOS prototype
-- `apps/api` — local Express API
-- `apps/worker` — local background/mock processing worker
-- `apps/web` — local Next.js review dashboard
-- `apps/mcp-server` — stdio MCP server for agent access to saved feedback
+- macOS desktop capture and annotation through the Tauri app
+- local session persistence with SQLite
+- review dashboard for sessions, notes, summaries, and handoff state
+- API and worker services for local processing
+- MCP server paths for agent access to saved feedback
+- Swift/AppKit native macOS prototype for the longer-term desktop migration
 
-If you want the full current product experience, run the Tauri desktop app plus the API, worker, and web apps.
+Still in progress:
 
-If you want to experiment with the native migration, run `apps/desktop-native-mac`.
+- production-grade auth and organization management
+- hosted artifact storage
+- durable background jobs
+- full native macOS parity
+- final open-source license and contribution policy
 
-## Monorepo Structure
+## Repository Structure
 
 ```text
 debugr/
-├── apps/
-│   ├── desktop/             Tauri desktop app
-│   ├── desktop-native-mac/  Swift/AppKit native macOS prototype
-│   ├── web/                 Next.js review dashboard (port 3000)
-│   ├── api/                 Express REST API (port 3001)
-│   ├── worker/              Worker service (port 3002)
-│   └── mcp-server/          MCP server (stdio)
-├── packages/
-│   ├── shared/              Shared TypeScript types
-│   ├── db/                  Prisma schema + SQLite client
-│   ├── ai/                  AI provider interfaces
-│   └── integrations/        Integration providers and env config
+|-- apps/
+|   |-- desktop/             Tauri desktop app for the current product flow
+|   |-- desktop-native-mac/  Swift/AppKit native macOS prototype
+|   |-- desktop-mcp/         local MCP bridge experiment for desktop clients
+|   |-- web/                 Next.js review dashboard and homepage
+|   |-- api/                 Express API for sessions, integrations, and handoff
+|   |-- worker/              background/mock processing worker
+|   `-- mcp-server/          stdio MCP server for saved feedback context
+|-- packages/
+|   |-- shared/              shared TypeScript types and schemas
+|   |-- db/                  Prisma schema and SQLite client
+|   |-- ai/                  AI provider interfaces and mock provider
+|   `-- integrations/        integration providers and handoff configuration
+|-- docs/                    design, deployment, migration, and planning docs
+|-- 02_ARCHITECTURE.md       system architecture overview
+`-- INSTALL.md               setup and local run guide
 ```
 
-## Requirements
+## Quick Start
 
-For local development on macOS, install:
+Requirements:
 
-- macOS
-- Node.js `20+`
-- `pnpm 9+`
+- macOS 13+
+- Node.js 20+
+- pnpm 9+
 - Rust toolchain
 - Xcode Command Line Tools
 
-Recommended checks:
-
 ```bash
-node -v
-pnpm -v
-rustc -V
-xcode-select -p
-```
-
-Why these are needed:
-
-- `apps/desktop` is a Tauri app, so it depends on Node, pnpm, Rust, and macOS build tooling.
-- `apps/desktop-native-mac` is a Swift Package, so it also depends on Apple developer tooling.
-- Screen capture features require macOS Screen Recording permission when you first run the app.
-
-## First-Time Setup
-
-1. Clone the repo.
-2. Copy `.env.example` to `.env` at the repo root.
-3. Install workspace dependencies.
-4. Create and seed the local SQLite database.
-
-```bash
-git clone <your-fork-or-this-repo-url>
+git clone <repo-url>
 cd debugr
 cp .env.example .env
 pnpm install
 pnpm db:setup
 ```
 
-The local database is created at:
-
-`packages/db/prisma/dev.db`
-
-Every clone gets its own local SQLite database after `pnpm db:setup`.
-
-## Run The Main App Locally
-
-For the current end-to-end product flow, open four terminals:
+Run the main local product flow in four terminals:
 
 ```bash
-# Terminal 1 — Tauri desktop app
+# Terminal 1
 cd apps/desktop
 pnpm dev
 
-# Terminal 2 — API
+# Terminal 2
 cd apps/api
 pnpm dev
 
-# Terminal 3 — Worker
+# Terminal 3
 cd apps/worker
 pnpm dev
 
-# Terminal 4 — Web dashboard
+# Terminal 4
 cd apps/web
 pnpm dev
 ```
 
-Local endpoints:
+Local URLs:
 
-- Desktop frontend preview: `http://127.0.0.1:5173`
-- Review dashboard: `http://127.0.0.1:3000`
-- API: `http://127.0.0.1:3001`
-- Worker: `http://127.0.0.1:3002`
+- Web dashboard: `http://localhost:3000`
+- API: `http://localhost:3001`
+- Worker: `http://localhost:3002`
+- Desktop frontend dev server: `http://127.0.0.1:5173`
 
-## Run The Native macOS Prototype
+For detailed setup, permissions, troubleshooting, and install options, see [INSTALL.md](INSTALL.md).
 
-If you want to test the Swift/AppKit native migration path:
+## Product Flow
+
+1. Open the macOS app.
+2. Capture a screen, window, browser tab, or visible region.
+3. Draw annotation boxes and add notes.
+4. Attach or confirm the related repo/workspace context.
+5. Save the session locally.
+6. Review the structured prompt package.
+7. Send the context to Claude, Codex, Cursor, or expose it through MCP.
+8. Continue reviewing the session in the web dashboard.
+
+## Common Commands
+
+```bash
+# install dependencies
+pnpm install
+
+# generate Prisma client, push schema, and seed local data
+pnpm db:setup
+
+# build all packages and apps
+pnpm build
+
+# build the web app only
+pnpm --filter @feedbackagent/web build
+
+# run desktop unit tests
+pnpm --filter @feedbackagent/desktop test
+```
+
+Database helpers:
+
+```bash
+pnpm db:generate
+pnpm db:push
+pnpm db:seed
+pnpm db:migrate
+```
+
+## Native macOS Prototype
+
+The Swift/AppKit migration prototype lives in `apps/desktop-native-mac`.
 
 ```bash
 cd apps/desktop-native-mac
@@ -135,168 +153,49 @@ cd apps/desktop-native-mac
 swift run debugr-native-mac --capture-smoke
 ```
 
-More native-app details live in:
+See [apps/desktop-native-mac/README.md](apps/desktop-native-mac/README.md) and [docs/native-macos-migration.md](docs/native-macos-migration.md) for the native migration plan.
 
-- [apps/desktop-native-mac/README.md](/Users/kumar/debugr/apps/desktop-native-mac/README.md)
-- [docs/native-macos-migration.md](/Users/kumar/debugr/docs/native-macos-migration.md)
+## Documentation
 
-## Download The macOS App
+- [INSTALL.md](INSTALL.md) - install, local development, permissions, and troubleshooting
+- [02_ARCHITECTURE.md](02_ARCHITECTURE.md) - system architecture and data flow
+- [docs/design-system-dbugr.md](docs/design-system-dbugr.md) - product design system
+- [docs/native-macos-migration.md](docs/native-macos-migration.md) - native macOS migration plan
+- [docs/local-development.md](docs/local-development.md) - older local development notes
 
-If you want the latest packaged macOS build instead of running from source, download the current DMG here:
+## Download A Packaged macOS Build
+
+If you want to try the current packaged macOS build instead of running from source:
 
 - [Download Dbugr for macOS](https://github.com/kuma0177/debgr_ai/releases/download/stable-macos-claude-codex-cli/dbugr-ai-0.0.1-macos-aarch64.dmg)
+- [Release page](https://github.com/kuma0177/debgr_ai/releases/tag/stable-macos-claude-codex-cli)
 
-Install steps:
+macOS may require Screen Recording permission before capture works. See [INSTALL.md](INSTALL.md#macos-permissions) for details.
 
-1. Download the `.dmg` file.
-2. Open it from your Downloads folder.
-3. Drag `Dbugr.ai` into `Applications`.
-4. Open `Applications` and launch `Dbugr.ai`.
-5. If macOS shows a first-run warning, choose `Open`.
+## Environment
 
-If you prefer the release page instead of the direct asset:
-
-- [Latest stable release](https://github.com/kuma0177/debgr_ai/releases/tag/stable-macos-claude-codex-cli)
-
-## Environment Variables
-
-Start with:
+Start from `.env.example`:
 
 ```bash
 cp .env.example .env
 ```
 
-Important defaults from [.env.example](/Users/kumar/debugr/.env.example:1):
+The defaults are enough for local development with SQLite and mock processing. API keys and integration tokens are optional unless you are testing those providers.
 
-- `DATABASE_URL` points at the local SQLite database
+Important local defaults:
+
+- `DATABASE_URL` points at `packages/db/prisma/dev.db`
 - `NEXT_PUBLIC_API_URL` points the web app at the local API
 - `ANTHROPIC_API_KEY` is optional for local runs
-- GitHub and Jira variables are optional unless you want those integrations
+- GitHub and Jira variables are optional integration settings
 
-Current local behavior:
+## Opening The Repo
 
-- If no AI key is configured, the worker falls back to mock summaries in some flows.
-- Integration routes are present, but some production-grade routing and auth work are still pending.
+Before accepting outside contributors, this repository still needs:
 
-## Permissions On First Run
+- a license file
+- contribution guidelines
+- a security policy for reporting issues
+- a clear stance on bundled binaries, screenshots, and test data
 
-The macOS desktop app may ask for:
-
-- Screen Recording permission
-- Accessibility permission in some shortcut/focus flows
-
-If capture looks blank or fails:
-
-1. Open `System Settings -> Privacy & Security -> Screen Recording`
-2. Make sure the app or terminal you launched it from has permission
-3. Restart the app after granting permission
-
-## Common Commands
-
-Database:
-
-```bash
-pnpm db:generate
-pnpm db:push
-pnpm db:seed
-pnpm db:migrate
-```
-
-Build all packages and apps:
-
-```bash
-pnpm build
-```
-
-Build just the desktop app:
-
-```bash
-cd apps/desktop
-pnpm build
-```
-
-Run MCP server:
-
-```bash
-cd apps/mcp-server
-pnpm dev
-```
-
-## Product Flow
-
-1. Open the macOS app and start a new annotation or append to an existing session.
-2. Capture the content on screen, freeze it, and add annotation notes to the screenshot.
-3. Choose an existing session or create a new one if needed.
-4. When creating a new session, attach the GitHub repo or local project folder that the work belongs to.
-5. Save the notes into the session and confirm what session was updated.
-6. Choose whether to submit the saved session to Claude, Codex, or Cursor.
-7. On first submission, complete the provider connection flow if the target is not yet linked.
-8. Review the prompt summary that is being handed off, then submit.
-
-## Current State
-
-- [x] Tauri desktop app for the current local workflow
-- [x] Native macOS prototype with local session persistence and prompt-preview groundwork
-- [x] Express API for sessions, comments, tasks, integrations, and handoff context
-- [x] Next.js dashboard for review, summaries, and follow-up actions
-- [x] MCP server for Claude/Codex-style agent access
-- [x] Repo-aware confirmation step before sending to Claude or Codex
-- [x] Immediate handoff feedback returned to the user after submit
-
-## Native macOS Migration
-
-Dbugr is moving toward a macOS-native-first desktop app. See [docs/native-macos-migration.md](/Users/kumar/debugr/docs/native-macos-migration.md:1) for the migration context, target user flow, capture UX decisions, and milestone plan.
-
-## Detailed Setup Guide
-
-For a cleaner step-by-step install and troubleshooting flow, see:
-
-- [docs/local-development.md](/Users/kumar/debugr/docs/local-development.md:1)
-
-## Design Reference
-
-Dbugr's canonical product design language lives in:
-
-- [docs/design-system-dbugr.md](/Users/kumar/debugr/docs/design-system-dbugr.md:1)
-
-Use this guide for desktop, web, onboarding, review feed, public feed, and submit-flow UI changes.
-
-## Product Roadmap
-
-The current phased scope and architecture plan lives in:
-
-- [docs/phase-roadmap-and-architecture.md](/Users/kumar/debugr/docs/phase-roadmap-and-architecture.md:1)
-- [docs/phase-2-social-refinement-plan.md](/Users/kumar/debugr/docs/phase-2-social-refinement-plan.md:1)
-
-Phase 2 account-linking rule:
-
-- Web owns Google/email sign-in, organization setup, team invites, and workspace membership.
-- The macOS app should not create a separate local account.
-- After web onboarding, users download the macOS DMG or choose `Link this Mac`.
-- `Link this Mac` opens a short-lived `dbugr://link?code=...` deep link.
-- The native app redeems that code with the API, stores the device token in macOS Keychain, and shows the linked user, email, workspace, role, and device name.
-- Each teammate links their own Mac app and syncs/shares under their own workspace permissions.
-
-## Railway Web Deployment
-
-The Phase 2 web collaboration layer is designed to deploy on Railway as separate web and API services while the macOS desktop app remains local-first.
-
-Deployment guide:
-
-- [docs/railway-deployment.md](/Users/kumar/debugr/docs/railway-deployment.md:1)
-- Railway API deploys should use the repo start command `pnpm railway:api:start`, which auto-runs Prisma schema sync before boot so new organization fields like `logoUrl` work in Railway too.
-
-Important default:
-
-- Personal Claude, Codex, Cursor, Anthropic, OpenAI, and GitHub user keys should stay local to the user's device unless an organization explicitly enables an org-managed credential path later.
-- Local MCP connector keys should also stay on the user's device. The web admin panel includes a local-only MCP connector manager for tools such as Google Stitch (`https://stitch.googleapis.com/mcp` with `X-Goog-Api-Key`). Those connector URLs and keys are saved in browser `localStorage`, are not posted to the Dbugr API, and are not visible to workspace admins or Dbugr platform admins.
-
-## Remaining Work
-
-- [ ] Windows and Linux native desktop builds
-- [ ] Deeper Claude/Codex session awareness beyond manual confirmation
-- [ ] Real GitHub / Jira / Figma routing instead of mock task handoff
-- [ ] Richer agent feedback beyond the immediate handoff response
-- [ ] Auth
-- [ ] Durable asset storage for screenshots and generated artifacts
-- [ ] Background job queue for async processing
+Until a license is added, assume the code is source-available for review but not formally open-source licensed.
