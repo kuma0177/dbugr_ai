@@ -228,6 +228,48 @@ feedbackSessionRouter.get('/feedback-sessions/:id', async (req: Request, res: Re
   return res.json({ data: session });
 });
 
+// DELETE /api/feedback-sessions/:id
+feedbackSessionRouter.delete('/feedback-sessions/:id', async (req: Request, res: Response) => {
+  const sessionId = req.params.id;
+  const existing = await prisma.feedbackSession.findUnique({
+    where: { id: sessionId },
+    select: { id: true },
+  });
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.submission.deleteMany({ where: { feedbackSessionId: sessionId } });
+      await tx.aIReviewSummary.deleteMany({ where: { feedbackSessionId: sessionId } });
+      await tx.improvementTask.deleteMany({ where: { feedbackSessionId: sessionId } });
+      await tx.curationDecision.deleteMany({ where: { feedbackSessionId: sessionId } });
+      await tx.feedbackVote.deleteMany({
+        where: { comment: { feedbackSessionId: sessionId } },
+      });
+
+      // Delete replies before parent comments to satisfy the self-referential FK.
+      let deletedReplies = 0;
+      do {
+        const result = await tx.feedbackComment.deleteMany({
+          where: {
+            feedbackSessionId: sessionId,
+            parentCommentId: { not: null },
+          },
+        });
+        deletedReplies = result.count;
+      } while (deletedReplies > 0);
+      await tx.feedbackComment.deleteMany({ where: { feedbackSessionId: sessionId } });
+      await tx.feedbackFrame.deleteMany({ where: { feedbackSessionId: sessionId } });
+      await tx.feedbackSession.delete({ where: { id: sessionId } });
+    });
+    console.log('[api] session deleted:', sessionId);
+    return res.status(204).send();
+  } catch (error) {
+    console.error('[api] failed to delete session:', sessionId, error);
+    return res.status(500).json({ error: 'Failed to delete session' });
+  }
+});
+
 // PATCH /api/feedback-sessions/:id
 feedbackSessionRouter.patch('/feedback-sessions/:id', async (req: Request, res: Response) => {
   console.log('[api] PATCH /feedback-sessions/:id', req.params.id, 'keys:', Object.keys(req.body));

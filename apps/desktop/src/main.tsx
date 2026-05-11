@@ -533,6 +533,25 @@ function deleteSession(sessionId: string) {
   activePreviewCaptureId = null;
   feedback = null;
   persistAppState();
+  void deleteRemoteSession(sessionId);
+}
+
+async function deleteRemoteSession(sessionId: string) {
+  try {
+    const response = await fetch(`${apiBaseUrl()}/feedback-sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+    });
+    logUi('workspace_remote_delete_session_result', {
+      sessionId,
+      status: response.status,
+      ok: response.ok || response.status === 404,
+    });
+  } catch (error) {
+    logUi('workspace_remote_delete_session_failed', {
+      sessionId,
+      error: safeErrorMessage(error),
+    });
+  }
 }
 
 function deleteAnnotationFromCapture(session: Session, captureId: string, annotationId: string) {
@@ -565,8 +584,8 @@ function fmtDate(iso: string) {
 // Local wrappers so module-level `sessions` state is used transparently
 function sortedSessions() { return sortedSessionsUtil(sessions); }
 
-function localDesktopSessionsForPicker() {
-  return sortedSessions().filter((session) => session.captures.length > 0 || totalAnnotations(session) > 0);
+function sessionsForAnnotationPicker() {
+  return sortedSessions();
 }
 
 function groupSessions() {
@@ -624,16 +643,16 @@ function queuePersistMirrors() {
   }
   persistMirrorsTimer = window.setTimeout(() => {
     persistMirrorsTimer = null;
-    const localSessions = localDesktopSessionsForPicker();
-    const pickerSessions = buildPickerSessionCache(localSessions);
+    const pickerSourceSessions = sessionsForAnnotationPicker();
+    const pickerSessions = buildPickerSessionCache(pickerSourceSessions);
     logUi('workspace_persist_local_session_mirrors', {
       totalSessions: sessions.length,
-      localPickerSessions: localSessions.length,
-      skippedRemoteOrEmptySessions: Math.max(0, sessions.length - localSessions.length),
+      pickerSessions: pickerSourceSessions.length,
+      skippedDeletedSessions: deletedSessionIds.size,
     });
     // Mirror sessions to disk so the local MCP server can read them.
     // Fire-and-forget — never block the UI on this.
-    invoke('save_sessions_to_disk', { payload: { sessions: localSessions } }).catch(() => {
+    invoke('save_sessions_to_disk', { payload: { sessions: pickerSourceSessions } }).catch(() => {
       // silently ignore — disk write is best-effort
     });
     invoke('save_picker_sessions_cache', {
@@ -3140,11 +3159,12 @@ async function listenForAnnotations() {
 
   await listen('request-sessions', async () => {
     const emitPickerSessions = async () => {
-      const pickerSessions = localDesktopSessionsForPicker();
+      const pickerSessions = sessionsForAnnotationPicker();
       logUi('workspace_picker_sessions_emit', {
-        source: 'local_desktop_only',
-        localPickerSessions: pickerSessions.length,
+        source: 'workspace_sessions',
+        pickerSessions: pickerSessions.length,
         totalSessions: sessions.length,
+        deletedSessionIds: deletedSessionIds.size,
       });
       await emit('sessions-list', pickerSessions.map((session) => ({
         id: session.id,
@@ -3155,9 +3175,10 @@ async function listenForAnnotations() {
     };
 
     await emitPickerSessions();
-    logUi('workspace_picker_sessions_api_refresh_skipped', {
-      reason: 'Annotation picker must only show local desktop sessions. Web review sessions are opened from the web dashboard.',
-    });
+    if (Date.now() - lastSessionsApiLoadAt >= SESSION_API_REFRESH_INTERVAL_MS) {
+      await loadSessionsFromApi({ force: true });
+      await emitPickerSessions();
+    }
   });
 
   await listen<{

@@ -23,6 +23,8 @@ Before editing any of these files, read this ledger and update it when a new reg
 - Capture/source listing failures must not automatically mean permission denied. If permission is granted but source listing fails, show source-list recovery, not permission copy.
 - Saving annotations must send screenshot reference, annotation geometry/text, and target session id back to the session board.
 - Appending a new capture to an existing session must bypass the picker when launched from that session.
+- Deleting a session must remove it locally, persist a tombstone, and delete the remote API record when one exists so API refreshes cannot resurrect it.
+- The New Annotation session picker must reflect the same active, deleted-session-filtered workspace sessions as the session sidebar, including sessions that do not have captures yet.
 
 ## Known Regression Cases
 
@@ -38,6 +40,8 @@ Before editing any of these files, read this ledger and update it when a new reg
 | DSK-008 | Overlay state reset while capture was in progress. | Respect `OVERLAY_HIDDEN_FOR_SCREENSHOT` / `captureInProgress` guards before handling new overlay triggers. |
 | DSK-009 | Toolbar New Annotation appeared to do nothing when permission was blocked and the main window was hidden/missing. | Permission-blocked tray paths must recreate/open the main window and show a clear permission card with the exact running binary path. |
 | DSK-010 | Non-technical users had to run `tccutil` manually to recover stale Screen Recording permission state. | New Annotation must auto-reset Debugr's stale ScreenCapture TCC entry once, request permission again, and continue if granted; the permission card must also offer one-click repair/retry. |
+| DSK-011 | Deleted sessions came back after reopening or refreshing because the desktop only hid them locally while `/feedback-sessions` still returned the remote record. | Session delete must persist `deletedSessionIds` and call `DELETE /feedback-sessions/:id`; the API delete route must remove child rows before deleting the session. |
+| DSK-012 | New Annotation picker/modal did not match the session sidebar because it only used local sessions with existing captures. | Picker cache and `request-sessions` events must use the same active workspace sessions as the sidebar and refresh stale API data before emitting. |
 
 ## Required Checks
 
@@ -57,9 +61,13 @@ For macOS permission or real capture changes, also manually verify:
 - Restarted app with permission already granted: New Annotation opens overlay Region tool without permission copy.
 - Existing session -> New Capture: annotation is appended to that session and the picker is skipped.
 - Save annotation: session board shows the capture, note, count, and screenshot preview.
+- Delete session: row disappears immediately and stays gone after reopening the desktop or refreshing sessions from the API.
+- New Annotation picker: session choices match the sidebar count/order after deleting, refreshing, or reopening.
 
 ## Test Ownership
 
 - Add or update `apps/desktop/src/__tests__/permission-flow.test.ts` for every permission/order regression.
+- Add or update `apps/desktop/src/__tests__/session-delete.test.ts` for session delete persistence regressions.
+- Add or update `apps/desktop/src/__tests__/session-picker.test.ts` for sidebar/picker session parity regressions.
 - Add or update Playwright specs when the regression requires user-level UI flow coverage.
 - If a regression cannot be automated, document the manual verification steps in this ledger before finishing the change.
