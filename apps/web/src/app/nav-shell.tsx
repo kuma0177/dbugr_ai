@@ -73,9 +73,8 @@ export function NavShell() {
 
   return (
     <nav className="nav">
-      <Link href="/" className="nav-brand" aria-label="Debugr home">
+      <Link href="/" className="nav-brand" aria-label="Dbugr home">
         <img src="/brand/icon-nav-1024.png" alt="" className="nav-brand-icon" />
-        <span>Dbugr.ai</span>
       </Link>
       <div className="nav-links">
         {signedInEmail ? (
