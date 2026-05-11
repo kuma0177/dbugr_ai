@@ -818,7 +818,7 @@ function renderWelcome() {
         <div class="welcome-hero">
           <img class="app-icon" src="${brandIconUrl}" alt="Debugr logo" />
           <div class="welcome-hero-copy">
-            <h1>Dbugr.ai</h1>
+            <h1>dbugr.ai</h1>
             <p>A desktop-first capture flow for sign-in, MCP setup, session notes, review, and AI submission.</p>
           </div>
         </div>
@@ -2531,8 +2531,8 @@ async function checkPermission() {
       }
       const executable = diagnostics.executable_path ?? '';
       lastPermissionExecutablePath = executable;
-      const isInstalledApp = executable.includes('/Applications/debugr.ai.app/');
-      const runtimeName = isInstalledApp ? 'debugr.ai' : 'this Debugr build';
+      const isInstalledApp = executable.includes('/Applications/dbugr.ai.app/');
+      const runtimeName = isInstalledApp ? 'dbugr.ai' : 'this Debugr build';
       const runtimeHint = isInstalledApp
         ? 'If you already turned it on, quit Debugr completely and reopen it from Applications so macOS applies the permission.'
         : 'macOS grants Screen Recording per app build. If you switch between the dev build and the packaged app, each one may need its own Screen Recording entry.';
@@ -2543,7 +2543,7 @@ async function checkPermission() {
       <strong>Screen capture status needs a refresh</strong>
       ${attention}
       <span>macOS says ${escapeHtml(runtimeName)} is not currently cleared for Screen Recording. If screenshots are working, this is a stale macOS permission check and you can keep using Debugr.</span>
-      <span>If captures fail, open Screen Recording settings, turn on <strong>debugr.ai</strong>, then quit and reopen Debugr.</span>
+      <span>If captures fail, open Screen Recording settings, turn on <strong>dbugr.ai</strong>, then quit and reopen Debugr.</span>
       <span>${escapeHtml(runtimeHint)}</span>
       <span class="perm-runtime-detail"><strong>Current app:</strong> ${escapeHtml(diagnostics.bundle_identifier || 'Unknown')}<br /><strong>Path:</strong> <code>${escapeHtml(diagnostics.executable_path || executable || 'Unknown')}</code></span>
       <span class="perm-runtime-detail"><strong>Not listed?</strong> Click <strong>+</strong>, press <strong>⌘⇧G</strong>, then paste the path above.</span>

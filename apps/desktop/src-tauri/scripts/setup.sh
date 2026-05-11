@@ -1,7 +1,7 @@
 #!/bin/bash
 # Debugr post-install setup
 # Run once after you have a built .app (see target/release/bundle/macos/).
-# Default expects it copied to /Applications; override: APP=/path/to/debugr.ai.app ./setup.sh
+# Default expects it copied to /Applications; override: APP=/path/to/dbugr.ai.app ./setup.sh
 # - Re-signs the app bundle so macOS TCC uses a stable bundle identifier
 #   (com.feedbackagent.desktop) across every future update.
 # - Registers the app in the Screen Recording list so it appears immediately
@@ -9,15 +9,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILT_APP="$SCRIPT_DIR/../target/release/bundle/macos/debugr.ai.app"
-APP="${APP:-/Applications/debugr.ai.app}"
+BUILT_APP="$SCRIPT_DIR/../target/release/bundle/macos/dbugr.ai.app"
+APP="${APP:-/Applications/dbugr.ai.app}"
 BUNDLE_ID="com.feedbackagent.desktop"
 
 if [[ ! -d "$APP" ]]; then
   echo "Debugr .app not found at: $APP"
   echo "After building (e.g. pnpm build from apps/desktop), run either:"
   echo "  APP=\"$BUILT_APP\" \"$0\""
-  echo "or copy that bundle to /Applications/debugr.ai.app and re-run."
+  echo "or copy that bundle to /Applications/dbugr.ai.app and re-run."
   exit 1
 fi
 

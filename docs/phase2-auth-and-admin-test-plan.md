@@ -1,6 +1,6 @@
 # Phase 2 Auth, Onboarding, and Admin Regression Plan
 
-This checklist is the quality gate for Dbugr.ai Phase 2 web onboarding, team setup, and admin management. The goal is simple: a new user, an existing user, an invited teammate, and the Dbugr super admin should each land in the right product state without guessing, refreshing, or repeating completed setup.
+This checklist is the quality gate for dbugr.ai Phase 2 web onboarding, team setup, and admin management. The goal is simple: a new user, an existing user, an invited teammate, and the dbugr super admin should each land in the right product state without guessing, refreshing, or repeating completed setup.
 
 ## Executable Regression Suite
 
@@ -53,4 +53,3 @@ These are not all automated yet, but they are the next unit-level seams to extra
 - [ ] Email-code validation rejects non-six-digit values before calling the API.
 - [ ] API error formatting never renders `[object Object]`.
 - [ ] Onboarding local-state read/write emits `dbugr-auth-changed` and updates nav state.
-

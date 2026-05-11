@@ -1,6 +1,6 @@
-# Dbugr.ai E2E Journey Prompts
+# dbugr.ai E2E Journey Prompts
 
-This repo now includes the current desktop journey for Dbugr.ai with:
+This repo now includes the current desktop journey for dbugr.ai with:
 
 - local Google-auth style onboarding flow
 - MCP connection launchers for Claude, Codex, and Cursor

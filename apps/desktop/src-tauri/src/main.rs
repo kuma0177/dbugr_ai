@@ -216,7 +216,7 @@ fn main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
 
     log_backend("main.recreate.start", "label=main");
     WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-        .title("debugr.ai")
+        .title("dbugr.ai")
         .inner_size(1280.0, 880.0)
         .resizable(true)
         .center()
@@ -356,9 +356,9 @@ fn repair_screen_capture_permission(app: AppHandle) -> Result<ScreenCaptureRepai
     let message = if effective_granted {
         "Screen Recording is ready. Restarting annotation.".to_string()
     } else if reset_succeeded {
-        "macOS still has not granted Screen Recording to this Debugr build. Turn on debugr.ai in System Settings, then click New Annotation again.".to_string()
+        "macOS still has not granted Screen Recording to this Debugr build. Turn on dbugr.ai in System Settings, then click New Annotation again.".to_string()
     } else {
-        "Debugr could not reset the macOS permission record automatically. Open Screen Recording settings, turn on debugr.ai, then click New Annotation again.".to_string()
+        "Debugr could not reset the macOS permission record automatically. Open Screen Recording settings, turn on dbugr.ai, then click New Annotation again.".to_string()
     };
     log_backend(
         "permission.repair.result",
@@ -2035,7 +2035,7 @@ fn trigger_overlay(app: &AppHandle, source: &str, launch: Option<OverlayLaunchPa
             "overlay.trigger.permission_blocked",
             format!("source={source} overlay_not_shown=true reason=screen_recording_permission_required"),
         );
-        let message = "New Annotation is blocked because macOS has not granted Screen Recording to this exact Debugr build. Open Screen Recording settings, enable debugr.ai for the path shown here, then quit and reopen Debugr.";
+        let message = "New Annotation is blocked because macOS has not granted Screen Recording to this exact Debugr build. Open Screen Recording settings, enable dbugr.ai for the path shown here, then quit and reopen Debugr.";
         if let Some(main) = app.get_webview_window("main") {
             let _ = main.emit("screen-capture-permission-needed", message);
         } else if let Ok(main) = main_window(app) {
@@ -2223,7 +2223,7 @@ fn main() {
             check_cursor_installed,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building debugr.ai")
+        .expect("error while building dbugr.ai")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Opened { urls } = event {
                 for url in urls {

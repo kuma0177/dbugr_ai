@@ -12,7 +12,7 @@ Purpose:
 
 Layout:
 
-- Header: Dbugr.ai logo, status dot, connection state.
+- Header: dbugr.ai logo, status dot, connection state.
 - Primary action: `New Annotation`.
 - Secondary rows: `Sessions`, `Settings`, `Open Web Dashboard`.
 - Footer: version/build and `Quit Dbugr`.
@@ -208,4 +208,3 @@ Layout:
 - `Quit and reopen Dbugr` hint.
 
 Do not present a large blocking Dbugr overlay on top of macOS permission dialogs.
-

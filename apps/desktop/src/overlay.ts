@@ -663,7 +663,7 @@ function renderCaptureSourcesScreenRecordingOff(kind: 'plugin' | 'generic') {
       : 'macOS did not share the screen/window list with Dbugr.';
   const detail =
     kind === 'plugin'
-      ? `<p class="capture-perm-detail">macOS has not released Screen Recording access to the running Dbugr process yet. If you just enabled <strong>Dbugr.ai.app</strong> in System Settings, quit Dbugr completely and reopen it once so macOS applies the change.</p>
+      ? `<p class="capture-perm-detail">macOS has not released Screen Recording access to the running Dbugr process yet. If you just enabled <strong>dbugr.ai.app</strong> in System Settings, quit Dbugr completely and reopen it once so macOS applies the change.</p>
         <p class="capture-perm-tip"><strong>Need to change the permission?</strong> Use the buttons below. Dbugr will get out of the way before macOS opens the prompt or settings screen.</p>
         <p class="capture-perm-tip"><strong>Advanced dev build note:</strong> macOS treats a local dev binary separately from the installed app. Only add the dev binary when you are intentionally running from source.</p>`
       : `<p class="capture-perm-detail">Tap <strong>Refresh list</strong> first. If the list still stays empty, quit and reopen Dbugr once so macOS refreshes the Screen Recording grant for this installed app.</p>
@@ -755,7 +755,7 @@ function renderCaptureSourcesSckEmptyFailure(
         <p class="capture-perm-lead">ScreenCaptureKit returned no displays or windows.</p>
         ${diagHtml}
         <p class="capture-perm-detail">Enabling a row in System Settings only helps if it matches <strong>this exact path</strong>. Open <strong>Activity Monitor</strong>, find Debugr, double‑click → <strong>Open Files and Ports</strong> — the path must match the binary you added with <strong>+</strong>.</p>
-        <p class="capture-perm-tip">If <strong>CGPreflight</strong> is still false: quit Debugr (⌘Q), reboot once, or run the bundled <code>debugr.ai.app</code> from <code>target/release/bundle/macos/</code> (after <code>pnpm build</code>) instead of <code>target/debug</code>.</p>
+        <p class="capture-perm-tip">If <strong>CGPreflight</strong> is still false: quit Debugr (⌘Q), reboot once, or run the bundled <code>dbugr.ai.app</code> from <code>target/release/bundle/macos/</code> (after <code>pnpm build</code>) instead of <code>target/debug</code>.</p>
         <div class="capture-perm-actions">
           <button type="button" class="capture-perm-primary" id="capture-retry-after-perm">Refresh list</button>
           <button type="button" class="capture-perm-secondary" id="capture-request-access">Ask macOS for screen capture…</button>
@@ -981,7 +981,7 @@ async function captureSourceRow(row: CaptureSourceRow) {
     const msg = String(err);
     if (isLikelyMacScreenRecordingDenied(msg)) {
       setToast(
-        'Screen Recording blocked capture. Enable debugr.ai (and the dev binary if needed) in Privacy → Screen Recording, then choose the source again.',
+        'Screen Recording blocked capture. Enable dbugr.ai (and the dev binary if needed) in Privacy → Screen Recording, then choose the source again.',
       );
     } else {
       setToast(`Capture failed: ${msg}`);
