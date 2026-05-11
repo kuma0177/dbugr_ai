@@ -134,6 +134,7 @@ function remainingAnnotationSlots() {
 let sourceFrameDataUrl: string | null = null;
 /** Where capture-source should return when the user taps Back. */
 let pendingCaptureBackStep: OverlayStep = 'annotating';
+let annotationPermissionCheckInFlight: Promise<boolean> | null = null;
 let pickerLoadingToken = 0;
 let pickerLoadingTimer: number | null = null;
 
@@ -292,8 +293,10 @@ const screenshotImgEl = document.getElementById('screenshot-img') as HTMLImageEl
 const hudCaptureEl   = document.getElementById('hud-capture')!;
 const hudSavedEl     = document.getElementById('hud-saved')!;
 const captureListEl  = document.getElementById('capture-list')!;
+const captureTitleEl = hudCaptureEl.querySelector<HTMLElement>('.step-card-title')!;
 const captureStepSubEl = document.getElementById('capture-step-sub')!;
 const captureModeBarEl = document.getElementById('capture-mode-bar')!;
+const captureRefreshBtn = document.getElementById('capture-refresh') as HTMLButtonElement;
 const savedStepSubEl = document.getElementById('saved-step-sub')!;
 const savedStepHintEl = document.getElementById('saved-step-hint')!;
 const pickerListEl   = document.getElementById('picker-list')!;
@@ -495,9 +498,24 @@ async function showCaptureSourceStep() {
     pendingCaptureBackStep =
       step === 'setup' ? 'setup' : step === 'picking' ? 'picking' : 'annotating';
   }
+  resetCaptureSourceChrome();
   showStep('capture-source');
   setToast('Pick a display or window to snapshot.');
   await loadCaptureSources();
+}
+
+function resetCaptureSourceChrome() {
+  captureTitleEl.textContent = 'Choose screen or window';
+  captureStepSubEl.textContent = 'Refresh to see the current screen, browser pages, and open app windows. Pick one, then mark the exact region you want to annotate.';
+  captureModeBarEl.style.display = '';
+  captureRefreshBtn.style.display = '';
+}
+
+function applyAnnotationPermissionGateChrome() {
+  captureTitleEl.textContent = 'Enable Screen Recording';
+  captureStepSubEl.textContent = 'Dbugr needs Screen Recording permission before annotation starts, so every saved annotation has a real image preview.';
+  captureModeBarEl.style.display = 'none';
+  captureRefreshBtn.style.display = 'none';
 }
 
 async function beginCurrentScreenCapture() {
@@ -660,8 +678,64 @@ function renderCaptureSourcesScreenRecordingOff(kind: 'plugin' | 'generic') {
           <button type="button" class="capture-perm-secondary" id="capture-open-screen-settings">Open Screen Recording settings</button>
         </div>
       </div>`;
+  captureListEl.querySelector('#capture-open-screen-settings')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      setToast('Opening Screen Recording settings…');
+      await hideOverlayForMacosPermissionUi('open_screen_capture_settings_from_annotation_gate');
+      await invoke('open_screen_capture_settings');
+    } catch (err) {
+      addDebugLog(`permission.settings.open.failed error=${String(err)}`);
+      setToast('Could not open System Settings. Open Screen Recording manually from Privacy & Security.');
+    }
+  });
+  attachCaptureRequestAccessHandler(captureListEl);
+}
+
+function renderAnnotationPermissionGate(reason: string) {
+  showStep('capture-source');
+  applyAnnotationPermissionGateChrome();
+  pendingCaptureBackStep = targetSessionId ? 'picking' : 'setup';
+  setToast('Screen Recording permission is required before annotating.');
+  captureListEl.innerHTML = `
+      <div class="capture-perm-panel">
+        <p class="capture-perm-lead">Screen Recording is required before you can annotate.</p>
+        <p class="capture-perm-detail">Dbugr checks this before entering annotation mode so it never saves an annotation without an image preview.</p>
+        <p class="capture-perm-tip">If you already enabled it, quit Dbugr completely and reopen this same app build so macOS refreshes the permission for the running binary.</p>
+        <div class="capture-perm-actions">
+          <button type="button" class="capture-perm-primary" id="capture-retry-after-perm">Refresh permission</button>
+          <button type="button" class="capture-perm-secondary" id="capture-request-access">Ask macOS for screen capture…</button>
+          <button type="button" class="capture-perm-secondary" id="capture-open-screen-settings">Open Screen Recording settings</button>
+        </div>
+      </div>`;
+  captureListEl.querySelector('#capture-retry-after-perm')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    void enterAnnotating(`retry_after_permission_gate:${reason}`);
+  });
   wireCaptureSettingsButtons(captureListEl);
   attachCaptureRequestAccessHandler(captureListEl);
+}
+
+async function ensureScreenRecordingPermissionBeforeAnnotating(reason: string): Promise<boolean> {
+  if (annotationPermissionCheckInFlight) return annotationPermissionCheckInFlight;
+  annotationPermissionCheckInFlight = (async () => {
+    try {
+      const granted = await invoke<boolean>('get_screen_capture_annotation_ready');
+      addDebugLog(`permission.annotation_gate reason=${reason} granted=${granted}`);
+      if (!granted) {
+        renderAnnotationPermissionGate(reason);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      addDebugLog(`permission.annotation_gate.failed reason=${reason} error=${String(err).slice(0, 200)}`);
+      renderAnnotationPermissionGate(reason);
+      return false;
+    } finally {
+      annotationPermissionCheckInFlight = null;
+    }
+  })();
+  return annotationPermissionCheckInFlight;
 }
 
 /** ScreenCaptureKit succeeded JSON-wise but returned zero sources — almost always TCC / wrong executable. */
@@ -1113,7 +1187,7 @@ function startPreparedSession(payload: OverlayLaunchPayload) {
   githubRepo = payload.githubRepo ?? '';
   setTool('region', false);
   updateSessionModeChrome();
-  beginCaptureFlowForMode();
+  void enterAnnotating('prepared_session');
 }
 
 function clearAnnotationDOM() {
@@ -1190,7 +1264,7 @@ function renderPickerSessions(list: Array<{ id: string; title: string; createdAt
         setToast(`"${newSessionName}" already has the maximum ${MAX_ANNOTATIONS} annotations. Start a new session instead.`);
         return;
       }
-      void enterAnnotating();
+      void enterAnnotating('picker_session');
     });
   });
 }
@@ -1256,7 +1330,11 @@ sessionModeNewBtn.addEventListener('click', e => {
     setupFolderBtn.textContent = 'Choose folder…';
   }
   updateSetupState();
-  showStep(step === 'setup' ? 'annotating' : 'setup');
+  if (step === 'setup') {
+    void enterAnnotating('session_mode_new_toggle');
+  } else {
+    showStep('setup');
+  }
   setTimeout(() => setupNameEl.focus(), 50);
 });
 
@@ -1282,7 +1360,7 @@ setupFolderBtn.addEventListener('click', async e => {
 });
 
 setupNameEl.addEventListener('click', e => e.stopPropagation());
-setupNameEl.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') void enterAnnotating(); });
+setupNameEl.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') void prepareNewSessionAndEnterAnnotating(); });
 setupNameEl.addEventListener('input', e => { e.stopPropagation(); updateSetupState(); });
 setupAboutEl.addEventListener('click', e => e.stopPropagation());
 setupAboutEl.addEventListener('input', e => {
@@ -1334,7 +1412,7 @@ document.getElementById('saved-close')!.addEventListener('click', e => {
 document.getElementById('saved-more')!.addEventListener('click', e => {
   e.stopPropagation();
   clearCurrentDraftCaptureState();
-  beginCaptureFlowForMode();
+  void enterAnnotating('saved_more');
 });
 
 document.getElementById('saved-open-session')!.addEventListener('click', async e => {
@@ -1376,6 +1454,8 @@ async function prepareNewSessionAndEnterAnnotating() {
     setupNameEl.focus();
     return;
   }
+  const hasPermission = await ensureScreenRecordingPermissionBeforeAnnotating('new_session_setup');
+  if (!hasPermission) return;
   if (!targetSessionId) {
     preparedNewSessionId = preparedNewSessionId ?? uid('session');
     targetSessionId = preparedNewSessionId;
@@ -1420,7 +1500,7 @@ async function prepareNewSessionAndEnterAnnotating() {
     setupStartBtn.innerHTML = prevLabel;
     updateSetupState();
   }
-  enterAnnotating();
+  void enterAnnotating('new_session_prepared');
 }
 
 // If the user switches apps before placing any annotations, step out of the
@@ -1431,7 +1511,9 @@ window.addEventListener('blur', () => {
   void invoke('suspend_overlay').catch(() => {});
 });
 
-function enterAnnotating() {
+async function enterAnnotating(reason = 'manual') {
+  const hasPermission = await ensureScreenRecordingPermissionBeforeAnnotating(reason);
+  if (!hasPermission) return;
   if (targetSessionId) {
     newSessionAbout = '';
   }
@@ -1484,6 +1566,15 @@ async function saveAll() {
     setToast(`Add a text note for annotation ${firstMissingNote.number} before finishing.`);
     return;
   }
+  if (!currentScreenshotDataUrl.startsWith('data:image/')) {
+    logAnnotationPipeline('save_all_blocked_missing_screenshot', {
+      annotation_count: annotations.length,
+      screenshotCaptured,
+      screenshot_kind: describeScreenshotRef(currentScreenshotDataUrl).kind,
+    });
+    setToast('Screen Recording permission is required before saving an annotation screenshot.');
+    return;
+  }
   if (!targetSessionId) {
     if (!newSessionName || !newSessionAbout) {
       setToast('Choose a session target before finishing.');
@@ -1500,9 +1591,20 @@ async function saveAll() {
   toolSaveBtn.disabled = true;
   toolSaveBtn.innerHTML = sandclockMarkup('Opening…');
   try {
+    const saveTraceId = uid('save');
     let screenshotForPayload = '';
     const beforePersist = describeScreenshotRef(currentScreenshotDataUrl);
+    logAnnotationPipeline('save_all_start', {
+      trace_id: saveTraceId,
+      annotation_count: annotations.length,
+      target_session_id: targetSessionId ?? 'new_session',
+      has_new_session_name: Boolean(newSessionName),
+      has_new_session_about: Boolean(newSessionAbout),
+      source_frame: Boolean(sourceFrameDataUrl),
+      screenshot_captured: screenshotCaptured,
+    });
     logAnnotationPipeline('finish_persist_branch', {
+      trace_id: saveTraceId,
       screenshotCaptured,
       current_kind: beforePersist.kind,
       current_len: beforePersist.len,
@@ -1516,6 +1618,7 @@ async function saveAll() {
         });
         const after = describeScreenshotRef(screenshotForPayload);
         logAnnotationPipeline('finish_persist_ok', {
+          trace_id: saveTraceId,
           result_kind: after.kind,
           result_len: after.len,
         });
@@ -1523,12 +1626,14 @@ async function saveAll() {
         console.warn('[Debugr] persist_annotation_screenshot failed; falling back to inline payload', persistErr);
         screenshotForPayload = currentScreenshotDataUrl;
         logAnnotationPipeline('finish_persist_fallback_inline', {
+          trace_id: saveTraceId,
           err: String(persistErr).slice(0, 200),
           inline_len: currentScreenshotDataUrl.length,
         });
       }
     } else {
       logAnnotationPipeline('finish_skip_persist', {
+        trace_id: saveTraceId,
         reason: !currentScreenshotDataUrl ? 'no_current_screenshot' : 'not_data_image_url',
       });
     }
@@ -1542,6 +1647,7 @@ async function saveAll() {
       localFolder,
       githubRepo,
       screenshotUrl: screenshotForPayload,
+      saveTraceId,
     };
 
     const shotOut = describeScreenshotRef(snapshot.screenshotUrl);
@@ -1552,8 +1658,10 @@ async function saveAll() {
       screenshot_kind: shotOut.kind,
       screenshot_len: shotOut.len,
       targetSessionId: snapshot.targetSessionId ?? null,
+      traceId: saveTraceId,
     }));
     logAnnotationPipeline('finish_invoke_finish_annotations', {
+      trace_id: saveTraceId,
       annotation_count: snapshot.annotations.length,
       screenshot_kind: shotOut.kind,
       screenshot_len: shotOut.len,
@@ -1562,7 +1670,12 @@ async function saveAll() {
 
     // Route through Rust backend — relays to main window without permission restrictions
     await invoke('finish_annotations', { payload: snapshot });
-    logAnnotationPipeline('finish_rust_command_ok', { annotation_count: snapshot.annotations.length });
+    logAnnotationPipeline('finish_rust_command_ok', {
+      trace_id: saveTraceId,
+      annotation_count: snapshot.annotations.length,
+      screenshot_kind: shotOut.kind,
+      screenshot_len: shotOut.len,
+    });
     lastSavedSessionTitle = snapshot.targetSessionId ? (newSessionName || 'Current session') : (snapshot.newSessionName || 'Current session');
     lastSavedAnnotationCount = snapshot.annotations.length;
     clearCurrentDraftCaptureState();
@@ -1641,46 +1754,62 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
     let dataUrl: string | null = null;
     try {
       if (!sourceFrameDataUrl) {
-        logAnnotationPipeline('place_region_capture_skipped', {
+        logAnnotationPipeline('place_region_source_frame_capture_start', {
           reason: 'transparent_live_overlay_without_snapshot',
           ann_id: ann.id,
         });
-        dataUrl = '';
-      } else {
-        await ensureScreenshotImgReady();
-        const layout = viewportLayoutSnapshot();
-        logAnnotationPipeline('place_region_capture_start', {
+        const frameDataUrl = await invoke<string>('capture_current_screen_snapshot');
+        const frame = describeScreenshotRef(frameDataUrl);
+        logAnnotationPipeline('place_region_source_frame_capture_ok', {
           ann_id: ann.id,
-          raw_left: x,
-          raw_top: y,
-          raw_w: w,
-          raw_h: h,
-          ...layout,
+          frame_kind: frame.kind,
+          frame_len: frame.len,
         });
-        const { sx, sy, sw, sh } = clientRectToImageRect(box.left, box.top, box.width, box.height);
-        logAnnotationPipeline('place_region_crop_box', {
-          left: box.left,
-          top: box.top,
-          width: box.width,
-          height: box.height,
-          img_sx: sx,
-          img_sy: sy,
-          img_sw: sw,
-          img_sh: sh,
-        });
-        dataUrl = await cropImageDataUrl(sourceFrameDataUrl, sx, sy, sw, sh);
-        const got = describeScreenshotRef(dataUrl);
-        logAnnotationPipeline('place_region_capture_ok', { data_kind: got.kind, data_len: got.len });
+        applySourceFrameDisplay(frameDataUrl, { visible: false });
       }
+      await ensureScreenshotImgReady();
+      const layout = viewportLayoutSnapshot();
+      logAnnotationPipeline('place_region_capture_start', {
+        ann_id: ann.id,
+        raw_left: x,
+        raw_top: y,
+        raw_w: w,
+        raw_h: h,
+        ...layout,
+      });
+      const { sx, sy, sw, sh } = clientRectToImageRect(box.left, box.top, box.width, box.height);
+      logAnnotationPipeline('place_region_crop_box', {
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: box.height,
+        img_sx: sx,
+        img_sy: sy,
+        img_sw: sw,
+        img_sh: sh,
+      });
+      dataUrl = await cropImageDataUrl(sourceFrameDataUrl, sx, sy, sw, sh);
+      const got = describeScreenshotRef(dataUrl);
+      logAnnotationPipeline('place_region_capture_ok', { data_kind: got.kind, data_len: got.len });
     } catch (err) {
       logAnnotationPipeline('place_region_capture_failed', { error: String(err).slice(0, 300) });
-      setToast(`Screenshot unavailable — you can still add your note. (${err})`);
+      setToast(`Screen Recording permission is required before adding an annotation. (${err})`);
     } finally {
       captureInProgress = false;
     }
     if (dataUrl) {
       currentScreenshotDataUrl = dataUrl;
       screenshotCaptured = true;
+    } else {
+      logAnnotationPipeline('annotation_blocked_missing_screenshot', {
+        ann_id: ann.id,
+        ann_number: ann.number,
+        screenshotCaptured,
+        screenshot_kind: describeScreenshotRef(currentScreenshotDataUrl).kind,
+      });
+      await resumeOverlayVisible();
+      updateCounter();
+      return;
     }
     logAnnotationPipeline('annotation_created', {
       ann_id: ann.id,

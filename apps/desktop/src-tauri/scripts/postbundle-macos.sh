@@ -6,6 +6,12 @@ BUNDLE_DIR="$SCRIPT_DIR/../target/release/bundle/macos"
 APP_NAME="debugr.ai.app"
 APP_PATH="$BUNDLE_DIR/$APP_NAME"
 BUNDLE_ID="com.feedbackagent.desktop"
+LEGACY_APP_PATH="$BUNDLE_DIR/Dbugr.ai.app"
+
+if [[ -d "$LEGACY_APP_PATH" ]]; then
+  echo "postbundle-macos: removing legacy duplicate app bundle $LEGACY_APP_PATH"
+  rm -rf "$LEGACY_APP_PATH"
+fi
 
 if [[ ! -d "$APP_PATH" ]]; then
   echo "postbundle-macos: app bundle not found at $APP_PATH" >&2

@@ -55,6 +55,11 @@ function screenshotImgSrc(ref?: string): string | undefined {
   return trimmed;
 }
 
+function captureDashboardImgSrc(capture?: CaptureCard): string | undefined {
+  const screenshotUrl = capture?.screenshotUrl?.trim();
+  return screenshotUrl ? screenshotImgSrc(screenshotUrl) : undefined;
+}
+
 const brandIconUrl = new URL('./assets/brand-icon.png', import.meta.url).href;
 const logoClaudeUrl = new URL('./assets/logo-claude.png', import.meta.url).href;
 const logoCodexUrl = new URL('./assets/logo-codex.png', import.meta.url).href;
@@ -167,6 +172,7 @@ let lastPermissionMarkup = '';
 let lastPermissionClassName = 'perm-note';
 let lastPermissionExecutablePath = '';
 let lastSuccessfulScreenCaptureAt = 0;
+let permissionAttentionMessage = '';
 let authState: AuthState = {
   authenticated: false,
   profileInitialized: false,
@@ -434,7 +440,50 @@ function providerLogoUrl(provider: Target) {
   return logoCursorUrl;
 }
 
+function overlayLaunchForSession(session: Session | undefined) {
+  return session
+    ? {
+        targetSessionId: session.id,
+        newSessionName: session.title,
+        newSessionAbout: session.about ?? '',
+        localFolder: session.projectFolder ?? null,
+        githubRepo: session.githubRepo ?? '',
+        skipPicker: true,
+      }
+    : null;
+}
+
 function bindPermissionNoteActions(executablePath: string) {
+  document.getElementById('repair-screen-permission-btn')?.addEventListener('click', async () => {
+    const button = document.getElementById('repair-screen-permission-btn') as HTMLButtonElement | null;
+    const previous = button?.textContent ?? 'Repair Screen Recording & retry';
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Repairing…';
+    }
+    try {
+      const result = await invoke<{
+        effectiveGranted: boolean;
+        message: string;
+      }>('repair_screen_capture_permission');
+      permissionAttentionMessage = result.message || '';
+      lastPermissionMarkup = '';
+      await checkPermission();
+      if (result.effectiveGranted) {
+        await invoke('show_overlay', { launch: overlayLaunchForSession(activeSession()) });
+      }
+    } catch (error) {
+      permissionAttentionMessage = `Debugr could not repair Screen Recording automatically: ${safeErrorMessage(error)}`;
+      lastPermissionMarkup = '';
+      await checkPermission();
+    } finally {
+      const latestButton = document.getElementById('repair-screen-permission-btn') as HTMLButtonElement | null;
+      if (latestButton) {
+        latestButton.disabled = false;
+        latestButton.textContent = previous;
+      }
+    }
+  });
   document.getElementById('open-screen-settings-btn')?.addEventListener('click', async () => {
     // Do not request TCC permission from the session window. Opening settings
     // keeps the Apple modal from blocking Debugr's own chooser/sidebar.
@@ -1205,7 +1254,6 @@ function renderConfirmation() {
   `;
 
   document.getElementById('confirm-more-btn')?.addEventListener('click', async () => {
-    await invoke('hide_main_window').catch(() => {});
     await invoke('show_overlay');
   });
 
@@ -1477,12 +1525,14 @@ function renderCaptureList(session: Session) {
   list.innerHTML = '';
   session.captures.forEach((capture) => {
     const showLegacyLabel = captureNeedsLegacyScreenshotLabel(capture);
-    const thumbSrc = screenshotImgSrc(capture.screenshotUrl);
+    const thumbSrc = captureDashboardImgSrc(capture);
     logUi('workspace_render_capture_card', {
       sessionId: session.id,
       captureId: capture.id,
+      activeCaptureId,
       screenshotKind: classifyScreenshotRef(capture.screenshotUrl),
       screenshotChars: capture.screenshotUrl?.length ?? 0,
+      usedLatestAnnotationFallback: Boolean(!capture.screenshotUrl && thumbSrc),
       thumbSrcKind: thumbSrc
         ? thumbSrc.startsWith('data:image/')
           ? 'data_url'
@@ -1532,7 +1582,7 @@ function renderCaptureList(session: Session) {
     });
     card.querySelector<HTMLButtonElement>('[data-open-capture-preview]')?.addEventListener('click', (event) => {
       event.stopPropagation();
-      if (!capture.screenshotUrl) return;
+      if (!captureDashboardImgSrc(capture)) return;
       activeCaptureId = capture.id;
       activeAnnotationId = capture.annotations[0]?.id ?? null;
       activePreviewCaptureId = capture.id;
@@ -1569,7 +1619,7 @@ function renderCapturePayload(session: Session) {
   }
 
   const selected = activeAnnotation() ?? capture.annotations[0];
-  const payloadImgSrc = screenshotImgSrc(capture.screenshotUrl);
+  const payloadImgSrc = captureDashboardImgSrc(capture);
   const hasScreenshot = Boolean(payloadImgSrc);
   const showLegacyLabel = captureNeedsLegacyScreenshotLabel(capture);
   const annotationRows = capture.annotations.map((annotation) => `
@@ -1582,16 +1632,19 @@ function renderCapturePayload(session: Session) {
   `).join('');
 
   const previewCapture = activePreviewCapture();
-  const previewImgSrc = screenshotImgSrc(previewCapture?.screenshotUrl);
+  const previewImgSrc = captureDashboardImgSrc(previewCapture);
   const isPreviewOpen =
     previewCapture?.id === capture.id && Boolean(previewImgSrc);
 
-  logUi('workspace_render_capture_payload', {
-    sessionId: session.id,
-    captureId: capture.id,
-    annotationCount: capture.annotations.length,
+    logUi('workspace_render_capture_payload', {
+      sessionId: session.id,
+      captureId: capture.id,
+      activeCaptureId,
+      activePreviewCaptureId,
+      annotationCount: capture.annotations.length,
     screenshotKind: classifyScreenshotRef(capture.screenshotUrl),
     screenshotChars: capture.screenshotUrl?.length ?? 0,
+    usedLatestAnnotationFallback: Boolean(!capture.screenshotUrl && payloadImgSrc),
     payloadImgSrcKind: payloadImgSrc
       ? payloadImgSrc.startsWith('data:image/')
         ? 'data_url'
@@ -1685,19 +1738,19 @@ function renderCapturePayload(session: Session) {
   });
 
   document.getElementById('open-capture-preview')?.addEventListener('click', () => {
-    if (!capture.screenshotUrl) return;
+    if (!captureDashboardImgSrc(capture)) return;
     logUi('workspace_open_capture_preview_click', {
       captureId: capture.id,
-      screenshotChars: capture.screenshotUrl.length,
+      screenshotChars: capture.screenshotUrl?.length ?? 0,
     });
     activePreviewCaptureId = capture.id;
     renderCapturePayload(session);
   });
   document.getElementById('capture-payload-image-button')?.addEventListener('click', () => {
-    if (!capture.screenshotUrl) return;
+    if (!captureDashboardImgSrc(capture)) return;
     logUi('workspace_payload_image_click', {
       captureId: capture.id,
-      screenshotChars: capture.screenshotUrl.length,
+      screenshotChars: capture.screenshotUrl?.length ?? 0,
     });
     activePreviewCaptureId = capture.id;
     renderCapturePayload(session);
@@ -2271,18 +2324,8 @@ function bindSessionActions() {
   });
   document.getElementById('new-ann-btn')?.addEventListener('click', async () => {
     logUi('workspace_new_capture_click', { sessionId: session?.id ?? null });
-    await invoke('hide_main_window').catch(() => {});
     await invoke('show_overlay', {
-      launch: session
-        ? {
-            targetSessionId: session.id,
-            newSessionName: session.title,
-            newSessionAbout: session.about ?? '',
-            localFolder: session.projectFolder ?? null,
-            githubRepo: session.githubRepo ?? '',
-            skipPicker: true,
-          }
-        : null,
+      launch: overlayLaunchForSession(session),
     });
   });
   document.getElementById('view-all-sessions-btn')?.addEventListener('click', () => {
@@ -2452,6 +2495,7 @@ function renderPermissionReady(note: HTMLElement, detail = 'Debugr can capture y
   lastPermissionMarkup = note.innerHTML;
   lastPermissionClassName = note.className;
   lastPermissionCheckAt = Date.now();
+  permissionAttentionMessage = '';
 }
 
 async function checkPermission() {
@@ -2492,13 +2536,18 @@ async function checkPermission() {
       const runtimeHint = isInstalledApp
         ? 'If you already turned it on, quit Debugr completely and reopen it from Applications so macOS applies the permission.'
         : 'macOS grants Screen Recording per app build. If you switch between the dev build and the packaged app, each one may need its own Screen Recording entry.';
+      const attention = permissionAttentionMessage
+        ? `<span class="perm-attention">${escapeHtml(permissionAttentionMessage)}</span>`
+        : '';
       note.innerHTML = `
       <strong>Screen capture status needs a refresh</strong>
+      ${attention}
       <span>macOS says ${escapeHtml(runtimeName)} is not currently cleared for Screen Recording. If screenshots are working, this is a stale macOS permission check and you can keep using Debugr.</span>
       <span>If captures fail, open Screen Recording settings, turn on <strong>debugr.ai</strong>, then quit and reopen Debugr.</span>
       <span>${escapeHtml(runtimeHint)}</span>
       <span class="perm-runtime-detail"><strong>Current app:</strong> ${escapeHtml(diagnostics.bundle_identifier || 'Unknown')}<br /><strong>Path:</strong> <code>${escapeHtml(diagnostics.executable_path || executable || 'Unknown')}</code></span>
       <span class="perm-runtime-detail"><strong>Not listed?</strong> Click <strong>+</strong>, press <strong>⌘⇧G</strong>, then paste the path above.</span>
+      <button type="button" class="perm-note-action primary" id="repair-screen-permission-btn">Repair Screen Recording &amp; retry</button>
       <button type="button" class="perm-note-action" id="open-screen-settings-btn">Open Screen Recording settings</button>
       <button type="button" class="perm-note-action" id="reveal-runtime-btn">Reveal current runtime in Finder</button>
     `;
@@ -3120,6 +3169,9 @@ async function listenForAnnotations() {
     githubRepo?: string;
     screenshotUrl?: string;
   }>('annotations-saved', async (event) => {
+    const saveTraceId = typeof event.payload.saveTraceId === 'string'
+      ? event.payload.saveTraceId
+      : 'missing_trace';
     const targetSessionId = event.payload.targetSessionId ?? null;
     const targetSession = targetSessionId
       ? sessions.find((session) => session.id === targetSessionId)
@@ -3129,6 +3181,12 @@ async function listenForAnnotations() {
     const payloadGithubRepo = normalizeGithubRepoInput(event.payload.githubRepo);
     const payloadProjectFolder = normalizeProjectFolderInput(event.payload.localFolder);
     if ((event.payload.annotations ?? []).length === 0) {
+      logUi('workspace_annotations_saved_prepare_session_event', {
+        traceId: saveTraceId,
+        targetSessionId,
+        titleChars: payloadTitle.length,
+        hasAbout: Boolean(payloadAbout),
+      });
       if (!targetSessionId || !payloadTitle) return;
       const existing = sessions.find((session) => session.id === targetSessionId);
       if (existing) {
@@ -3166,6 +3224,7 @@ async function listenForAnnotations() {
       renderSessionList();
       renderSession();
       logUi('workspace_session_prepared_from_overlay', {
+        traceId: saveTraceId,
         sessionId: targetSessionId,
         title: payloadTitle,
         hasAbout: Boolean(payloadAbout),
@@ -3180,15 +3239,24 @@ async function listenForAnnotations() {
       MAX_ANNOTATIONS,
     );
     const annotations = (event.payload.annotations ?? []).slice(0, appendPlan.acceptedCount);
-    if (annotations.length === 0) return;
+    if (annotations.length === 0) {
+      logUi('workspace_annotations_saved_no_accepted_annotations', {
+        traceId: saveTraceId,
+        targetSessionId,
+        incomingCount: event.payload.annotations?.length ?? 0,
+        existingSessionAnnotationCount: appendPlan.existingCount,
+        maxAnnotations: appendPlan.maxAnnotations,
+      });
+      return;
+    }
     const priorAppMode = appMode;
     const priorWorkspaceSection = workspaceSection;
     const priorActiveSessionId = activeSessionId;
     const rawShot = event.payload.screenshotUrl?.trim();
-
     const rawShotKind = classifyScreenshotRef(rawShot);
 
     logUi('workspace_annotations_saved_event', {
+      traceId: saveTraceId,
       targetSessionId: event.payload.targetSessionId ?? null,
       annotationCount: annotations.length,
       rejectedAnnotationCount: appendPlan.rejectedCount,
@@ -3205,6 +3273,13 @@ async function listenForAnnotations() {
     });
 
     const captureId = uid('capture');
+    logUi('workspace_capture_materialize_start', {
+      traceId: saveTraceId,
+      captureId,
+      rawScreenshotKind: rawShotKind,
+      rawScreenshotChars: rawShot?.length ?? 0,
+      annotationCount: annotations.length,
+    });
     let screenshotStored: string | undefined;
     if (rawShot?.startsWith('data:image/')) {
       screenshotStored = rawShot;
@@ -3216,6 +3291,7 @@ async function listenForAnnotations() {
         });
       } catch (err) {
         logUi('workspace_finalize_screenshot_failed', {
+          traceId: saveTraceId,
           captureId,
           pendingPathChars: rawShot.length,
           error: String(err).slice(0, 300),
@@ -3244,6 +3320,7 @@ async function listenForAnnotations() {
           : 'other'
       : 'none';
     logUi('workspace_capture_materialized', {
+      traceId: saveTraceId,
       captureId,
       storedScreenshotKind: storedDesc,
       storedScreenshotChars: screenshotStored?.length ?? 0,
@@ -3275,6 +3352,7 @@ async function listenForAnnotations() {
         totalSessionAnnotations: totalAnnotations(session),
       };
       logUi('workspace_annotations_saved_existing_session', {
+        traceId: saveTraceId,
         sessionId: session.id,
         captureId,
         totalSessionAnnotations: totalAnnotations(session),
@@ -3312,6 +3390,7 @@ async function listenForAnnotations() {
         totalSessionAnnotations: totalAnnotations(session),
       };
       logUi('workspace_annotations_saved_new_session', {
+        traceId: saveTraceId,
         sessionId: session.id,
         captureId,
         totalSessionAnnotations: totalAnnotations(session),
@@ -3327,6 +3406,7 @@ async function listenForAnnotations() {
       void syncSessionToWeb(savedSession, 'annotations_saved');
     }
     logUi('workspace_annotations_saved_persisted', {
+      traceId: saveTraceId,
       sessionCount: sessions.length,
       activeSessionId,
       activeCaptureId,
@@ -3335,12 +3415,14 @@ async function listenForAnnotations() {
     });
     if (appMode === 'session') {
       logUi('workspace_annotations_saved_render_visible_session', {
+        traceId: saveTraceId,
         sessionId: activeSessionId,
         workspaceSection,
       });
       renderSession();
     } else {
       logUi('workspace_annotations_saved_deferred_session_open', {
+        traceId: saveTraceId,
         sessionId: activeSessionId,
         appMode,
       });
@@ -3363,7 +3445,11 @@ async function listenForAnnotations() {
     render();
   });
 
-  await listen('screen-capture-permission-needed', async () => {
+  await listen<string | undefined>('screen-capture-permission-needed', async (event) => {
+    permissionAttentionMessage = typeof event.payload === 'string' && event.payload.trim()
+      ? event.payload.trim()
+      : 'New Annotation is blocked because macOS has not granted Screen Recording to this exact Debugr build.';
+    lastPermissionMarkup = '';
     if (!authState.authenticated) {
       appMode = 'welcome';
       render();

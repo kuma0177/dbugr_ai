@@ -90,6 +90,16 @@ describe('macOS screen-recording permission flow', () => {
     expect(permissionHelperBlock).not.toContain('requestScreenRecordingPermission');
   });
 
+  it('offers a one-click permission repair path before retrying annotation', () => {
+    const permissionHelperBlock = sourceBlock(/function bindPermissionNoteActions/, /function captureNeedsLegacyScreenshotLabel/);
+    const permissionCardBlock = sourceBlock(/Screen capture status needs a refresh/, /note.className = 'perm-note warn'/);
+
+    expect(permissionCardBlock).toContain('repair-screen-permission-btn');
+    expect(permissionHelperBlock).toContain('repair_screen_capture_permission');
+    expect(permissionHelperBlock).toContain('show_overlay');
+    expect(permissionHelperBlock).toContain('overlayLaunchForSession(activeSession())');
+  });
+
   it('does not run macOS plugin permission checks while rendering the source chooser', () => {
     const loadSourcesBlock = overlayFunctionBlock(/async function loadCaptureSources\(\)/);
 
@@ -122,11 +132,16 @@ describe('macOS screen-recording permission flow', () => {
     expect(listSourcesBlock).not.toContain('capture_native_png_bytes');
   });
 
-  it('uses native capture for the automatic current-screen annotation flow', () => {
+  it('uses xcap capture for the automatic current-screen annotation flow', () => {
     const currentScreenCommandBlock = rustFunctionBlock('capture_current_screen_snapshot');
 
+    expect(currentScreenCommandBlock).toContain('CGPreflightScreenCaptureAccess()');
+    expect(currentScreenCommandBlock).toContain('ERR_SCREEN_RECORDING_NOT_GRANTED');
+    expect(currentScreenCommandBlock.indexOf('CGPreflightScreenCaptureAccess()')).toBeLessThan(currentScreenCommandBlock.indexOf('capture_native_png_bytes'));
+    expect(currentScreenCommandBlock).not.toContain('can_capture_screen_now');
     expect(currentScreenCommandBlock).toContain('capture_native_png_bytes');
-    expect(currentScreenCommandBlock).toContain('mode=native');
+    expect(rustMainSource).toContain('xcap::Monitor::all()');
+    expect(currentScreenCommandBlock).toContain('mode=xcap');
     expect(currentScreenCommandBlock).not.toContain('take_silent_screenshot');
     expect(currentScreenCommandBlock).not.toContain('screencapture');
   });
@@ -174,16 +189,83 @@ describe('macOS screen-recording permission flow', () => {
 
   it('keeps passive permission checks from running screenshot probes', () => {
     const permissionBlock = rustFunctionBlock('get_screen_capture_permission');
+    const annotationReadyBlock = rustFunctionBlock('get_screen_capture_annotation_ready');
     const diagnosticsBlock = rustFunctionBlock('get_screen_capture_diagnostics');
+    const sharedDiagnosticsBlock = rustFunctionBlock('log_screen_capture_permission_state');
+    const pluginCheckBlock = rustFunctionBlock('check_screen_recording_permission_via_plugin');
 
-    expect(permissionBlock).toContain('CGPreflightScreenCaptureAccess');
+    expect(pluginCheckBlock).toContain('tauri_plugin_macos_permissions::check_screen_recording_permission');
+    expect(permissionBlock).toContain('check_screen_recording_permission_via_plugin');
     expect(permissionBlock).not.toContain('can_capture_screen_now');
     expect(permissionBlock).not.toContain('capture_native_png_bytes');
     expect(permissionBlock).toContain('probe=skipped');
 
-    expect(diagnosticsBlock).toContain('CGPreflightScreenCaptureAccess');
+    expect(sharedDiagnosticsBlock).toContain('check_screen_recording_permission_via_plugin');
+    expect(diagnosticsBlock).toContain('log_screen_capture_permission_state');
     expect(diagnosticsBlock).not.toContain('can_capture_screen_now');
     expect(diagnosticsBlock).not.toContain('capture_native_png_bytes');
-    expect(diagnosticsBlock).toContain('probe=skipped');
+    expect(sharedDiagnosticsBlock).toContain('probe=skipped');
+
+    expect(annotationReadyBlock).toContain('check_screen_recording_permission_via_plugin');
+    expect(annotationReadyBlock).not.toContain('can_capture_screen_now');
+    expect(annotationReadyBlock).not.toContain('capture_native_png_bytes');
+    expect(annotationReadyBlock).toContain('probe=skipped');
+  });
+
+  it('preserves the runtime grant result after macOS permission prompts complete', () => {
+    const requestBlock = rustFunctionBlock('request_screen_capture_permission');
+    const overlayGateBlock = rustFunctionBlock('ensure_screen_recording_permission_before_overlay');
+    const repairBlock = rustFunctionBlock('repair_screen_capture_permission');
+    const resetBlock = rustFunctionBlock('reset_screen_capture_permission_record');
+
+    expect(requestBlock).toContain('request_screen_recording_permission_with_runtime_result');
+    expect(requestBlock).toContain('effective_granted = requested || granted');
+    expect(requestBlock).toContain('SCREEN_RECORDING_GRANTED_THIS_RUN.store(true');
+    expect(requestBlock).not.toContain('capture_native_png_bytes');
+
+    expect(overlayGateBlock).toContain('request_screen_recording_permission_with_runtime_result');
+    expect(overlayGateBlock).toContain('effective_granted = requested || granted');
+    expect(overlayGateBlock).toContain('SCREEN_RECORDING_GRANTED_THIS_RUN.store(true');
+    expect(overlayGateBlock).toContain('reset_screen_capture_permission_record');
+    expect(overlayGateBlock).toContain('auto_repair_result');
+
+    expect(repairBlock).toContain('reset_screen_capture_permission_record');
+    expect(resetBlock).toContain('tccutil');
+    expect(resetBlock).toContain('reset');
+    expect(resetBlock).toContain('ScreenCapture');
+    expect(repairBlock).toContain('request_screen_recording_permission_with_runtime_result');
+    expect(repairBlock).toContain('effective_granted = runtime_requested || preflight_granted');
+  });
+
+  it('stops blocked annotation requests before showing annotation overlay UI', () => {
+    const triggerOverlayBlock = rustFunctionBlock('trigger_overlay');
+    const overlayGateBlock = rustFunctionBlock('ensure_screen_recording_permission_before_overlay');
+    const blockedStart = triggerOverlayBlock.indexOf('if !ensure_screen_recording_permission_before_overlay');
+    const blockedEnd = triggerOverlayBlock.indexOf('\n\n    if let Some(main)', blockedStart + 1);
+    const permissionBlockedBlock = triggerOverlayBlock.slice(blockedStart, blockedEnd);
+
+    expect(overlayGateBlock).toContain('check_screen_recording_permission_via_plugin');
+    expect(overlayGateBlock).toContain('request_screen_recording_permission_with_runtime_result');
+    expect(overlayGateBlock).not.toContain('capture_native_png_bytes');
+    expect(triggerOverlayBlock).toContain('ensure_screen_recording_permission_before_overlay');
+    expect(triggerOverlayBlock.indexOf('ensure_screen_recording_permission_before_overlay')).toBeLessThan(triggerOverlayBlock.indexOf('main.hide()'));
+    expect(triggerOverlayBlock.indexOf('ensure_screen_recording_permission_before_overlay')).toBeLessThan(triggerOverlayBlock.indexOf('show_overlay_window'));
+    expect(permissionBlockedBlock).toContain('overlay_not_shown=true');
+    expect(permissionBlockedBlock).toContain('screen-capture-permission-needed');
+    expect(permissionBlockedBlock).not.toContain('showing_overlay_permission_gate=true');
+    expect(permissionBlockedBlock).not.toContain('overlay-will-show');
+    expect(permissionBlockedBlock).not.toContain('show_overlay_window');
+    expect(permissionBlockedBlock).not.toContain('awaiting_permission_gate');
+    expect(permissionBlockedBlock).not.toContain('show_session_window');
+  });
+
+  it('does not hide the main window before frontend annotation requests pass the native gate', () => {
+    const confirmMoreBlock = sourceBlock(/confirm-more-btn'\)\?\.addEventListener/, /confirm-open-btn'\)\?\.addEventListener/);
+    const newCaptureBlock = sourceBlock(/new-ann-btn'\)\?\.addEventListener/, /view-all-sessions-btn'\)\?\.addEventListener/);
+
+    expect(confirmMoreBlock).toContain("invoke('show_overlay')");
+    expect(confirmMoreBlock).not.toContain("invoke('hide_main_window')");
+    expect(newCaptureBlock).toContain("invoke('show_overlay'");
+    expect(newCaptureBlock).not.toContain("invoke('hide_main_window')");
   });
 });

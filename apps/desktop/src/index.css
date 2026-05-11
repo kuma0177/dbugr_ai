@@ -1061,6 +1061,11 @@ kbd {
   color: #b45309;
 }
 
+.perm-attention {
+  color: #92400e;
+  font-weight: 700;
+}
+
 .perm-note-action {
   align-self: flex-start;
   min-height: 34px;
@@ -1071,6 +1076,17 @@ kbd {
   color: #d84c0e;
   font-size: 12px;
   font-weight: 600;
+}
+
+.perm-note-action.primary {
+  background: #2563eb;
+  border-color: #1d4ed8;
+  color: #fff;
+}
+
+.perm-note-action:disabled {
+  cursor: wait;
+  opacity: 0.72;
 }
 
 .main-pane {

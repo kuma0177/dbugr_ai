@@ -5,16 +5,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     ffi::{c_char, c_void, CStr},
     fs::{self, OpenOptions},
-    io::Write as _,
+    io::{Cursor, Write as _},
     path::PathBuf,
     process::Command,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use core_graphics::display::CGDisplay;
-use tauri::{AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
+use tauri::{AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 // ── macOS: force-activate the app so overlay windows actually appear ──────────
@@ -40,6 +39,8 @@ fn macos_activate() {}
 /// that emits `overlay-will-show` and resets annotation UI (picker), which races ⌃⌘Z /
 /// tray clicks while the capture pipeline briefly hides the overlay.
 static OVERLAY_HIDDEN_FOR_SCREENSHOT: AtomicBool = AtomicBool::new(false);
+static SCREEN_RECORDING_GRANTED_THIS_RUN: AtomicBool = AtomicBool::new(false);
+static SCREEN_RECORDING_REPAIR_ATTEMPTED_THIS_RUN: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,7 +88,10 @@ unsafe extern "C" {
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn debugr_capture_region_png_free(ptr: *mut c_void);
-    fn debugr_list_capture_sources_json(out_json: *mut *mut c_char, out_error: *mut *mut c_char) -> bool;
+    fn debugr_list_capture_sources_json(
+        out_json: *mut *mut c_char,
+        out_error: *mut *mut c_char,
+    ) -> bool;
     fn debugr_capture_display_full_png(
         display_id: u32,
         out_bytes: *mut *mut u8,
@@ -115,7 +119,9 @@ fn debugr_root_dir() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
         dirs_next::config_dir()
-            .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"))
+            .unwrap_or_else(|| {
+                PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config")
+            })
             .join("debugr")
     }
     #[cfg(not(target_os = "linux"))]
@@ -176,16 +182,74 @@ fn log_backend(event: &str, details: impl AsRef<str>) {
     append_session_log("core", &format!("{event} {}", detail));
 }
 
+fn check_screen_recording_permission_via_plugin() -> bool {
+    tauri::async_runtime::block_on(
+        tauri_plugin_macos_permissions::check_screen_recording_permission(),
+    )
+}
+
+fn request_screen_recording_permission_with_runtime_result() -> bool {
+    unsafe { CGRequestScreenCaptureAccess() }
+}
+
+fn log_screen_capture_permission_state(event: &str, bundle_identifier: impl AsRef<str>) -> bool {
+    let preflight = check_screen_recording_permission_via_plugin();
+    let executable_path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.into_os_string().into_string().ok())
+        .unwrap_or_else(|| "unknown".to_string());
+    log_backend(
+        event,
+        format!(
+            "preflight={preflight} probe=skipped granted={preflight} bundle_id={} executable={} reason=passive_check",
+            bundle_identifier.as_ref(),
+            sanitize_log_line(&executable_path)
+        ),
+    );
+    preflight
+}
+
+fn main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    if let Some(win) = app.get_webview_window("main") {
+        return Ok(win);
+    }
+
+    log_backend("main.recreate.start", "label=main");
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("debugr.ai")
+        .inner_size(1280.0, 880.0)
+        .resizable(true)
+        .center()
+        .visible(false)
+        .build()
+        .map_err(|e| {
+            log_backend("main.recreate.failed", e.to_string());
+            e.to_string()
+        })
+}
+
 // ── Permission commands ───────────────────────────────────────────────────────
 
 #[tauri::command]
 fn get_screen_capture_permission() -> bool {
-    let preflight = unsafe { CGPreflightScreenCaptureAccess() };
+    let preflight = check_screen_recording_permission_via_plugin();
     log_backend(
         "permission.preflight",
         format!("preflight={preflight} probe=skipped granted={preflight} reason=passive_check"),
     );
     preflight
+}
+
+#[tauri::command]
+fn get_screen_capture_annotation_ready() -> bool {
+    let preflight = check_screen_recording_permission_via_plugin();
+    let granted_this_run = SCREEN_RECORDING_GRANTED_THIS_RUN.load(Ordering::SeqCst);
+    let granted = preflight || granted_this_run;
+    log_backend(
+        "permission.annotation_ready",
+        format!("preflight={preflight} granted_this_run={granted_this_run} probe=skipped granted={granted} reason=preflight_or_cg_request"),
+    );
+    granted
 }
 
 #[derive(serde::Serialize)]
@@ -197,23 +261,41 @@ struct ScreenCaptureDiagnostics {
     executable_path: String,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScreenCaptureRepairResult {
+    bundle_identifier: String,
+    reset_attempted: bool,
+    reset_succeeded: bool,
+    runtime_requested: bool,
+    preflight_granted: bool,
+    effective_granted: bool,
+    message: String,
+}
+
+fn reset_screen_capture_permission_record(bundle_identifier: &str) -> (bool, bool, Option<i32>) {
+    let reset_status = Command::new("tccutil")
+        .args(["reset", "ScreenCapture", bundle_identifier])
+        .status();
+    let reset_invoked = reset_status.is_ok();
+    let reset_succeeded = reset_status
+        .as_ref()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    let status_code = reset_status.as_ref().ok().and_then(|status| status.code());
+    (reset_invoked, reset_succeeded, status_code)
+}
+
 #[tauri::command]
 fn get_screen_capture_diagnostics(app: AppHandle) -> ScreenCaptureDiagnostics {
-    let preflight = unsafe { CGPreflightScreenCaptureAccess() };
-    let probe = false;
     let bundle_identifier = app.config().identifier.clone();
+    let preflight =
+        log_screen_capture_permission_state("permission.diagnostics", &bundle_identifier);
+    let probe = false;
     let executable_path = std::env::current_exe()
         .ok()
         .and_then(|p| p.into_os_string().into_string().ok())
         .unwrap_or_else(|| "unknown".to_string());
-    log_backend(
-        "permission.diagnostics",
-        format!(
-            "preflight={preflight} probe=skipped granted={preflight} bundle_id={} executable={} reason=passive_check",
-            bundle_identifier,
-            executable_path
-        ),
-    );
     ScreenCaptureDiagnostics {
         preflight,
         probe,
@@ -225,14 +307,77 @@ fn get_screen_capture_diagnostics(app: AppHandle) -> ScreenCaptureDiagnostics {
 
 #[tauri::command]
 fn request_screen_capture_permission() -> bool {
-    log_backend("permission.request.start", "triggering_cg_request=true");
-    let requested = unsafe { CGRequestScreenCaptureAccess() };
-    let granted = get_screen_capture_permission();
+    log_backend(
+        "permission.request.start",
+        "triggering_runtime_request=true",
+    );
+    let requested = request_screen_recording_permission_with_runtime_result();
+    let granted = check_screen_recording_permission_via_plugin();
+    if requested || granted {
+        SCREEN_RECORDING_GRANTED_THIS_RUN.store(true, Ordering::SeqCst);
+    }
+    let effective_granted = requested || granted;
     log_backend(
         "permission.request.result",
-        format!("cg_request_returned={requested} effective_granted={granted}"),
+        format!(
+            "runtime_request_completed=true runtime_requested={requested} preflight_granted={granted} effective_granted={effective_granted}"
+        ),
     );
-    granted
+    effective_granted
+}
+
+#[tauri::command]
+fn repair_screen_capture_permission(app: AppHandle) -> Result<ScreenCaptureRepairResult, String> {
+    let bundle_identifier = app.config().identifier.clone();
+    log_backend(
+        "permission.repair.start",
+        format!("bundle_id={bundle_identifier}"),
+    );
+    let (reset_invoked, reset_succeeded, reset_status_code) =
+        reset_screen_capture_permission_record(&bundle_identifier);
+    log_backend(
+        "permission.repair.reset",
+        format!(
+            "bundle_id={bundle_identifier} reset_invoked={} reset_succeeded={reset_succeeded} status={:?}",
+            reset_invoked,
+            reset_status_code
+        ),
+    );
+
+    macos_activate();
+    let runtime_requested = request_screen_recording_permission_with_runtime_result();
+    let preflight_granted = check_screen_recording_permission_via_plugin();
+    let effective_granted = runtime_requested || preflight_granted;
+    if effective_granted {
+        SCREEN_RECORDING_GRANTED_THIS_RUN.store(true, Ordering::SeqCst);
+    } else {
+        SCREEN_RECORDING_REPAIR_ATTEMPTED_THIS_RUN.store(true, Ordering::SeqCst);
+    }
+    let message = if effective_granted {
+        "Screen Recording is ready. Restarting annotation.".to_string()
+    } else if reset_succeeded {
+        "macOS still has not granted Screen Recording to this Debugr build. Turn on debugr.ai in System Settings, then click New Annotation again.".to_string()
+    } else {
+        "Debugr could not reset the macOS permission record automatically. Open Screen Recording settings, turn on debugr.ai, then click New Annotation again.".to_string()
+    };
+    log_backend(
+        "permission.repair.result",
+        format!(
+            "bundle_id={bundle_identifier} reset_succeeded={reset_succeeded} runtime_requested={runtime_requested} preflight_granted={preflight_granted} effective_granted={effective_granted}"
+        ),
+    );
+    if !effective_granted {
+        let _ = open_screen_capture_settings();
+    }
+    Ok(ScreenCaptureRepairResult {
+        bundle_identifier,
+        reset_attempted: true,
+        reset_succeeded,
+        runtime_requested,
+        preflight_granted,
+        effective_granted,
+        message,
+    })
 }
 
 #[tauri::command]
@@ -282,10 +427,19 @@ fn open_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_auth_popup(app: AppHandle, url: String, title: String, label: String) -> Result<(), String> {
+fn open_auth_popup(
+    app: AppHandle,
+    url: String,
+    title: String,
+    label: String,
+) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(&label) {
-        window.show().map_err(|e| format!("Failed to show auth popup: {e}"))?;
-        window.set_focus().map_err(|e| format!("Failed to focus auth popup: {e}"))?;
+        window
+            .show()
+            .map_err(|e| format!("Failed to show auth popup: {e}"))?;
+        window
+            .set_focus()
+            .map_err(|e| format!("Failed to focus auth popup: {e}"))?;
         return Ok(());
     }
 
@@ -395,10 +549,10 @@ fn save_provider_config(payload: serde_json::Value) -> Result<(), String> {
         .join("debugr");
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create config dir: {e}"))?;
     let path = dir.join("provider-config.json");
-    let json = serde_json::to_string_pretty(&payload)
-        .map_err(|e| format!("Serialization failed: {e}"))?;
-    let mut file = fs::File::create(&path)
-        .map_err(|e| format!("Failed to create provider config: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(&payload).map_err(|e| format!("Serialization failed: {e}"))?;
+    let mut file =
+        fs::File::create(&path).map_err(|e| format!("Failed to create provider config: {e}"))?;
     file.write_all(json.as_bytes())
         .map_err(|e| format!("Failed to write provider config: {e}"))?;
     log_backend(
@@ -432,18 +586,19 @@ fn verify_claude_auth() -> Result<String, String> {
         .output()
         .map_err(|e| format!("Failed to run claude: {e}"))?;
     if !ver.status.success() {
-        return Err(
-            "claude CLI found but returned an error. Try reinstalling.".to_string(),
-        );
+        return Err("claude CLI found but returned an error. Try reinstalling.".to_string());
     }
     let version = String::from_utf8_lossy(&ver.stdout).trim().to_string();
 
     // 3. Check credentials file written by `claude /login`
     let home = std::env::var("HOME").unwrap_or_default();
-    let creds = PathBuf::from(&home).join(".claude").join("credentials.json");
+    let creds = PathBuf::from(&home)
+        .join(".claude")
+        .join("credentials.json");
     if !creds.exists() {
         return Err(
-            "Not signed in yet. Click 'Connect Claude' and complete the Claude CLI login flow.".to_string(),
+            "Not signed in yet. Click 'Connect Claude' and complete the Claude CLI login flow."
+                .to_string(),
         );
     }
 
@@ -459,12 +614,18 @@ fn verify_claude_api_key(api_key: String) -> Result<String, String> {
 
     let output = Command::new("curl")
         .args([
-            "-sS", "-o", "/dev/null",
-            "-w", "%{http_code}",
-            "--max-time", "8",
+            "-sS",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "--max-time",
+            "8",
             "https://api.anthropic.com/v1/models",
-            "-H", &format!("x-api-key: {api_key}"),
-            "-H", "anthropic-version: 2023-06-01",
+            "-H",
+            &format!("x-api-key: {api_key}"),
+            "-H",
+            "anthropic-version: 2023-06-01",
         ])
         .output()
         .map_err(|e| format!("Network check failed: {e}"))?;
@@ -492,7 +653,9 @@ fn verify_claude_api_key(api_key: String) -> Result<String, String> {
         "401" => Err("Invalid key — check you copied the full Anthropic API key.".to_string()),
         "403" => Err("Key is valid but does not have access to this workspace.".to_string()),
         "429" => Ok("✓ Key valid (rate-limited, that's fine)".to_string()),
-        other => Err(format!("Unexpected response ({other}). Check your internet connection.")),
+        other => Err(format!(
+            "Unexpected response ({other}). Check your internet connection."
+        )),
     }
 }
 
@@ -507,11 +670,16 @@ fn verify_codex_key(api_key: String) -> Result<String, String> {
 
     let output = Command::new("curl")
         .args([
-            "-sS", "-o", "/dev/null",
-            "-w", "%{http_code}",
-            "--max-time", "8",
+            "-sS",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "--max-time",
+            "8",
             "https://api.openai.com/v1/models",
-            "-H", &format!("Authorization: Bearer {api_key}"),
+            "-H",
+            &format!("Authorization: Bearer {api_key}"),
         ])
         .output()
         .map_err(|e| format!("Network check failed: {e}"))?;
@@ -539,7 +707,9 @@ fn verify_codex_key(api_key: String) -> Result<String, String> {
         "429" => Ok("✓ Key valid (rate-limited, that's fine)".to_string()),
         "401" => Err("Invalid key — check you copied the full key from OpenAI.".to_string()),
         "403" => Err("Key is valid but has insufficient permissions.".to_string()),
-        other => Err(format!("Unexpected response ({other}). Check your internet connection.")),
+        other => Err(format!(
+            "Unexpected response ({other}). Check your internet connection."
+        )),
     }
 }
 
@@ -548,7 +718,9 @@ fn verify_codex_key(api_key: String) -> Result<String, String> {
 fn check_cursor_installed() -> bool {
     let home = std::env::var("HOME").unwrap_or_default();
     PathBuf::from("/Applications/Cursor.app").exists()
-        || PathBuf::from(&home).join("Applications/Cursor.app").exists()
+        || PathBuf::from(&home)
+            .join("Applications/Cursor.app")
+            .exists()
 }
 
 /// Read provider connection config from disk.
@@ -564,13 +736,21 @@ fn get_provider_config() -> serde_json::Value {
         .unwrap_or_else(|| serde_json::json!({}));
     log_backend(
         "workspace.provider_config.loaded",
-        format!("path={} has_data={}", path.display(), parsed != serde_json::json!({})),
+        format!(
+            "path={} has_data={}",
+            path.display(),
+            parsed != serde_json::json!({})
+        ),
     );
     parsed
 }
 
 #[tauri::command]
-fn open_command_in_terminal(cwd: String, command: String, title: Option<String>) -> Result<(), String> {
+fn open_command_in_terminal(
+    cwd: String,
+    command: String,
+    title: Option<String>,
+) -> Result<(), String> {
     let shell_command = format!("cd '{}' && {}", cwd.replace('\'', r"'\''"), command);
     let applescript = match title {
         Some(title) => format!(
@@ -654,7 +834,8 @@ fn pick_folder(default_path: Option<String>) -> Option<String> {
 
 fn encode_image_at(path: &PathBuf) -> Result<String, String> {
     let out = Command::new("base64")
-        .arg("-i").arg(path)
+        .arg("-i")
+        .arg(path)
         .output()
         .map_err(|e| format!("base64 failed: {e}"))?;
     let _ = fs::remove_file(path);
@@ -734,92 +915,56 @@ fn capture_native_png_bytes_cropped(
     crop_width: Option<u32>,
     crop_height: Option<u32>,
 ) -> Result<Vec<u8>, String> {
-    let image = CGDisplay::main()
-        .image()
-        .ok_or_else(|| "CoreGraphics did not return a display image".to_string())?;
+    let monitor = xcap::Monitor::all()
+        .map_err(|e| format!("xcap monitor listing failed: {e}"))?
+        .into_iter()
+        .find(|monitor| monitor.is_primary())
+        .ok_or_else(|| "xcap did not return a primary monitor".to_string())?;
+    let monitor_id = monitor.id();
+    let monitor_name = monitor.name().to_string();
+    let mut image = monitor
+        .capture_image()
+        .map_err(|e| format!("xcap monitor capture failed: {e}"))?;
     let full_width = image.width();
     let full_height = image.height();
-    let bytes_per_row = image.bytes_per_row();
-    let bits_per_pixel = image.bits_per_pixel();
-    let data = image.data();
-    let raw = data.bytes();
 
     if full_width == 0 || full_height == 0 {
-        return Err("Captured image had zero size".into());
-    }
-    if bits_per_pixel < 32 {
-        return Err(format!("Unsupported bits per pixel for display capture: {bits_per_pixel}"));
+        return Err("xcap captured image had zero size".into());
     }
 
-    // Determine crop dimensions
-    let crop_x_usize = crop_x as usize;
-    let crop_y_usize = crop_y as usize;
+    let crop_x = crop_x.min(full_width);
+    let crop_y = crop_y.min(full_height);
     let width = std::cmp::min(
-        crop_width.unwrap_or(full_width as u32) as usize,
-        full_width - crop_x_usize,
+        crop_width.unwrap_or(full_width),
+        full_width.saturating_sub(crop_x),
     );
     let height = std::cmp::min(
-        crop_height.unwrap_or(full_height as u32) as usize,
-        full_height - crop_y_usize,
+        crop_height.unwrap_or(full_height),
+        full_height.saturating_sub(crop_y),
     );
 
     if width == 0 || height == 0 {
         return Err("Crop region is empty".into());
     }
 
-    let pixel_stride = bits_per_pixel / 8;
-    let mut rgba = vec![0u8; width as usize * height as usize * 4];
-
-    for y in 0..height {
-        let src_row = (y + crop_y_usize) * bytes_per_row;
-        let dst_row = y * width * 4;
-        for x in 0..width {
-            let src = src_row + (x + crop_x_usize) * pixel_stride;
-            let dst = dst_row + x as usize * 4;
-            if src + 3 >= raw.len() || dst + 3 >= rgba.len() {
-                return Err("Captured image buffer was shorter than expected".into());
-            }
-            let b = raw[src];
-            let g = raw[src + 1];
-            let r = raw[src + 2];
-            let a = raw[src + 3];
-            rgba[dst] = r;
-            rgba[dst + 1] = g;
-            rgba[dst + 2] = b;
-            rgba[dst + 3] = a;
-        }
+    if crop_x != 0 || crop_y != 0 || width != full_width || height != full_height {
+        image = xcap::image::imageops::crop_imm(&image, crop_x, crop_y, width, height).to_image();
     }
 
-    let mut png_bytes = Vec::new();
-    let mut encoder = png::Encoder::new(&mut png_bytes, width as u32, height as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder
-        .write_header()
-        .map_err(|e| format!("PNG header encode failed: {e}"))?;
-    writer
-        .write_image_data(&rgba)
-        .map_err(|e| format!("PNG image encode failed: {e}"))?;
-    drop(writer);
+    let mut png_bytes = Cursor::new(Vec::new());
+    xcap::image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut png_bytes, xcap::image::ImageFormat::Png)
+        .map_err(|e| format!("xcap PNG encode failed: {e}"))?;
+    let png_bytes = png_bytes.into_inner();
+    log_backend(
+        "screenshot.xcap.success",
+        format!(
+            "monitor_id={monitor_id} monitor_name={} full_width={full_width} full_height={full_height} crop_x={crop_x} crop_y={crop_y} width={width} height={height} bytes={}",
+            sanitize_log_line(&monitor_name),
+            png_bytes.len()
+        ),
+    );
     Ok(png_bytes)
-}
-
-/// Runtime probe: verifies that the current executable can really capture.
-///
-/// Keep this out of passive permission/render paths. Calling it performs a real
-/// screen capture, which can summon Apple's Screen Recording modal.
-#[allow(dead_code)]
-fn can_capture_screen_now() -> bool {
-    match capture_native_png_bytes() {
-        Ok(bytes) => {
-            log_backend("screenshot.probe", format!("mode=native bytes={}", bytes.len()));
-            true
-        }
-        Err(error) => {
-            log_backend("screenshot.probe_failed", format!("mode=native error={error}"));
-            false
-        }
-    }
 }
 
 /// Silent full-screen screenshot — used internally before showing overlay.
@@ -890,8 +1035,9 @@ fn take_silent_screenshot_cropped(
 
             let fallback_output = run_capture(None)?;
             if !fallback_output.status.success() {
-                let fallback_stderr =
-                    String::from_utf8_lossy(&fallback_output.stderr).trim().to_string();
+                let fallback_stderr = String::from_utf8_lossy(&fallback_output.stderr)
+                    .trim()
+                    .to_string();
                 let fallback_detail = if fallback_stderr.is_empty() {
                     format!("exit_code={:?}", fallback_output.status.code())
                 } else {
@@ -901,7 +1047,9 @@ fn take_silent_screenshot_cropped(
                     "screenshot.silent.failed",
                     format!("mode=screencapture fallback=full_screen detail={fallback_detail}"),
                 );
-                return Err(format!("screencapture failed after fallback: {fallback_detail}"));
+                return Err(format!(
+                    "screencapture failed after fallback: {fallback_detail}"
+                ));
             }
 
             log_backend(
@@ -922,8 +1070,7 @@ fn take_silent_screenshot_cropped(
     }
 
     // Read the PNG (no decoding/cropping/re-encoding - just use as-is)
-    let png_bytes = fs::read(&temp_path)
-        .map_err(|e| format!("Failed to read screenshot: {e}"))?;
+    let png_bytes = fs::read(&temp_path).map_err(|e| format!("Failed to read screenshot: {e}"))?;
 
     // Clean up temp file
     let _ = fs::remove_file(&temp_path);
@@ -940,7 +1087,10 @@ fn take_silent_screenshot_cropped(
 #[tauri::command]
 fn capture_interactive_screenshot(app: AppHandle) -> Result<String, String> {
     let path = temp_capture_path();
-    log_backend("screenshot.interactive.start", format!("path={}", path.display()));
+    log_backend(
+        "screenshot.interactive.start",
+        format!("path={}", path.display()),
+    );
     let ok = Command::new("screencapture")
         .args(["-i", "-x"])
         .arg(&path)
@@ -950,7 +1100,11 @@ fn capture_interactive_screenshot(app: AppHandle) -> Result<String, String> {
     if !ok || !path.exists() {
         log_backend(
             "screenshot.interactive.cancelled_or_failed",
-            format!("path={} command_ok={ok} exists={}", path.display(), path.exists()),
+            format!(
+                "path={} command_ok={ok} exists={}",
+                path.display(),
+                path.exists()
+            ),
         );
         return Err("Screenshot cancelled".into());
     }
@@ -971,10 +1125,7 @@ fn capture_interactive_screenshot(app: AppHandle) -> Result<String, String> {
 /// Relay annotation data from the overlay window to the main window via the
 /// Rust backend (avoids frontend emit_to permission restrictions in Tauri v2).
 #[tauri::command]
-fn finish_annotations(
-    app: AppHandle,
-    payload: serde_json::Value,
-) -> Result<(), String> {
+fn finish_annotations(app: AppHandle, payload: serde_json::Value) -> Result<(), String> {
     let ann_n = payload
         .get("annotations")
         .and_then(|a| a.as_array())
@@ -1005,24 +1156,36 @@ fn finish_annotations(
         .and_then(|o| o.get("id"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    let trace_id = payload
+        .get("saveTraceId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("missing_trace");
+    let main_visible_before = app
+        .get_webview_window("main")
+        .and_then(|w| w.is_visible().ok());
     log_backend(
         "workspace.annotations.finish",
         format!(
-            "annotations={ann_n} screenshot_kind={shot_kind} screenshot_url_chars={shot_chars} first_ann_id={first_ann_id} payload_keys={}",
+            "trace_id={trace_id} annotations={ann_n} screenshot_kind={shot_kind} screenshot_url_chars={shot_chars} first_ann_id={first_ann_id} main_visible_before={main_visible_before:?} payload_keys={}",
             payload.as_object().map(|o| o.len()).unwrap_or(0)
         ),
     );
-    // Emit event to main window
-    if let Some(main) = app.get_webview_window("main") {
-        main.emit("annotations-saved", &payload)
-            .map_err(|e| format!("Failed to emit annotations-saved: {e}"))?;
-        log_backend(
-            "workspace.annotations.emit_ok",
-            format!("annotations={ann_n} screenshot_kind={shot_kind} screenshot_url_chars={shot_chars}"),
-        );
-    } else {
-        return Err("Main window not found".into());
-    }
+    // Emit event to main window. Recreate it if the user closed the workspace
+    // while keeping the menu-bar overlay alive.
+    let main = main_window(&app)?;
+    log_backend(
+        "workspace.annotations.main_ready",
+        format!(
+            "trace_id={trace_id} main_visible_after_recreate={:?}",
+            main.is_visible().ok()
+        ),
+    );
+    main.emit("annotations-saved", &payload)
+        .map_err(|e| format!("Failed to emit annotations-saved: {e}"))?;
+    log_backend(
+        "workspace.annotations.emit_ok",
+        format!("trace_id={trace_id} annotations={ann_n} screenshot_kind={shot_kind} screenshot_url_chars={shot_chars}"),
+    );
 
     Ok(())
 }
@@ -1130,7 +1293,11 @@ fn list_capture_sources_sync() -> Result<CaptureSourceList, String> {
 
 /// Captures an entire display or a single window, then the overlay crops in image space (no global rect math).
 #[tauri::command]
-async fn capture_selected_source(app: AppHandle, kind: String, source_id: u64) -> Result<String, String> {
+async fn capture_selected_source(
+    app: AppHandle,
+    kind: String,
+    source_id: u64,
+) -> Result<String, String> {
     let sid_u32 = u32::try_from(source_id).map_err(|_| "Invalid source id".to_string())?;
 
     OVERLAY_HIDDEN_FOR_SCREENSHOT.store(true, Ordering::SeqCst);
@@ -1179,6 +1346,22 @@ async fn capture_selected_source(app: AppHandle, kind: String, source_id: u64) -
 /// looking at and lets the overlay crop on top.
 #[tauri::command]
 async fn capture_current_screen_snapshot(app: AppHandle) -> Result<String, String> {
+    let preflight = unsafe { CGPreflightScreenCaptureAccess() };
+    let granted_this_run = SCREEN_RECORDING_GRANTED_THIS_RUN.load(Ordering::SeqCst);
+    if !preflight && !granted_this_run {
+        let executable = std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        log_backend(
+            "overlay.capture.current_screen.permission_denied",
+            format!(
+                "preflight=false granted_this_run=false executable={}",
+                sanitize_log_line(&executable)
+            ),
+        );
+        return Err("ERR_SCREEN_RECORDING_NOT_GRANTED".into());
+    }
+
     OVERLAY_HIDDEN_FOR_SCREENSHOT.store(true, Ordering::SeqCst);
     if let Some(main) = app.get_webview_window("main") {
         if main.is_visible().unwrap_or(false) {
@@ -1195,13 +1378,13 @@ async fn capture_current_screen_snapshot(app: AppHandle) -> Result<String, Strin
         let png_bytes = capture_native_png_bytes()?;
         log_backend(
             "screenshot.silent.success",
-            format!("mode=native bytes={}", png_bytes.len()),
+            format!("mode=xcap bytes={}", png_bytes.len()),
         );
         Ok::<String, String>(encode_png_bytes_to_data_url(&png_bytes))
     })
-        .await
-        .map_err(|e| format!("capture_current_screen_snapshot: {e}"))
-        .and_then(|inner| inner);
+    .await
+    .map_err(|e| format!("capture_current_screen_snapshot: {e}"))
+    .and_then(|inner| inner);
 
     // Always re-show the overlay and reset the guard, regardless of success or
     // failure. Without this, a failed capture leaves OVERLAY_HIDDEN_FOR_SCREENSHOT=true
@@ -1288,15 +1471,13 @@ fn show_session_window(app: AppHandle) -> Result<(), String> {
         format!("main_visible_before={visible_before:?}"),
     );
     macos_activate();
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.unminimize();
-        win.show().map_err(|e| e.to_string())?;
-        win.set_focus().map_err(|e| e.to_string())?;
-        win.emit("enter-session-mode", ()).map_err(|e| e.to_string())?;
-        log_backend("main.show_session.success", "emitted=enter-session-mode");
-    } else {
-        log_backend("main.show_session.missing", "label=main");
-    }
+    let win = main_window(&app)?;
+    let _ = win.unminimize();
+    win.show().map_err(|e| e.to_string())?;
+    win.set_focus().map_err(|e| e.to_string())?;
+    win.emit("enter-session-mode", ())
+        .map_err(|e| e.to_string())?;
+    log_backend("main.show_session.success", "emitted=enter-session-mode");
     Ok(())
 }
 
@@ -1310,15 +1491,12 @@ fn show_home_window(app: AppHandle) -> Result<(), String> {
         format!("main_visible_before={visible_before:?}"),
     );
     macos_activate();
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.unminimize();
-        win.show().map_err(|e| e.to_string())?;
-        win.set_focus().map_err(|e| e.to_string())?;
-        win.emit("go-home", ()).map_err(|e| e.to_string())?;
-        log_backend("main.show_home.success", "emitted=go-home");
-    } else {
-        log_backend("main.show_home.missing", "label=main");
-    }
+    let win = main_window(&app)?;
+    let _ = win.unminimize();
+    win.show().map_err(|e| e.to_string())?;
+    win.set_focus().map_err(|e| e.to_string())?;
+    win.emit("go-home", ()).map_err(|e| e.to_string())?;
+    log_backend("main.show_home.success", "emitted=go-home");
     Ok(())
 }
 
@@ -1457,12 +1635,13 @@ fn finalize_capture_screenshot(capture_id: String, pending_path: String) -> Resu
     let dest = base_canon.join(format!("{}.png", capture_id.trim()));
     let _ = fs::remove_file(&dest);
 
-    fs::rename(&incoming_canon, &dest).or_else(|_| {
-        fs::copy(&incoming_canon, &dest)?;
-        let _ = fs::remove_file(&incoming_canon);
-        Ok::<(), std::io::Error>(())
-    })
-    .map_err(|e| format!("finalize_capture_screenshot: {e}"))?;
+    fs::rename(&incoming_canon, &dest)
+        .or_else(|_| {
+            fs::copy(&incoming_canon, &dest)?;
+            let _ = fs::remove_file(&incoming_canon);
+            Ok::<(), std::io::Error>(())
+        })
+        .map_err(|e| format!("finalize_capture_screenshot: {e}"))?;
     let dest_bytes = fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
 
     log_backend(
@@ -1497,7 +1676,11 @@ fn save_screenshot(capture_id: String, data_url: String) -> Result<String, Strin
     let saved_bytes = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     log_backend(
         "workspace.screenshot.saved",
-        format!("capture_id={} path={} saved_bytes={saved_bytes}", capture_id, path.display()),
+        format!(
+            "capture_id={} path={} saved_bytes={saved_bytes}",
+            capture_id,
+            path.display()
+        ),
     );
 
     Ok(path.to_string_lossy().to_string())
@@ -1575,7 +1758,9 @@ fn save_sessions_to_disk(payload: serde_json::Value) -> Result<(), String> {
         #[cfg(target_os = "linux")]
         {
             dirs_next::config_dir()
-                .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"))
+                .unwrap_or_else(|| {
+                    PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config")
+                })
                 .join("debugr")
         }
         #[cfg(target_os = "windows")]
@@ -1593,11 +1778,11 @@ fn save_sessions_to_disk(payload: serde_json::Value) -> Result<(), String> {
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create data dir: {e}"))?;
 
     let file_path = dir.join("sessions.json");
-    let json = serde_json::to_string_pretty(&payload)
-        .map_err(|e| format!("Serialization failed: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(&payload).map_err(|e| format!("Serialization failed: {e}"))?;
 
-    let mut file = fs::File::create(&file_path)
-        .map_err(|e| format!("Failed to create sessions file: {e}"))?;
+    let mut file =
+        fs::File::create(&file_path).map_err(|e| format!("Failed to create sessions file: {e}"))?;
     file.write_all(json.as_bytes())
         .map_err(|e| format!("Failed to write sessions: {e}"))?;
     log_backend(
@@ -1626,9 +1811,13 @@ fn copy_to_clipboard(text: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("pbcopy failed: {e}"))?;
     if let Some(stdin) = child.stdin.as_mut() {
-        stdin.write_all(text.as_bytes()).map_err(|e| format!("write failed: {e}"))?;
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|e| format!("write failed: {e}"))?;
     }
-    child.wait().map_err(|e| format!("pbcopy wait failed: {e}"))?;
+    child
+        .wait()
+        .map_err(|e| format!("pbcopy wait failed: {e}"))?;
     Ok(())
 }
 
@@ -1645,7 +1834,9 @@ fn open_in_cursor(project_folder: Option<String>) -> Result<(), String> {
                 cmd.arg(trimmed);
             }
         }
-        let status = cmd.status().map_err(|e| format!("Failed to launch Cursor: {e}"))?;
+        let status = cmd
+            .status()
+            .map_err(|e| format!("Failed to launch Cursor: {e}"))?;
         if !status.success() {
             return Err("Cursor did not open successfully.".into());
         }
@@ -1662,7 +1853,9 @@ fn tray_template_icon() -> Image<'static> {
     static PNG_BYTES: &[u8] = include_bytes!("../icons/trayTemplate.png");
     let mut decoder = png::Decoder::new(std::io::Cursor::new(PNG_BYTES));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
-    let mut reader = decoder.read_info().expect("Failed to read tray template PNG");
+    let mut reader = decoder
+        .read_info()
+        .expect("Failed to read tray template PNG");
     let mut data = vec![0; reader.output_buffer_size()];
     let info = reader
         .next_frame(&mut data)
@@ -1693,7 +1886,8 @@ fn tray_template_icon() -> Image<'static> {
 fn show_overlay_window(app: &AppHandle) {
     if let Some(overlay) = app.get_webview_window("overlay") {
         log_backend("overlay.window.found", "label=overlay");
-        let bounds = overlay.current_monitor()
+        let bounds = overlay
+            .current_monitor()
             .ok()
             .flatten()
             .or_else(|| overlay.primary_monitor().ok().flatten())
@@ -1714,7 +1908,9 @@ fn show_overlay_window(app: &AppHandle) {
 
         let app2 = app.clone();
         let _ = app.run_on_main_thread(move || {
-            let Some(ov) = app2.get_webview_window("overlay") else { return };
+            let Some(ov) = app2.get_webview_window("overlay") else {
+                return;
+            };
             if let Some((lw, lh, lx, ly)) = bounds {
                 let _ = ov.set_size(tauri::LogicalSize::new(lw, lh));
                 let _ = ov.set_position(tauri::LogicalPosition::new(lx, ly));
@@ -1727,6 +1923,79 @@ fn show_overlay_window(app: &AppHandle) {
             // the user intentionally clicks into Debugr's controls.
         });
     }
+}
+
+fn ensure_screen_recording_permission_before_overlay(source: &str) -> bool {
+    let bundle_identifier = "com.feedbackagent.desktop";
+    let preflight = check_screen_recording_permission_via_plugin();
+    let granted_this_run = SCREEN_RECORDING_GRANTED_THIS_RUN.load(Ordering::SeqCst);
+    if preflight || granted_this_run {
+        log_backend(
+            "permission.overlay_gate",
+            format!(
+                "source={source} preflight={preflight} granted_this_run={granted_this_run} requested=skipped granted=true reason=already_allowed"
+            ),
+        );
+        return true;
+    }
+
+    log_backend(
+        "permission.overlay_gate",
+        format!("source={source} preflight=false requested=pending granted=false reason=request_before_overlay"),
+    );
+    macos_activate();
+    let requested = request_screen_recording_permission_with_runtime_result();
+    let granted = check_screen_recording_permission_via_plugin();
+    if requested || granted {
+        SCREEN_RECORDING_GRANTED_THIS_RUN.store(true, Ordering::SeqCst);
+    }
+    let effective_granted = requested || granted;
+    log_backend(
+        "permission.overlay_gate.result",
+        format!(
+            "source={source} runtime_request_completed=true runtime_requested={requested} preflight_granted={granted} effective_granted={effective_granted} reason=post_request"
+        ),
+    );
+    if effective_granted {
+        return true;
+    }
+
+    if SCREEN_RECORDING_REPAIR_ATTEMPTED_THIS_RUN.swap(true, Ordering::SeqCst) {
+        log_backend(
+            "permission.overlay_gate.auto_repair_skipped",
+            format!(
+                "source={source} bundle_id={bundle_identifier} reason=already_attempted_this_run"
+            ),
+        );
+        return false;
+    }
+
+    let (reset_invoked, reset_succeeded, reset_status_code) =
+        reset_screen_capture_permission_record(bundle_identifier);
+    log_backend(
+        "permission.overlay_gate.auto_repair_reset",
+        format!(
+            "source={source} bundle_id={bundle_identifier} reset_invoked={reset_invoked} reset_succeeded={reset_succeeded} status={reset_status_code:?}"
+        ),
+    );
+    if !reset_succeeded {
+        return false;
+    }
+
+    macos_activate();
+    let repaired_requested = request_screen_recording_permission_with_runtime_result();
+    let repaired_granted = check_screen_recording_permission_via_plugin();
+    let repaired_effective_granted = repaired_requested || repaired_granted;
+    if repaired_effective_granted {
+        SCREEN_RECORDING_GRANTED_THIS_RUN.store(true, Ordering::SeqCst);
+    }
+    log_backend(
+        "permission.overlay_gate.auto_repair_result",
+        format!(
+            "source={source} runtime_requested={repaired_requested} preflight_granted={repaired_granted} effective_granted={repaired_effective_granted}"
+        ),
+    );
+    repaired_effective_granted
 }
 
 fn trigger_overlay(app: &AppHandle, source: &str, launch: Option<OverlayLaunchPayload>) {
@@ -1761,21 +2030,44 @@ fn trigger_overlay(app: &AppHandle, source: &str, launch: Option<OverlayLaunchPa
         log_backend("overlay.window.missing", "label=overlay");
     }
 
+    if !ensure_screen_recording_permission_before_overlay(source) {
+        log_backend(
+            "overlay.trigger.permission_blocked",
+            format!("source={source} overlay_not_shown=true reason=screen_recording_permission_required"),
+        );
+        let message = "New Annotation is blocked because macOS has not granted Screen Recording to this exact Debugr build. Open Screen Recording settings, enable debugr.ai for the path shown here, then quit and reopen Debugr.";
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.emit("screen-capture-permission-needed", message);
+        } else if let Ok(main) = main_window(app) {
+            let _ = main.emit("screen-capture-permission-needed", message);
+        }
+        return;
+    }
+
     if let Some(main) = app.get_webview_window("main") {
         match main.is_visible() {
             Ok(true) => {
-                log_backend("overlay.trigger.main_hide.start", "reason=prevent_capture_hijack");
+                log_backend(
+                    "overlay.trigger.main_hide.start",
+                    "reason=prevent_capture_hijack",
+                );
                 if let Err(error) = main.hide() {
                     log_backend("overlay.trigger.main_hide.failed", error.to_string());
                 } else {
-                    log_backend("overlay.trigger.main_hide.success", "main hidden before overlay show");
+                    log_backend(
+                        "overlay.trigger.main_hide.success",
+                        "main hidden before overlay show",
+                    );
                 }
             }
             Ok(false) => {
                 log_backend("overlay.trigger.main_hide.skipped", "main already hidden");
             }
             Err(error) => {
-                log_backend("overlay.trigger.main_hide.visibility_failed", error.to_string());
+                log_backend(
+                    "overlay.trigger.main_hide.visibility_failed",
+                    error.to_string(),
+                );
             }
         }
     } else {
@@ -1819,15 +2111,17 @@ fn main() {
                 "session_log.ready",
                 format!("path={}", overlay_session_log_path().display()),
             );
+            log_screen_capture_permission_state(
+                "permission.startup",
+                app.config().identifier.as_str(),
+            );
             // ── Tray menu ──────────────────────────────────────────────────
-            let home = MenuItemBuilder::new("Open Debugr")
-                .id("home").build(app)?;
+            let home = MenuItemBuilder::new("Open Debugr").id("home").build(app)?;
             let annotate = MenuItemBuilder::new("New Annotation  ⌃⌘Z")
-                .id("annotate").build(app)?;
-            let sessions = MenuItemBuilder::new("Sessions")
-                .id("sessions").build(app)?;
-            let quit = MenuItemBuilder::new("Quit Debugr")
-                .id("quit").build(app)?;
+                .id("annotate")
+                .build(app)?;
+            let sessions = MenuItemBuilder::new("Sessions").id("sessions").build(app)?;
+            let quit = MenuItemBuilder::new("Quit Debugr").id("quit").build(app)?;
 
             let menu = MenuBuilder::new(app)
                 .item(&home)
@@ -1840,7 +2134,7 @@ fn main() {
 
             let tray = TrayIconBuilder::new()
                 .icon(tray_template_icon())
-                .icon_as_template(true)   // renders correctly in both light & dark menu bar
+                .icon_as_template(true) // renders correctly in both light & dark menu bar
                 .title("Debugr")
                 .menu(&menu)
                 .tooltip("Debugr — ⌃⌘Z to annotate")
@@ -1848,8 +2142,8 @@ fn main() {
                     "home" => {
                         let _ = show_home_window(app.clone());
                     }
-                    "annotate"  => trigger_overlay(app, "tray", None),
-                    "sessions"  => {
+                    "annotate" => trigger_overlay(app, "tray", None),
+                    "sessions" => {
                         let _ = show_session_window(app.clone());
                     }
                     "quit" => app.exit(0),
@@ -1861,7 +2155,8 @@ fn main() {
                         button: tauri::tray::MouseButton::Left,
                         button_state: tauri::tray::MouseButtonState::Up,
                         ..
-                    } = event {
+                    } = event
+                    {
                         let app = tray.app_handle();
                         let _ = show_home_window(app.clone());
                     }
@@ -1872,22 +2167,22 @@ fn main() {
 
             // ── Global shortcut ⌃⌘Z (Control + Command + Z) ───────────────
             let handle = app.handle().clone();
-            app.global_shortcut().on_shortcut(
-                "Ctrl+Cmd+Z",
-                move |_app, _shortcut, event| {
+            app.global_shortcut()
+                .on_shortcut("Ctrl+Cmd+Z", move |_app, _shortcut, event| {
                     // Only fire on key-down, not key-up
                     if event.state == ShortcutState::Pressed {
                         trigger_overlay(&handle, "shortcut", None);
                     }
-                },
-            )?;
+                })?;
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_screen_capture_permission,
+            get_screen_capture_annotation_ready,
             get_screen_capture_diagnostics,
             request_screen_capture_permission,
+            repair_screen_capture_permission,
             open_screen_capture_settings,
             reveal_in_finder,
             capture_interactive_screenshot,
@@ -1932,7 +2227,10 @@ fn main() {
         .run(|app_handle, event| {
             if let tauri::RunEvent::Opened { urls } = event {
                 for url in urls {
-                    log_backend("desktop_link.deep_link_opened", format!("url_chars={}", url.as_str().len()));
+                    log_backend(
+                        "desktop_link.deep_link_opened",
+                        format!("url_chars={}", url.as_str().len()),
+                    );
                     let _ = app_handle.emit("dbugr-deep-link", url.to_string());
                 }
             }
