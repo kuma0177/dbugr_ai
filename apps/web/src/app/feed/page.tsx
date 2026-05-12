@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { api, apiAssetUrl } from '@/lib/api';
+import { api, apiAssetUrl, apiBaseUrl } from '@/lib/api';
 import { displayOnboardingName, readOnboardingState } from '@/lib/onboarding';
 import type { AIReviewSummary, FeedbackComment, FeedbackFrame, FeedbackSession, Submission } from '@feedbackagent/shared';
 
@@ -69,6 +69,7 @@ function updatedCopy(value?: string) {
 
 export default function FeedPage() {
   const [scope, setScope] = useState<Scope>('organization');
+  const [requestedSessionId, setRequestedSessionId] = useState('');
   const [sessions, setSessions] = useState<FeedbackSession[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
@@ -86,14 +87,17 @@ export default function FeedPage() {
     [selectedId, sessions],
   );
 
-  async function load(nextScope = scope) {
+  async function load(nextScope = scope, preferredSessionId = selectedId) {
     setWorking('Loading workspace');
     setStatus(`Loading ${scopeLabels[nextScope].toLowerCase()} sessions...`);
     console.info('[phase2-web] review_feed.load.started', { scope: nextScope });
     try {
       const data = await api.phase2.feed(nextScope);
       setSessions(data.sessions);
-      setSelectedId((current) => data.sessions.some((session) => session.id === current) ? current : '');
+      setSelectedId((current) => {
+        if (preferredSessionId && data.sessions.some((session) => session.id === preferredSessionId)) return preferredSessionId;
+        return data.sessions.some((session) => session.id === current) ? current : '';
+      });
       setStatus(data.sessions.length
         ? `${data.sessions.length} session(s) ready in ${scopeLabels[nextScope].toLowerCase()}.`
         : `No sessions are in ${scopeLabels[nextScope].toLowerCase()} yet.`);
@@ -111,6 +115,16 @@ export default function FeedPage() {
   }
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const nextScope = params.get('scope');
+    const nextSessionId = params.get('sessionId') ?? '';
+    if (nextScope === 'private' || nextScope === 'public' || nextScope === 'organization') {
+      setScope(nextScope);
+    }
+    setRequestedSessionId(nextSessionId);
+  }, []);
+
+  useEffect(() => {
     const syncWorkspaceIdentity = () => {
       const next = readOnboardingState();
       setWorkspaceName(next?.organizationName || 'Dbugr workspace');
@@ -125,10 +139,10 @@ export default function FeedPage() {
       window.addEventListener('dbugr-auth-changed', syncWorkspaceIdentity);
       return () => window.removeEventListener('dbugr-auth-changed', syncWorkspaceIdentity);
     }
-    void load(scope);
+    void load(scope, requestedSessionId);
     window.addEventListener('dbugr-auth-changed', syncWorkspaceIdentity);
     return () => window.removeEventListener('dbugr-auth-changed', syncWorkspaceIdentity);
-  }, [scope]);
+  }, [scope, requestedSessionId]);
 
   async function addContribution(session: FeedbackSession) {
     const body = commentDrafts[session.id]?.trim();
@@ -255,7 +269,11 @@ export default function FeedPage() {
       });
       setSubmission(result);
       await load(scope);
-      setStatus(`Submission snapshot created for ${providerLabels[providerTarget]}. The Mac app can hand it to the local CLI.`);
+      const handoffUrl = new URL('dbugr://handoff');
+      handoffUrl.searchParams.set('submissionId', result.id);
+      handoffUrl.searchParams.set('api', apiBaseUrl());
+      window.location.href = handoffUrl.toString();
+      setStatus(`Submission sent to the Mac app for ${providerLabels[providerTarget]}. Approve any browser prompt to open Dbugr.`);
       console.info('[phase2-web] review_feed.submission.completed', {
         sessionId: session.id,
         submissionId: result.id,

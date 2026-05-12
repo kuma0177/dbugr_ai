@@ -16,9 +16,14 @@ import type {
   CreateTaskRequest,
   DesktopSessionSyncRequest,
   DesktopSessionSyncResponse,
+  DesktopSubmissionHandoff,
 } from '@feedbackagent/shared';
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:3001/api';
+
+export function apiBaseUrl() {
+  return BASE;
+}
 
 export function apiAssetUrl(path: string) {
   return `${BASE}${path}`;
@@ -279,6 +284,15 @@ export const api = {
       finalPrompt?: string;
       credentialScope?: 'personal' | 'organization' | 'none';
     }) => apiFetch<Submission>(`/phase2/sessions/${sessionId}/submissions`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+    desktopSubmission: (submissionId: string) =>
+      apiFetch<DesktopSubmissionHandoff>(`/phase2/desktop-submissions/${submissionId}`),
+    completeDesktopSubmission: (submissionId: string, body: {
+      status: 'sent' | 'failed' | 'completed';
+      providerResponse?: string;
+    }) => apiFetch<Submission>(`/phase2/desktop-submissions/${submissionId}/status`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),

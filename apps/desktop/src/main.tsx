@@ -151,6 +151,7 @@ let sessionsApiLoadInFlight: Promise<void> | null = null;
 let lastSessionsApiLoadAt = 0;
 let pendingSessionSwitchId: string | null = null;
 let pendingFlowSelection: SubmissionFlow | null = null;
+let flowGateError = '';
 let visiblePendingSessionSwitchId: string | null = null;
 let pendingSessionSwitchTimer: number | null = null;
 let visiblePendingFlowSelection: SubmissionFlow | null = null;
@@ -211,6 +212,22 @@ function desktopWebAuthUrl() {
   url.searchParams.set('flow', 'sign-in');
   url.searchParams.set('source', 'desktop');
   return url.toString();
+}
+
+function webAppBaseUrl() {
+  return readDesktopLinkProfile()?.appUrl?.trim() || WEB_APP_URL;
+}
+
+function webReviewUrlForSession(session: Session) {
+  const url = new URL('/feed', webAppBaseUrl());
+  url.searchParams.set('source', 'desktop');
+  url.searchParams.set('sessionId', session.webSessionId || session.id);
+  url.searchParams.set('scope', session.submissionFlow === 'public' ? 'public' : 'organization');
+  return url.toString();
+}
+
+async function openWebReviewForSession(session: Session) {
+  await invoke('open_url', { url: webReviewUrlForSession(session) });
 }
 
 function getDesktopDeviceId() {
@@ -1872,6 +1889,7 @@ function renderWorkspacePanel() {
         <div class="right-panel-sub">Decide whether this session goes straight to AI, through your team, or through a public curation pass.</div>
       </div>
       <div class="right-panel-body stacked-panel">
+        ${flowGateError ? `<div class="submit-gate-error" role="alert">${escapeHtml(flowGateError)}</div>` : ''}
         ${([
           {
             flow: 'direct',
@@ -1909,6 +1927,7 @@ function renderWorkspacePanel() {
       button.addEventListener('click', () => {
         const flow = button.dataset.flow as SubmissionFlow | undefined;
         if (!flow || pendingFlowSelection) return;
+        flowGateError = '';
         pendingFlowSelection = flow;
         schedulePendingFlowSelectionIndicator(flow);
         session.submissionFlow = flow;
@@ -1919,7 +1938,7 @@ function renderWorkspacePanel() {
         renderSessionList();
         window.requestAnimationFrame(() => {
           persistAppState();
-          void syncSessionToWeb(session, 'submission_flow_selected');
+          if (flow !== 'direct') void syncSessionToWeb(session, 'submission_flow_selected');
           clearPendingFlowSelectionIndicator();
           pendingFlowSelection = null;
           renderWorkspacePanel();
@@ -1928,14 +1947,38 @@ function renderWorkspacePanel() {
         });
       });
     });
-    document.getElementById('flow-next-btn')?.addEventListener('click', () => {
-      workspaceSection = session.submissionFlow === 'direct' ? 'submit' : 'collab';
+    document.getElementById('flow-next-btn')?.addEventListener('click', async () => {
+      flowGateError = '';
+      if (session.submissionFlow === 'direct') {
+        workspaceSection = 'submit';
+        renderSession();
+        return;
+      }
+
+      pendingFlowSelection = session.submissionFlow;
+      schedulePendingFlowSelectionIndicator(session.submissionFlow);
+      renderWorkspacePanel();
+      const synced = await syncSessionToWeb(session, 'start_collaboration');
+      clearPendingFlowSelectionIndicator();
+      pendingFlowSelection = null;
+      if (!synced) {
+        flowGateError = session.webSyncError || 'Could not send this session to the web review feed. Check your Mac link and try again.';
+        renderWorkspacePanel();
+        return;
+      }
+      session.collaborationReady = true;
+      persistAppState();
+      await openWebReviewForSession(session).catch((error) => {
+        flowGateError = `Synced to web review, but could not open the browser: ${safeErrorMessage(error)}`;
+      });
+      workspaceSection = 'collab';
       renderSession();
     });
     return;
   }
 
   if (workspaceSection === 'collab') {
+    const reviewFlowLabel = session.submissionFlow === 'public' ? 'public feed' : 'team review';
     panel.innerHTML = `
       <div class="right-panel-head">
         <div class="right-panel-title">Collaborate / gather feedback</div>
@@ -1946,40 +1989,62 @@ function renderWorkspacePanel() {
           ? `<div class="journey-card"><strong>Direct flow selected</strong><p>This path skips collaboration and goes straight to submission.</p></div>`
           : `
             <div class="journey-card">
-              <strong>${session.submissionFlow === 'public' ? 'Public feed' : 'Team review'} status</strong>
-              <p>${session.collaborationReady
-                ? `${session.contributions.length} contributions are ready for curation.`
-                : 'No contributions collected yet. Seed the review queue so you can validate the rest of the journey.'}</p>
+              <strong>${session.submissionFlow === 'public' ? 'Public feed' : 'Team review'} is on the web</strong>
+              <p>${session.webSyncStatus === 'synced'
+                ? `This session is available in ${reviewFlowLabel}. Add and accept feedback there, then use Freeze and send snapshot to launch the local AI handoff.`
+                : `Sync this session to ${reviewFlowLabel} before collecting feedback.`}</p>
             </div>
-            <button class="send-btn" id="seed-collab-btn">${session.collaborationReady ? 'Refresh review signal' : 'Collect review context'}</button>
-            <div class="contribution-list compact-list">
-              ${session.contributions.length === 0
-                ? '<div class="empty-inline">Nothing added yet.</div>'
-                : session.contributions.map((item) => `
-                    <div class="contribution-item">
-                      <strong>${escapeHtml(item.author)}</strong>
-                      <span>${escapeHtml(item.body)}</span>
-                    </div>
-                  `).join('')}
-            </div>
+            ${session.webSyncError ? `<div class="submit-gate-error" role="alert">${escapeHtml(session.webSyncError)}</div>` : ''}
+            <button class="send-btn" id="open-web-review-btn">${session.webSyncStatus === 'synced' ? 'Open web review →' : 'Sync and open web review →'}</button>
           `}
-        <button class="btn-secondary wide-btn" id="collab-next-btn">${session.submissionFlow === 'direct' ? 'Go to submit' : 'Review & curate →'}</button>
+        <button class="btn-secondary wide-btn" id="collab-next-btn">${session.submissionFlow === 'direct' ? 'Go to submit' : 'Back to flow'}</button>
       </div>
     `;
-    document.getElementById('seed-collab-btn')?.addEventListener('click', () => {
-      ensureContributionSeed(session);
+    document.getElementById('open-web-review-btn')?.addEventListener('click', async () => {
+      flowGateError = '';
+      if (session.webSyncStatus !== 'synced') {
+        const synced = await syncSessionToWeb(session, 'open_web_review');
+        if (!synced) {
+          renderSession();
+          return;
+        }
+      }
+      await openWebReviewForSession(session).catch((error) => {
+        session.webSyncError = `Synced to web review, but could not open the browser: ${safeErrorMessage(error)}`;
+      });
       persistAppState();
       renderSession();
     });
     document.getElementById('collab-next-btn')?.addEventListener('click', () => {
-      workspaceSection = session.submissionFlow === 'direct' ? 'submit' : 'review';
+      workspaceSection = session.submissionFlow === 'direct' ? 'submit' : 'flow';
       renderSession();
     });
     return;
   }
 
   if (workspaceSection === 'review') {
-    if (session.submissionFlow !== 'direct') ensureContributionSeed(session);
+    if (session.submissionFlow !== 'direct') {
+      panel.innerHTML = `
+        <div class="right-panel-head">
+          <div class="right-panel-title">Review & curate</div>
+          <div class="right-panel-sub">Team and public feedback is curated in the web app so accepted notes become the frozen AI prompt.</div>
+        </div>
+        <div class="right-panel-body stacked-panel">
+          <div class="journey-card">
+            <strong>Use web review</strong>
+            <p>Accept or reject feedback in the web feed. When you click Freeze and send snapshot there, Dbugr opens this Mac and sends the accepted prompt to ${providerLabel(target)}.</p>
+          </div>
+          <button class="send-btn" id="open-web-review-btn">Open web review →</button>
+        </div>
+      `;
+      document.getElementById('open-web-review-btn')?.addEventListener('click', () => {
+        void openWebReviewForSession(session).catch((error) => {
+          flowGateError = `Could not open the web review feed: ${safeErrorMessage(error)}`;
+          renderSession();
+        });
+      });
+      return;
+    }
     panel.innerHTML = `
       <div class="right-panel-head">
         <div class="right-panel-title">Review & curate</div>
@@ -2024,6 +2089,38 @@ function renderWorkspacePanel() {
   }
 
   if (workspaceSection === 'submit') {
+    if (session.submissionFlow !== 'direct') {
+      panel.innerHTML = `
+        <div class="right-panel-head submit-panel-head">
+          <div class="right-panel-title">Send session</div>
+          <div class="right-panel-sub">${flowLabel(session.submissionFlow)} uses the web review handoff.</div>
+        </div>
+        <div class="right-panel-body stacked-panel submit-panel-body">
+          <div class="journey-card">
+            <strong>Finish in web review</strong>
+            <p>Accept the useful feedback in the web feed, generate the AI-ready prompt, then click Freeze and send snapshot. That opens Dbugr on this Mac and sends the accepted prompt to ${providerLabel(target)}.</p>
+          </div>
+          ${session.webSyncError ? `<div class="submit-gate-error" role="alert">${escapeHtml(session.webSyncError)}</div>` : ''}
+          <button class="send-btn" id="open-web-review-btn">${session.webSyncStatus === 'synced' ? 'Open web review →' : 'Sync and open web review →'}</button>
+        </div>
+      `;
+      document.getElementById('open-web-review-btn')?.addEventListener('click', async () => {
+        if (session.webSyncStatus !== 'synced') {
+          const synced = await syncSessionToWeb(session, 'submit_open_web_review');
+          if (!synced) {
+            renderSession();
+            return;
+          }
+        }
+        await openWebReviewForSession(session).catch((error) => {
+          session.webSyncError = `Could not open the web review feed: ${safeErrorMessage(error)}`;
+        });
+        persistAppState();
+        renderSession();
+      });
+      return;
+    }
+
     const annCount = totalAnnotations(session);
     const isClaudeReady = isProviderConnected('claude', providerConnections.claude);
     const isCodexReady = isProviderConnected('codex', providerConnections.codex);
@@ -2688,10 +2785,10 @@ async function loadDesktopLinkToken(): Promise<string | null> {
   }
 }
 
-async function syncSessionToWeb(session: Session, reason: string) {
+async function syncSessionToWeb(session: Session, reason: string): Promise<boolean> {
   if ((window as unknown as { __DBUGR_DISABLE_API_SYNC__?: boolean }).__DBUGR_DISABLE_API_SYNC__) {
     logUi('desktop_session_sync_skipped_for_test', { sessionId: session.id, reason });
-    return;
+    return true;
   }
 
   session.webSyncStatus = 'syncing';
@@ -2712,7 +2809,7 @@ async function syncSessionToWeb(session: Session, reason: string) {
       reason,
       flow: session.submissionFlow,
     });
-    return;
+    return false;
   }
 
   const payload = buildDesktopSessionSyncPayload(session, target);
@@ -2760,6 +2857,7 @@ async function syncSessionToWeb(session: Session, reason: string) {
       reason,
       nextAction: json.data?.nextAction ?? null,
     });
+    return true;
   } catch (error) {
     session.webSyncStatus = 'failed';
     session.webSyncError = safeErrorMessage(error);
@@ -2772,6 +2870,136 @@ async function syncSessionToWeb(session: Session, reason: string) {
       flow: session.submissionFlow,
       error: session.webSyncError.slice(0, 300),
     });
+    return false;
+  }
+}
+
+async function updateDesktopSubmissionStatus(
+  submissionId: string,
+  status: 'sent' | 'failed' | 'completed',
+  providerResponse?: string,
+) {
+  const token = await loadDesktopLinkToken();
+  if (!token) return;
+  await fetch(`${apiBaseUrl()}/phase2/desktop-submissions/${encodeURIComponent(submissionId)}/status`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ status, providerResponse }),
+  }).catch((error) => {
+    logUi('desktop_submission_status_update_failed', {
+      submissionId,
+      status,
+      error: safeErrorMessage(error).slice(0, 240),
+    });
+  });
+}
+
+async function launchPromptHandoff(options: {
+  provider: Target;
+  prompt: string;
+  projectFolder?: string | null;
+  title: string;
+  sessionId?: string;
+  source: 'desktop' | 'web_submission';
+}) {
+  const cwd = normalizeProjectFolderInput(options.projectFolder) || '';
+  if (options.provider === 'cursor') {
+    logUi('prompt_handoff_cursor_launch', { source: options.source, sessionId: options.sessionId ?? null, cwd });
+    await invoke('open_in_cursor', { projectFolder: cwd || null });
+    await invoke('copy_to_clipboard', { text: options.prompt }).catch(() => {});
+    return;
+  }
+
+  const cliName = options.provider === 'codex' ? 'codex' : 'claude';
+  const command = buildCliCommand(cliName, options.prompt);
+  logUi('prompt_handoff_cli_launch', {
+    source: options.source,
+    sessionId: options.sessionId ?? null,
+    provider: options.provider,
+    cwd,
+    promptLength: options.prompt.length,
+  });
+  await invoke('open_command_in_terminal', {
+    cwd: cwd || process.env['HOME'] || '~',
+    command,
+    title: options.title,
+  });
+}
+
+async function handleDesktopSubmissionHandoff(parsed: URL) {
+  const submissionId = parsed.searchParams.get('submissionId')?.trim();
+  const apiParam = parsed.searchParams.get('api')?.trim();
+  if (apiParam) localStorage.setItem(API_BASE_URL_KEY, apiParam);
+  if (!submissionId) {
+    logUi('desktop_submission_handoff_missing_submission_id');
+    return;
+  }
+
+  const token = await loadDesktopLinkToken();
+  if (!token) {
+    window.alert('This Mac is not linked to Dbugr web review. Open onboarding from the Mac app, link this Mac, then retry the web handoff.');
+    logUi('desktop_submission_handoff_missing_token', { submissionId });
+    return;
+  }
+
+  logUi('desktop_submission_handoff_started', { submissionId, apiBaseUrl: apiBaseUrl() });
+  try {
+    const response = await fetch(`${apiBaseUrl()}/phase2/desktop-submissions/${encodeURIComponent(submissionId)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const json = await response.json().catch(() => ({})) as {
+      data?: {
+        submission?: { id: string; providerTarget: Target };
+        session?: { id: string; title?: string; projectFolder?: string | null; githubRepo?: string | null };
+        finalPrompt?: string;
+        providerTarget?: Target;
+        projectFolder?: string | null;
+      };
+      error?: unknown;
+    };
+    if (!response.ok || !json.data?.submission?.id || !json.data.finalPrompt) {
+      throw new Error(typeof json.error === 'string' ? json.error : `Could not load submission ${submissionId}.`);
+    }
+
+    const provider = json.data.providerTarget ?? json.data.submission.providerTarget;
+    target = provider;
+    if (provider === 'claude' || provider === 'codex') {
+      const verification = await verifyProviderConnection(provider);
+      if (!verification.ok) {
+        throw new Error(verification.error
+          ? `${providerLabel(provider)} connection check failed: ${verification.error}`
+          : `${providerLabel(provider)} is not connected on this Mac.`);
+      }
+    }
+
+    const sessionTitle = json.data.session?.title || 'Web review submission';
+    await launchPromptHandoff({
+      provider,
+      prompt: json.data.finalPrompt,
+      projectFolder: json.data.projectFolder ?? json.data.session?.projectFolder,
+      title: `Dbugr → ${providerLabel(provider)}: ${sessionTitle}`,
+      sessionId: json.data.session?.id,
+      source: 'web_submission',
+    });
+    await updateDesktopSubmissionStatus(submissionId, 'sent');
+    feedback = {
+      title: `${providerLabel(provider)} handoff started`,
+      summary: `The accepted web review prompt for “${sessionTitle}” has been sent from this Mac.`,
+      nextSteps: [
+        provider === 'cursor' ? 'Paste the copied prompt into Cursor chat' : 'Check the Terminal window that just opened',
+        'Continue from the AI response there',
+      ],
+    };
+    appMode = 'confirmation';
+    render();
+    logUi('desktop_submission_handoff_completed', { submissionId, provider, sessionId: json.data.session?.id ?? null });
+  } catch (error) {
+    await updateDesktopSubmissionStatus(submissionId, 'failed', safeErrorMessage(error));
+    window.alert(`${safeErrorMessage(error)}\n\nOpen Dbugr on this Mac, verify the provider connection in Submit, then retry from the web feed.`);
+    logUi('desktop_submission_handoff_failed', { submissionId, error: safeErrorMessage(error).slice(0, 300) });
   }
 }
 
@@ -2782,6 +3010,11 @@ async function handleDesktopDeepLink(rawUrl: string) {
     parsed = new URL(rawUrl);
   } catch {
     logUi('desktop_link_deep_link_invalid_url');
+    return;
+  }
+
+  if (parsed.hostname === 'handoff' || parsed.pathname.replace(/^\/+/, '') === 'handoff') {
+    await handleDesktopSubmissionHandoff(parsed);
     return;
   }
 

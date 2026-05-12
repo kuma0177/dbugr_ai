@@ -284,6 +284,15 @@ export interface Submission {
   completedAt?: string | null;
 }
 
+export interface DesktopSubmissionHandoff {
+  submission: Submission;
+  session: FeedbackSession;
+  finalPrompt: string;
+  providerTarget: 'claude' | 'codex' | 'cursor';
+  projectFolder?: string | null;
+  githubRepo?: string | null;
+}
+
 export interface Integration {
   id: string;
   organizationId: string;

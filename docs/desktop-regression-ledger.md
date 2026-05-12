@@ -42,6 +42,7 @@ Before editing any of these files, read this ledger and update it when a new reg
 | DSK-010 | Non-technical users had to run `tccutil` manually to recover stale Screen Recording permission state. | New Annotation must auto-reset Debugr's stale ScreenCapture TCC entry once, request permission again, and continue if granted; the permission card must also offer one-click repair/retry. |
 | DSK-011 | Deleted sessions came back after reopening or refreshing because the desktop only hid them locally while `/feedback-sessions` still returned the remote record. | Session delete must persist `deletedSessionIds` and call `DELETE /feedback-sessions/:id`; the API delete route must remove child rows before deleting the session. |
 | DSK-012 | New Annotation picker/modal did not match the session sidebar because it only used local sessions with existing captures. | Picker cache and `request-sessions` events must use the same active workspace sessions as the sidebar and refresh stale API data before emitting. |
+| DSK-013 | Team/Public flow selection only changed local desktop state or created a web snapshot, so accepted review feedback never reached the local AI handoff. | The visible Start collaboration action must await web sync and open the matching feed, and web submission must open a desktop handoff link that fetches the frozen prompt before launching Claude/Codex/Cursor. |
 
 ## Required Checks
 

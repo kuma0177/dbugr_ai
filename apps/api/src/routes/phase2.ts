@@ -273,6 +273,11 @@ const submitSchema = z.object({
   credentialScope: z.enum(['personal', 'organization', 'none']).default('personal'),
 });
 
+const desktopSubmissionStatusSchema = z.object({
+  status: z.enum(['sent', 'failed', 'completed']),
+  providerResponse: z.string().optional(),
+});
+
 const desktopSessionSyncSchema = z.object({
   localSessionId: z.string().min(1),
   title: z.string().min(1),
@@ -2336,4 +2341,123 @@ phase2Router.post('/phase2/sessions/:id/submissions', async (req: Request, res: 
     screenshotCount: session.frames.length,
   });
   return res.status(201).json({ data: submission });
+});
+
+phase2Router.get('/phase2/desktop-submissions/:id', async (req: Request, res: Response) => {
+  let context;
+  try {
+    context = await requestContext(req);
+  } catch (error) {
+    return handleContextError(error, res);
+  }
+
+  const { user, membership, organization } = context;
+  const submission = await prisma.submission.findUnique({
+    where: { id: req.params.id },
+    include: {
+      session: {
+        include: {
+          project: true,
+          creator: true,
+          comments: { include: { author: true, curationDecisions: true }, orderBy: { createdAt: 'desc' } },
+          frames: true,
+          _count: { select: { comments: true, frames: true, curationDecisions: true, submissions: true } },
+        },
+      },
+    },
+  });
+  if (!submission || submission.session.project.organizationId !== organization.id) {
+    logPhase2('desktop_submission_handoff.not_found', { submissionId: req.params.id, userId: user.id });
+    return res.status(404).json({ error: 'Submission not found for this workspace.' });
+  }
+  if (!canManageSession(membership.role, submission.session.createdBy, user.id)) {
+    logPhase2('desktop_submission_handoff.permission_denied', {
+      submissionId: submission.id,
+      sessionId: submission.feedbackSessionId,
+      userId: user.id,
+      role: membership.role,
+    });
+    return res.status(403).json({ error: 'Only the session owner, org owner, or org admin can send this submission.' });
+  }
+
+  logPhase2('desktop_submission_handoff.loaded', {
+    submissionId: submission.id,
+    sessionId: submission.feedbackSessionId,
+    providerTarget: submission.providerTarget,
+    status: submission.status,
+    promptChars: submission.finalPrompt.length,
+  });
+
+  return res.json({
+    data: {
+      submission,
+      session: submission.session,
+      finalPrompt: submission.finalPrompt,
+      providerTarget: submission.providerTarget,
+      projectFolder: submission.session.projectFolder,
+      githubRepo: submission.session.githubRepo,
+    },
+  });
+});
+
+phase2Router.post('/phase2/desktop-submissions/:id/status', async (req: Request, res: Response) => {
+  const parsed = desktopSubmissionStatusSchema.safeParse(req.body);
+  if (!parsed.success) {
+    logPhase2('desktop_submission_status.validation_failed', { submissionId: req.params.id, issues: parsed.error.issues.length });
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  let context;
+  try {
+    context = await requestContext(req);
+  } catch (error) {
+    return handleContextError(error, res);
+  }
+
+  const { user, membership, organization } = context;
+  const existing = await prisma.submission.findUnique({
+    where: { id: req.params.id },
+    include: { session: { include: { project: true } } },
+  });
+  if (!existing || existing.session.project.organizationId !== organization.id) {
+    logPhase2('desktop_submission_status.not_found', { submissionId: req.params.id, userId: user.id });
+    return res.status(404).json({ error: 'Submission not found for this workspace.' });
+  }
+  if (!canManageSession(membership.role, existing.session.createdBy, user.id)) {
+    logPhase2('desktop_submission_status.permission_denied', {
+      submissionId: existing.id,
+      sessionId: existing.feedbackSessionId,
+      userId: user.id,
+      role: membership.role,
+    });
+    return res.status(403).json({ error: 'Only the session owner, org owner, or org admin can update this submission.' });
+  }
+
+  const updated = await prisma.submission.update({
+    where: { id: existing.id },
+    data: {
+      status: parsed.data.status,
+      providerResponse: parsed.data.providerResponse ?? existing.providerResponse,
+      completedAt: parsed.data.status === 'completed' ? new Date() : existing.completedAt,
+    },
+  });
+
+  await auditLog({
+    organizationId: organization.id,
+    actorId: user.id,
+    action: 'phase2.desktop_submission_status_updated',
+    targetType: 'submission',
+    targetId: updated.id,
+    metadata: {
+      sessionId: updated.feedbackSessionId,
+      providerTarget: updated.providerTarget,
+      status: updated.status,
+    },
+  });
+  logPhase2('desktop_submission_status.updated', {
+    submissionId: updated.id,
+    sessionId: updated.feedbackSessionId,
+    status: updated.status,
+  });
+  return res.json({ data: updated });
 });
