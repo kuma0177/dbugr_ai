@@ -43,6 +43,8 @@ import {
   buildCombinedPrompt,
   getPromptDiagnostics,
   getCombinedPromptDiagnostics,
+  buildDesktopSessionSyncPayload,
+  buildSessionIdentityMap,
   makeSession,
   makeCapture,
   makeAnnotation,
@@ -225,6 +227,21 @@ describe('makeSession()', () => {
   it('applies title override', () => {
     const session = makeSession({ title: 'Onboarding flow bug' });
     expect(session.title).toBe('Onboarding flow bug');
+  });
+});
+
+describe('buildDesktopSessionSyncPayload()', () => {
+  it('sends capture timestamps as session-relative offsets instead of epoch milliseconds', () => {
+    const session = makeSession({
+      captures: [
+        makeCapture({ timestamp: '2026-05-13T21:37:50.000Z' }),
+        makeCapture({ timestamp: '2026-05-13T21:37:52.500Z' }),
+      ],
+    });
+
+    const payload = buildDesktopSessionSyncPayload(session, 'codex');
+
+    expect(payload.captures.map((capture) => capture.timestampMs)).toEqual([0, 2500]);
   });
 });
 
@@ -436,6 +453,17 @@ describe('session persistence helpers', () => {
       { id: 'newer', title: 'Newer', createdAt: '2026-05-02T00:00:00.000Z', annotationCount: 3 },
       { id: 'older', title: 'Older', createdAt: '2026-05-01T00:00:00.000Z', annotationCount: 1 },
     ]);
+  });
+
+  it('indexes sessions by both local id and synced web id so API refreshes do not duplicate rows', () => {
+    const local = sessionWithAnnotations(1);
+    local.id = 'local-session';
+    local.webSessionId = 'web-session';
+
+    const byId = buildSessionIdentityMap([local]);
+
+    expect(byId.get('local-session')).toBe(local);
+    expect(byId.get('web-session')).toBe(local);
   });
 });
 

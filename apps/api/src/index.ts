@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
@@ -39,6 +40,27 @@ function loadLocalEnv() {
 }
 
 loadLocalEnv();
+
+function localApiDiscoveryPath() {
+  const root = process.platform === 'darwin'
+    ? path.join(os.homedir(), 'Library', 'Application Support', 'debugr')
+    : path.join(os.homedir(), '.config', 'debugr');
+  return path.join(root, 'api-discovery.json');
+}
+
+function writeLocalApiDiscovery(port: string | number) {
+  const apiBaseUrl = process.env.DEBUGR_API_URL?.trim() || `http://localhost:${port}/api`;
+  const discoveryPath = localApiDiscoveryPath();
+  try {
+    fs.mkdirSync(path.dirname(discoveryPath), { recursive: true });
+    fs.writeFileSync(
+      discoveryPath,
+      JSON.stringify({ apiBaseUrl, port: Number(port), pid: process.pid, updatedAt: new Date().toISOString() }, null, 2),
+    );
+  } catch (error) {
+    console.warn('[api] discovery.write_failed', error);
+  }
+}
 
 async function main() {
   const app = express();
@@ -118,6 +140,7 @@ async function main() {
   });
 
   app.listen(PORT, () => {
+    writeLocalApiDiscovery(PORT);
     console.log(`API server running on http://localhost:${PORT}`);
   });
 }

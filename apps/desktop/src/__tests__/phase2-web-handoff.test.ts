@@ -7,6 +7,7 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const mainSource = readFileSync(resolve(testDir, '../main.tsx'), 'utf8');
 const feedSource = readFileSync(resolve(testDir, '../../../web/src/app/feed/page.tsx'), 'utf8');
 const phase2Source = readFileSync(resolve(testDir, '../../../api/src/routes/phase2.ts'), 'utf8');
+const apiIndexSource = readFileSync(resolve(testDir, '../../../api/src/index.ts'), 'utf8');
 const rustMainSource = readFileSync(resolve(testDir, '../../src-tauri/src/main.rs'), 'utf8');
 
 function functionBlock(source: string, startPattern: RegExp) {
@@ -52,8 +53,36 @@ describe('phase 2 team/public web handoff', () => {
 
     expect(syncErrorMessage).toContain('Load failed');
     expect(syncErrorMessage).toContain('Could not reach the Dbugr web API');
+    expect(syncErrorMessage).toContain('common local API ports');
+    expect(syncErrorMessage).toContain('Last advertised API was');
     expect(syncErrorMessage).toContain('apiBaseUrl()');
     expect(syncSessionToWeb).toContain('session.webSyncError = syncErrorMessage(error)');
+  });
+
+  it('discovers a moved local API before failing team or public review sync', () => {
+    const discoverApiBaseUrl = functionBlock(mainSource, /async function discoverApiBaseUrl\(/);
+    const fetchWithApiDiscovery = functionBlock(mainSource, /async function fetchWithApiDiscovery\(/);
+    const syncSessionToWeb = functionBlock(mainSource, /async function syncSessionToWeb\(/);
+
+    expect(apiIndexSource).toContain('api-discovery.json');
+    expect(apiIndexSource).toContain('writeLocalApiDiscovery(PORT)');
+    expect(rustMainSource).toContain('fn read_api_discovery');
+    expect(rustMainSource).toContain('read_api_discovery,');
+    expect(mainSource).toContain("invoke<string | null>('read_api_discovery')");
+    expect(mainSource).toContain('api_discovery_file_loaded');
+    expect(mainSource).toContain('lastApiDiscoveryAdvertisement');
+    expect(discoverApiBaseUrl).toContain('API_DISCOVERY_PORTS');
+    expect(discoverApiBaseUrl).toContain('probeApiBaseUrl(candidate)');
+    expect(fetchWithApiDiscovery).toContain('discoverApiBaseUrl()');
+    expect(fetchWithApiDiscovery).toContain('api_fetch_retrying_with_discovered_base');
+    expect(syncSessionToWeb).toContain("fetchWithApiDiscovery('/phase2/desktop-sessions/sync'");
+  });
+
+  it('keeps desktop capture timestamps within the FeedbackFrame integer range', () => {
+    expect(phase2Source).toContain('const SQLITE_INT_MAX = 2_147_483_647');
+    expect(phase2Source).toContain('function normalizeDesktopCaptureTimestampMs');
+    expect(phase2Source).toContain('raw - firstCaptureTimestampMs');
+    expect(phase2Source).toContain('timestampMs: normalizeDesktopCaptureTimestampMs');
   });
 
   it('handles dbugr://handoff links by fetching the frozen web prompt and launching the provider locally', () => {

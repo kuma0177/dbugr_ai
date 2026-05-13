@@ -280,6 +280,8 @@ Architecture update as of 2026-05-13:
 - Direct Claude/Codex handoff no longer embeds the full prompt or API key in the AppleScript `do script` command. The Tauri backend writes a private prompt file, optional private key file, and short zsh runner under the Dbugr application-support handoff directory, then opens Terminal with only the runner path. This keeps multiline prompts shell-safe and prevents provider keys from being printed in Terminal history.
 - Provider CLI setup is a user-controlled readiness step, not a hidden DMG side effect. `scripts/setup-macos-providers.sh` verifies Claude Code, Codex CLI, Cursor, and Screen Recording state, and only installs provider CLIs when the user opts in. macOS malware/XProtect warnings must never be bypassed by Dbugr.
 - Team/public review routes are committed locally only after the desktop sync endpoint accepts the session. If the API at the configured base URL is unreachable, the desktop keeps the previous flow and shows a recovery message that points users to the local API/web stack or Mac relink flow.
+- Local API discovery does not depend on port `3001` alone. The API writes its active base URL to the shared Dbugr application-support folder on startup; the desktop reads that advertisement, preserves exact onboarding/deep-link API URLs, and only then probes common local development ports before declaring the API unreachable.
+- Desktop session refresh treats `session.id` and `session.webSessionId` as the same identity boundary. After team/public sync, the API's web session row must update the existing annotated local session instead of creating a duplicate zero-capture session in the picker or sidebar.
 
 Quality tracker:
 

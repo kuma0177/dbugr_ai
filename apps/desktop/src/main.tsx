@@ -38,6 +38,7 @@ import {
   getPromptDiagnostics,
   getCombinedPromptDiagnostics,
   buildDesktopSessionSyncPayload,
+  buildSessionIdentityMap,
 } from './core';
 
 /** Image URL suitable for `<img src>` — Tauri cannot load raw POSIX paths without conversion. */
@@ -96,7 +97,7 @@ interface DesktopLinkProfile {
   deviceId: string;
 }
 
-const DEFAULT_API = 'http://127.0.0.1:3001/api';
+const DEFAULT_API = (import.meta.env.VITE_DEBUGR_API_URL as string | undefined)?.trim() || 'http://localhost:3001/api';
 const WEB_APP_URL = (import.meta.env.VITE_DEBUGR_WEB_APP_URL as string | undefined)?.trim() || 'http://localhost:3000';
 const API_BASE_URL_KEY = 'debugr-desktop-api-base-url';
 const DESKTOP_LINK_PROFILE_KEY = 'debugr-desktop-link-profile';
@@ -109,6 +110,8 @@ const PERSIST_MIRROR_DEBOUNCE_MS = 250;
 const SESSION_API_REFRESH_INTERVAL_MS = 10_000;
 const PERMISSION_REFRESH_INTERVAL_MS = 15_000;
 const LOADING_INDICATOR_DELAY_MS = 500;
+const API_DISCOVERY_TIMEOUT_MS = 800;
+const API_DISCOVERY_PORTS = [3001, 3002, 3003, 3004, 3005, 5173, 5174];
 
 let appMode: AppMode = 'welcome';
 let sessions: Session[] = [];
@@ -187,6 +190,8 @@ let providerConnections: Record<Target, ProviderConnectionState> = {
   codex: { connected: false, method: null },
   cursor: { connected: false, method: null },
 };
+let discoveredApiBaseUrl: string | null = null;
+let lastApiDiscoveryAdvertisement: { apiBaseUrl: string; pid?: number; updatedAt?: string } | null = null;
 
 const win = getCurrentWindow();
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -209,13 +214,143 @@ function syncErrorMessage(error: unknown) {
     message.includes('NetworkError') ||
     message.includes('fetch')
   ) {
-    return `Could not reach the Dbugr web API at ${apiBaseUrl()}. Start the local API/web stack or relink this Mac from web onboarding, then retry.`;
+    const advertised = lastApiDiscoveryAdvertisement
+      ? ` Last advertised API was ${lastApiDiscoveryAdvertisement.apiBaseUrl}${lastApiDiscoveryAdvertisement.pid ? ` from pid ${lastApiDiscoveryAdvertisement.pid}` : ''}${lastApiDiscoveryAdvertisement.updatedAt ? ` at ${lastApiDiscoveryAdvertisement.updatedAt}` : ''}.`
+      : '';
+    return `Could not reach the Dbugr web API. Checked the saved API URL (${apiBaseUrl()}) and common local API ports.${advertised} Start the local API/web stack or relink this Mac from web onboarding, then retry.`;
   }
   return message;
 }
 
+function normalizeApiBaseUrl(raw: string | null | undefined): string | null {
+  const trimmed = raw?.trim().replace(/\/+$/, '');
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    if (!url.pathname || url.pathname === '/') {
+      url.pathname = '/api';
+    }
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
 function apiBaseUrl() {
-  return localStorage.getItem(API_BASE_URL_KEY) || DEFAULT_API;
+  return discoveredApiBaseUrl
+    || normalizeApiBaseUrl(localStorage.getItem(API_BASE_URL_KEY))
+    || normalizeApiBaseUrl(readDesktopLinkProfile()?.apiBaseUrl)
+    || normalizeApiBaseUrl(DEFAULT_API)
+    || 'http://localhost:3001/api';
+}
+
+function rememberApiBaseUrl(baseUrl: string, source: string) {
+  const normalized = normalizeApiBaseUrl(baseUrl);
+  if (!normalized) return;
+  discoveredApiBaseUrl = normalized;
+  localStorage.setItem(API_BASE_URL_KEY, normalized);
+  logUi('api_base_url_resolved', { source, apiBaseUrl: normalized });
+}
+
+function apiFetchUrl(baseUrl: string, path: string) {
+  return `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+function isNetworkFetchError(error: unknown) {
+  const message = safeErrorMessage(error);
+  return (
+    message === 'Load failed' ||
+    message === 'Failed to fetch' ||
+    message.includes('NetworkError') ||
+    message.includes('fetch')
+  );
+}
+
+async function readAdvertisedApiBaseUrl(): Promise<string | null> {
+  try {
+    const raw = await invoke<string | null>('read_api_discovery');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { apiBaseUrl?: string; pid?: number; updatedAt?: string };
+    const apiBaseUrl = normalizeApiBaseUrl(parsed.apiBaseUrl);
+    lastApiDiscoveryAdvertisement = apiBaseUrl
+      ? { apiBaseUrl, pid: parsed.pid, updatedAt: parsed.updatedAt }
+      : null;
+    logUi('api_discovery_file_loaded', {
+      apiBaseUrl,
+      pid: parsed.pid ?? null,
+      updatedAt: parsed.updatedAt ?? null,
+    });
+    return apiBaseUrl;
+  } catch (error) {
+    logUi('api_discovery_file_read_failed', { error: safeErrorMessage(error).slice(0, 240) });
+    return null;
+  }
+}
+
+async function probeApiBaseUrl(baseUrl: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), API_DISCOVERY_TIMEOUT_MS);
+  try {
+    const response = await fetch(apiFetchUrl(baseUrl, '/health'), {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!response.ok) return false;
+    const json = await response.json().catch(() => ({})) as { ok?: boolean; service?: string };
+    return json.ok === true && json.service === 'Dbugr API';
+  } catch {
+    return false;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function discoverApiBaseUrl(): Promise<string | null> {
+  const candidates = new Set<string>();
+  const addCandidate = (candidate: string | null | undefined) => {
+    const normalized = normalizeApiBaseUrl(candidate);
+    if (normalized) candidates.add(normalized);
+  };
+
+  addCandidate(discoveredApiBaseUrl);
+  addCandidate(localStorage.getItem(API_BASE_URL_KEY));
+  addCandidate(readDesktopLinkProfile()?.apiBaseUrl);
+  addCandidate(await readAdvertisedApiBaseUrl());
+  addCandidate(DEFAULT_API);
+  for (const port of API_DISCOVERY_PORTS) {
+    addCandidate(`http://127.0.0.1:${port}/api`);
+    addCandidate(`http://localhost:${port}/api`);
+  }
+
+  logUi('api_discovery_started', { candidates: candidates.size });
+  for (const candidate of candidates) {
+    if (await probeApiBaseUrl(candidate)) {
+      rememberApiBaseUrl(candidate, 'discovery');
+      return candidate;
+    }
+  }
+
+  logUi('api_discovery_failed', { candidates: Array.from(candidates).slice(0, 12) });
+  return null;
+}
+
+async function fetchWithApiDiscovery(path: string, init?: RequestInit): Promise<Response> {
+  const initialBaseUrl = apiBaseUrl();
+  try {
+    return await fetch(apiFetchUrl(initialBaseUrl, path), init);
+  } catch (error) {
+    if (!isNetworkFetchError(error)) throw error;
+    const discovered = await discoverApiBaseUrl();
+    if (!discovered || discovered === initialBaseUrl) throw error;
+    logUi('api_fetch_retrying_with_discovered_base', {
+      previousApiBaseUrl: initialBaseUrl,
+      discoveredApiBaseUrl: discovered,
+      path,
+    });
+    return fetch(apiFetchUrl(discovered, path), init);
+  }
 }
 
 function desktopWebAuthUrl() {
@@ -238,6 +373,12 @@ function webReviewUrlForSession(session: Session) {
   return url.toString();
 }
 
+function desktopFlowFromRemoteFlow(flow: unknown): SubmissionFlow {
+  if (flow === 'internal_review') return 'team';
+  if (flow === 'public_feed') return 'public';
+  return 'direct';
+}
+
 async function openWebReviewForSession(session: Session) {
   await invoke('open_url', { url: webReviewUrlForSession(session) });
 }
@@ -252,7 +393,7 @@ function getDesktopDeviceId() {
 
 function saveDesktopLinkProfile(profile: DesktopLinkProfile) {
   localStorage.setItem(DESKTOP_LINK_PROFILE_KEY, JSON.stringify(profile));
-  localStorage.setItem(API_BASE_URL_KEY, profile.apiBaseUrl);
+  rememberApiBaseUrl(profile.apiBaseUrl, 'desktop_link_profile');
 }
 
 function readDesktopLinkProfile(): DesktopLinkProfile | null {
@@ -567,7 +708,7 @@ function deleteSession(sessionId: string) {
 
 async function deleteRemoteSession(sessionId: string) {
   try {
-    const response = await fetch(`${apiBaseUrl()}/feedback-sessions/${encodeURIComponent(sessionId)}`, {
+    const response = await fetchWithApiDiscovery(`/feedback-sessions/${encodeURIComponent(sessionId)}`, {
       method: 'DELETE',
     });
     logUi('workspace_remote_delete_session_result', {
@@ -2737,7 +2878,7 @@ async function loadSessionsFromApi(options: { force?: boolean } = {}) {
   sessionsApiLoadInFlight = (async () => {
   try {
     logUi('workspace_load_sessions_start', { existingLocalSessions: sessions.length });
-    const response = await fetch(`${apiBaseUrl()}/feedback-sessions`);
+    const response = await fetchWithApiDiscovery('/feedback-sessions');
     if (!response.ok) throw new Error('Could not load sessions');
     const json = await response.json() as {
       data: Array<{
@@ -2750,9 +2891,11 @@ async function loadSessionsFromApi(options: { force?: boolean } = {}) {
         project_folder?: string | null;
         githubRepo?: string | null;
         github_repo?: string | null;
+        submissionFlow?: string | null;
+        submission_flow?: string | null;
       }>;
     };
-    const byId = new Map(sessions.map((session) => [session.id, session]));
+    const byId = buildSessionIdentityMap(sessions);
     for (const remote of json.data ?? []) {
       if (deletedSessionIds.has(remote.id)) {
         continue;
@@ -2760,11 +2903,15 @@ async function loadSessionsFromApi(options: { force?: boolean } = {}) {
       const existing = byId.get(remote.id);
       if (existing) {
         existing.title = remote.title || existing.title;
-        existing.createdAt = remote.createdAt || existing.createdAt;
+        existing.webSessionId = existing.id === remote.id ? existing.webSessionId : remote.id;
+        existing.createdAt = existing.captures.length ? existing.createdAt : (remote.createdAt || existing.createdAt);
         existing.status = remote.status === 'responded' || remote.status === 'sent' ? remote.status : existing.status;
         existing.about = remote.about ?? existing.about;
         existing.projectFolder = normalizeProjectFolderInput(remote.projectFolder ?? remote.project_folder ?? existing.projectFolder ?? null);
         existing.githubRepo = normalizeGithubRepoInput(remote.githubRepo ?? remote.github_repo ?? existing.githubRepo ?? '');
+        if (!existing.captures.length) {
+          existing.submissionFlow = desktopFlowFromRemoteFlow(remote.submissionFlow ?? remote.submission_flow);
+        }
         continue;
       }
       sessions.push({
@@ -2777,7 +2924,7 @@ async function loadSessionsFromApi(options: { force?: boolean } = {}) {
         sessionNote: '',
         projectFolder: normalizeProjectFolderInput(remote.projectFolder ?? remote.project_folder ?? null),
         githubRepo: normalizeGithubRepoInput(remote.githubRepo ?? remote.github_repo ?? ''),
-        submissionFlow: 'direct',
+        submissionFlow: desktopFlowFromRemoteFlow(remote.submissionFlow ?? remote.submission_flow),
         contributions: [],
         collaborationReady: false,
         lastTarget: 'claude',
@@ -2857,7 +3004,7 @@ async function syncSessionToWeb(session: Session, reason: string): Promise<boole
   });
 
   try {
-    const response = await fetch(`${apiBaseUrl()}/phase2/desktop-sessions/sync`, {
+    const response = await fetchWithApiDiscovery('/phase2/desktop-sessions/sync', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2915,7 +3062,7 @@ async function updateDesktopSubmissionStatus(
 ) {
   const token = await loadDesktopLinkToken();
   if (!token) return;
-  await fetch(`${apiBaseUrl()}/phase2/desktop-submissions/${encodeURIComponent(submissionId)}/status`, {
+  await fetchWithApiDiscovery(`/phase2/desktop-submissions/${encodeURIComponent(submissionId)}/status`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -2967,7 +3114,7 @@ async function launchPromptHandoff(options: {
 async function handleDesktopSubmissionHandoff(parsed: URL) {
   const submissionId = parsed.searchParams.get('submissionId')?.trim();
   const apiParam = parsed.searchParams.get('api')?.trim();
-  if (apiParam) localStorage.setItem(API_BASE_URL_KEY, apiParam);
+  if (apiParam) rememberApiBaseUrl(apiParam, 'desktop_handoff_param');
   if (!submissionId) {
     logUi('desktop_submission_handoff_missing_submission_id');
     return;
@@ -2982,7 +3129,7 @@ async function handleDesktopSubmissionHandoff(parsed: URL) {
 
   logUi('desktop_submission_handoff_started', { submissionId, apiBaseUrl: apiBaseUrl() });
   try {
-    const response = await fetch(`${apiBaseUrl()}/phase2/desktop-submissions/${encodeURIComponent(submissionId)}`, {
+    const response = await fetchWithApiDiscovery(`/phase2/desktop-submissions/${encodeURIComponent(submissionId)}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     const json = await response.json().catch(() => ({})) as {
@@ -3060,9 +3207,9 @@ async function handleDesktopDeepLink(rawUrl: string) {
     logUi('desktop_link_deep_link_missing_code');
     return;
   }
-  if (apiParam) localStorage.setItem(API_BASE_URL_KEY, apiParam);
+  if (apiParam) rememberApiBaseUrl(apiParam, 'desktop_link_param');
 
-  const baseUrl = apiParam || apiBaseUrl();
+  const baseUrl = normalizeApiBaseUrl(apiParam) || await discoverApiBaseUrl() || apiBaseUrl();
   const deviceId = getDesktopDeviceId();
   logUi('desktop_link_redeem_started', {
     apiBaseUrl: baseUrl,

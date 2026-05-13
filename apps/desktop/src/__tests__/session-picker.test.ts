@@ -30,6 +30,7 @@ describe('annotation session picker', () => {
     const pickerSourceBlock = functionBlock(/function sessionsForAnnotationPicker\(/);
     const persistBlock = functionBlock(/function queuePersistMirrors\(/);
     const listenBlock = functionBlock(/async function listenForAnnotations\(/);
+    const apiLoadBlock = functionBlock(/async function loadSessionsFromApi\(/);
 
     expect(pickerSourceBlock).toContain('return sortedSessions()');
     expect(pickerSourceBlock).not.toContain('captures.length > 0');
@@ -40,6 +41,9 @@ describe('annotation session picker', () => {
     expect(listenBlock).toContain('sessionsForAnnotationPicker()');
     expect(listenBlock).toContain("source: 'workspace_sessions'");
     expect(listenBlock).toContain('loadSessionsFromApi({ force: true })');
+    expect(apiLoadBlock).toContain('buildSessionIdentityMap(sessions)');
+    expect(apiLoadBlock).toContain('existing.webSessionId');
+    expect(apiLoadBlock).toContain('desktopFlowFromRemoteFlow');
   });
 
   it('logs picker row clicks through the permission and annotation transition path', () => {

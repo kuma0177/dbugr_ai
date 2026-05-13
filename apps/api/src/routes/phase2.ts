@@ -306,6 +306,22 @@ const desktopSessionSyncSchema = z.object({
   })).default([]),
 });
 
+const SQLITE_INT_MAX = 2_147_483_647;
+
+function normalizeDesktopCaptureTimestampMs(
+  capture: z.infer<typeof desktopSessionSyncSchema>['captures'][number],
+  index: number,
+  firstCaptureTimestampMs: number | null,
+) {
+  const raw = capture.timestampMs;
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return index;
+  if (raw <= SQLITE_INT_MAX) return raw;
+  if (firstCaptureTimestampMs !== null && raw >= firstCaptureTimestampMs) {
+    return Math.min(raw - firstCaptureTimestampMs, SQLITE_INT_MAX);
+  }
+  return index;
+}
+
 const desktopLinkSchema = z.object({
   appUrl: z.string().url().optional(),
 });
@@ -1802,6 +1818,7 @@ phase2Router.post('/phase2/desktop-sessions/sync', async (req: Request, res: Res
       });
 
   await prisma.feedbackFrame.deleteMany({ where: { feedbackSessionId: session.id } });
+  const firstCaptureTimestampMs = parsed.data.captures.find((capture) => Number.isFinite(capture.timestampMs))?.timestampMs ?? null;
   const frameInputs = parsed.data.captures.map((capture, index) => {
     const annotationSummary = capture.annotations
       .filter((annotation) => annotation.text?.trim())
@@ -1811,7 +1828,7 @@ phase2Router.post('/phase2/desktop-sessions/sync', async (req: Request, res: Res
 
     return {
       feedbackSessionId: session.id,
-      timestampMs: capture.timestampMs ?? index,
+      timestampMs: normalizeDesktopCaptureTimestampMs(capture, index, firstCaptureTimestampMs),
       imageUrl: capture.screenshotUrl ?? capture.previewDataUrl ?? 'desktop-capture://pending-upload',
       cursorX: 0,
       cursorY: 0,

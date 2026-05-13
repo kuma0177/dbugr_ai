@@ -43,6 +43,8 @@ Before editing any of these files, read this ledger and update it when a new reg
 | DSK-011 | Deleted sessions came back after reopening or refreshing because the desktop only hid them locally while `/feedback-sessions` still returned the remote record. | Session delete must persist `deletedSessionIds` and call `DELETE /feedback-sessions/:id`; the API delete route must remove child rows before deleting the session. |
 | DSK-012 | New Annotation picker/modal did not match the session sidebar because it only used local sessions with existing captures. | Picker cache and `request-sessions` events must use the same active workspace sessions as the sidebar and refresh stale API data before emitting. |
 | DSK-013 | Team/Public flow selection only changed local desktop state or created a web snapshot, so accepted review feedback never reached the local AI handoff. | The visible Start collaboration action must await web sync and open the matching feed, and web submission must open a desktop handoff link that fetches the frozen prompt before launching Claude/Codex/Cursor. |
+| DSK-014 | Team/Public review sync failed whenever the local API was not on the default `3001` port. | The API must advertise its active base URL in the shared Debugr app-data folder, and desktop sync must probe that plus common local ports before showing an unreachable-API error. |
+| DSK-015 | Synced team/public sessions appeared twice in the desktop picker/sidebar because API refresh matched only local ids and not `webSessionId`. | Remote API rows whose id equals a local session's `webSessionId` must merge into that local session instead of creating a second zero-capture row. |
 
 ## Required Checks
 
@@ -64,6 +66,8 @@ For macOS permission or real capture changes, also manually verify:
 - Save annotation: session board shows the capture, note, count, and screenshot preview.
 - Delete session: row disappears immediately and stays gone after reopening the desktop or refreshing sessions from the API.
 - New Annotation picker: session choices match the sidebar count/order after deleting, refreshing, or reopening.
+- Team/Public review sync: start the API on a non-default local port and verify desktop discovers it before showing an unreachable-API error.
+- Team/Public review sync: refresh sessions after sync and confirm the local annotated session and its web row render as one picker/sidebar entry.
 
 ## Test Ownership
 

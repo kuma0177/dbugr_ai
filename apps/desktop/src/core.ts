@@ -355,6 +355,15 @@ export function buildPickerSessionCache(sessions: Session[]): PickerSessionCache
   }));
 }
 
+export function buildSessionIdentityMap(sessions: Session[]): Map<string, Session> {
+  const byId = new Map<string, Session>();
+  for (const session of sessions) {
+    byId.set(session.id, session);
+    if (session.webSessionId) byId.set(session.webSessionId, session);
+  }
+  return byId;
+}
+
 /**
  * Build a structured plain-text prompt from a session.
  *
@@ -488,6 +497,10 @@ export function buildDesktopSessionSyncPayload(
   session: Session,
   providerTarget?: Target,
 ): DesktopSessionSyncPayload {
+  const firstCaptureTimestampMs = session.captures
+    .map((capture) => new Date(capture.timestamp).getTime())
+    .find((timestampMs) => Number.isFinite(timestampMs)) ?? 0;
+
   return {
     localSessionId: session.id,
     title: session.title,
@@ -512,7 +525,7 @@ export function buildDesktopSessionSyncPayload(
         screenshotUrl,
         previewDataUrl,
         timestampMs: Number.isFinite(new Date(capture.timestamp).getTime())
-          ? new Date(capture.timestamp).getTime()
+          ? Math.max(0, new Date(capture.timestamp).getTime() - firstCaptureTimestampMs)
           : index,
         annotations: capture.annotations.map((annotation) => ({
           id: annotation.id,

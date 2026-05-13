@@ -142,6 +142,10 @@ fn picker_sessions_cache_path() -> PathBuf {
     debugr_root_dir().join("picker-sessions-cache.json")
 }
 
+fn api_discovery_path() -> PathBuf {
+    debugr_root_dir().join("api-discovery.json")
+}
+
 fn sanitize_log_line(s: &str) -> String {
     s.replace('\n', "\\n").replace('\r', "\\r")
 }
@@ -496,6 +500,20 @@ fn save_desktop_link_token(token: String) -> Result<(), String> {
         format!("service={DESKTOP_LINK_KEYCHAIN_SERVICE}"),
     );
     Ok(())
+}
+
+#[tauri::command]
+fn read_api_discovery() -> Result<Option<String>, String> {
+    let path = api_discovery_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+    fs::read_to_string(&path).map(Some).map_err(|e| {
+        format!(
+            "Failed to read API discovery file at {}: {e}",
+            path.display()
+        )
+    })
 }
 
 #[tauri::command]
@@ -2315,6 +2333,7 @@ fn main() {
             open_url,
             save_provider_config,
             save_desktop_link_token,
+            read_api_discovery,
             load_desktop_link_token,
             clear_desktop_link_token,
             get_provider_config,
