@@ -1,13 +1,22 @@
-# Desktop Regression Ledger
+# Desktop And Review Regression Ledger
 
-This file is the required pre-change checklist for Debugr desktop capture, annotation, permission, overlay, session-save, and provider-handoff work.
+This file is the required pre-change checklist for Debugr desktop capture, annotation, permission, overlay, session-save, provider-handoff, desktop-sync API, team/public review feed, seed/smoke data, and review-curation work.
 
 Before editing any of these files, read this ledger and update it when a new regression is found:
 
 - `apps/desktop/src-tauri/src/main.rs`
 - `apps/desktop/src/overlay.ts`
 - `apps/desktop/src/main.tsx`
+- `apps/desktop/src/core.ts`
+- `apps/api/src/routes/phase2.ts`
+- `apps/api/src/routes/feedbackSessions.ts`
+- `apps/api/src/lib/seed.ts`
+- `apps/api/src/lib/phase2-api-smoke.ts`
+- `apps/web/src/app/feed/page.tsx`
+- `apps/web/src/lib/api.ts`
 - `apps/desktop/src/__tests__/permission-flow.test.ts`
+- `apps/desktop/src/__tests__/phase2-web-handoff.test.ts`
+- `apps/desktop/src/__tests__/session-picker.test.ts`
 - `apps/desktop/e2e/playwright/specs/*`
 - `apps/desktop-native-mac/**`
 
@@ -25,6 +34,15 @@ Before editing any of these files, read this ledger and update it when a new reg
 - Appending a new capture to an existing session must bypass the picker when launched from that session.
 - Deleting a session must remove it locally, persist a tombstone, and delete the remote API record when one exists so API refreshes cannot resurrect it.
 - The New Annotation session picker must reflect the same active, deleted-session-filtered workspace sessions as the session sidebar, including sessions that do not have captures yet.
+- Team/Public review sync must preserve the original desktop annotation, screenshot path, and stable web session id.
+- Cleanup/test operations must never delete a real synced user session unless the user explicitly asks to delete that session.
+- Smoke/demo sessions must never dominate or pollute the normal user-facing team/public review feed.
+- Review feed cards must not duplicate identical capture note and annotation text.
+- Review feed actions must be clear and actionable; do not expose ambiguous controls such as `Duplicate` unless the duplicate workflow is implemented and tested end-to-end.
+- Desktop owner annotations must not be fabricated as review comments; review comments are only notes explicitly posted from the review UI.
+- A user may have only one top-level review note per session; posting again edits that note and clears stale curation decisions so it returns to review.
+- When a real account has multiple local memberships, the API must prefer that user's real/owned workspace over the seeded `org_demo` workspace for web review context.
+- When an older desktop link points at `org_demo`, the API must still route that real user to their real/owned workspace before syncing team/public sessions.
 
 ## Known Regression Cases
 
@@ -45,6 +63,15 @@ Before editing any of these files, read this ledger and update it when a new reg
 | DSK-013 | Team/Public flow selection only changed local desktop state or created a web snapshot, so accepted review feedback never reached the local AI handoff. | The visible Start collaboration action must await web sync and open the matching feed, and web submission must open a desktop handoff link that fetches the frozen prompt before launching Claude/Codex/Cursor. |
 | DSK-014 | Team/Public review sync failed whenever the local API was not on the default `3001` port. | The API must advertise its active base URL in the shared Debugr app-data folder, and desktop sync must probe that plus common local ports before showing an unreachable-API error. |
 | DSK-015 | Synced team/public sessions appeared twice in the desktop picker/sidebar because API refresh matched only local ids and not `webSessionId`. | Remote API rows whose id equals a local session's `webSessionId` must merge into that local session instead of creating a second zero-capture row. |
+| DSK-016 | Desktop sync crashed the API because epoch millisecond capture timestamps overflowed `FeedbackFrame.timestampMs`. | Desktop must send session-relative capture offsets, and the API must normalize legacy epoch payloads before writing frames. |
+| DSK-017 | Web review feed repeated the same note because frame descriptions concatenated duplicate capture note and annotation text. | API frame-description construction must de-dupe identical non-empty note strings before saving or returning review frames. |
+| DSK-018 | The web review feed showed an unclear `Duplicate` curation button beside `Accept` and `Decline`. | Feed curation controls must only show implemented, user-clear actions; duplicate handling stays hidden until it has a real tested workflow. |
+| DSK-019 | Smoke/demo sessions appeared instead of the user's real synced annotation in the review feed. | Seed/smoke data must be isolated from user-facing local review feeds, and restore/cleanup scripts must verify the real session remains queryable by its original web id. |
+| DSK-020 | Manual cleanup of test data deleted the real synced web session row while the desktop still had the local annotation. | Test cleanup must target only records with explicit test identifiers and verify the local session's `webSessionId` still exists before finishing. |
+| DSK-021 | Restoring a session with a demo desktop-link token created a fake `Demo User` review comment that the user never posted. | Desktop annotations must sync as frame/capture context only, not as visible review comments; restore operations must use the real user token or repair ownership afterward. |
+| DSK-022 | The review feed allowed the same user to post multiple top-level notes on one session. | Contribution POST must upsert the user's existing top-level team/public note for that session and reset old curation decisions on edit. |
+| DSK-023 | The web feed selected `Demo Organization` for a real user because the API picked the oldest active membership. | Header-authenticated web context must prefer the user's owned/non-demo workspace when multiple memberships exist. |
+| DSK-024 | An old desktop link still pointed at `org_demo`, so future desktop syncs could recreate duplicate/missing review sessions even after the web feed used the real workspace. | Desktop-token context must prefer the real/owned workspace over `org_demo` for real multi-membership users while preserving the exact linked org for non-demo links. |
 
 ## Required Checks
 
@@ -53,6 +80,14 @@ Run these after desktop capture, overlay, permission, or session-save changes:
 ```bash
 pnpm --filter @feedbackagent/desktop test
 cd apps/desktop/src-tauri && cargo fmt --check && cargo check
+```
+
+Run these after desktop-sync API, team/public feed, seed/smoke, or review-curation changes:
+
+```bash
+pnpm --filter @feedbackagent/desktop test
+pnpm --filter @feedbackagent/api build
+pnpm --filter @feedbackagent/web build
 ```
 
 For macOS permission or real capture changes, also manually verify:
@@ -68,11 +103,21 @@ For macOS permission or real capture changes, also manually verify:
 - New Annotation picker: session choices match the sidebar count/order after deleting, refreshing, or reopening.
 - Team/Public review sync: start the API on a non-default local port and verify desktop discovers it before showing an unreachable-API error.
 - Team/Public review sync: refresh sessions after sync and confirm the local annotated session and its web row render as one picker/sidebar entry.
+- Team/Public review feed: the original synced session opens by its stable `webSessionId` and shows the real screenshot, frame note, and owner annotation.
+- Team/Public review feed: identical capture note and annotation text appears once in the frame card, while the owner annotation appears once as a review note/comment.
+- Team/Public review feed: smoke/demo records do not appear in the normal organization/public feed unless explicitly running a smoke/demo scenario.
+- Team/Public review feed: only `Accept` and `Decline` curation actions are visible until duplicate handling has a tested product behavior.
+- Team/Public review feed: desktop annotation text appears as capture context, not as a fake owner comment.
+- Team/Public review feed: posting a second note from the same user edits the existing note and leaves only one top-level comment for that user/session.
+- Team/Public review feed: a real signed-in user with a seeded demo membership still loads their real workspace sessions, not `Demo Organization`.
+- Team/Public desktop sync: a real user's existing desktop link with `org_demo` still syncs into the real workspace rather than creating a duplicate demo-org session.
+- Test cleanup: after any smoke/manual cleanup, query the DB or API and confirm the user's real synced session still exists.
 
 ## Test Ownership
 
 - Add or update `apps/desktop/src/__tests__/permission-flow.test.ts` for every permission/order regression.
 - Add or update `apps/desktop/src/__tests__/session-delete.test.ts` for session delete persistence regressions.
 - Add or update `apps/desktop/src/__tests__/session-picker.test.ts` for sidebar/picker session parity regressions.
+- Add or update `apps/desktop/src/__tests__/phase2-web-handoff.test.ts` for desktop-sync API, feed rendering, web handoff, curation, timestamp, and duplicate/identity regressions.
 - Add or update Playwright specs when the regression requires user-level UI flow coverage.
 - If a regression cannot be automated, document the manual verification steps in this ledger before finishing the change.

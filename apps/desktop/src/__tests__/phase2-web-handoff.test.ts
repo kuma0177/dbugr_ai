@@ -85,6 +85,40 @@ describe('phase 2 team/public web handoff', () => {
     expect(phase2Source).toContain('timestampMs: normalizeDesktopCaptureTimestampMs');
   });
 
+  it('keeps the team review feed concise by deduping capture notes and avoiding unclear curation buttons', () => {
+    const syncSessionToWebApi = functionBlock(phase2Source, /phase2Router\.post\('\/phase2\/desktop-sessions\/sync'/);
+    expect(phase2Source).toContain('function uniqueNonEmptyText');
+    expect(phase2Source).toContain('uniqueNonEmptyText([capture.note, ...annotationNotes])');
+    expect(syncSessionToWebApi).toContain('syncedAnnotationCount += 1');
+    expect(syncSessionToWebApi).not.toContain("sourceScope: 'owner'");
+    expect(feedSource).toContain("curate(comment, 'accepted')");
+    expect(feedSource).toContain("curate(comment, 'rejected')");
+    expect(feedSource).not.toContain("curate(comment, 'duplicate')");
+    expect(feedSource).not.toContain('>Duplicate</button>');
+  });
+
+  it('edits a user review note instead of creating multiple comments for the same user and session', () => {
+    const contributionApi = functionBlock(phase2Source, /phase2Router\.post\('\/phase2\/sessions\/:id\/contributions'/);
+
+    expect(contributionApi).toContain('const existingContribution = await prisma.feedbackComment.findFirst');
+    expect(contributionApi).toContain("sourceScope: { in: ['team', 'public'] }");
+    expect(contributionApi).toContain('tx.curationDecision.deleteMany');
+    expect(contributionApi).toContain('tx.feedbackComment.update');
+    expect(contributionApi).toContain('phase2.contribution_updated');
+  });
+
+  it('prefers the real user workspace over the seeded demo organization when loading web review context', () => {
+    expect(phase2Source).toContain('function preferredMembership');
+    expect(phase2Source).toContain("membership.organization.id !== 'org_demo'");
+    expect(phase2Source).toContain('membership.organization.createdByUserId === userId');
+    expect(phase2Source).toContain('const membership = preferredMembership(memberships, user.id)');
+    expect(phase2Source).toContain("if (exactMembership.organization.id === 'org_demo')");
+    expect(phase2Source).toContain('membership = preferredMembership(memberships, desktopLink.userId) ?? exactMembership');
+    expect(phase2Source).toContain('desktopLinkOrganizationId: desktopLink.organizationId');
+    expect(phase2Source).toContain('organizationId: membership.organization.id');
+    expect(phase2Source).toContain('organization: membership.organization');
+  });
+
   it('handles dbugr://handoff links by fetching the frozen web prompt and launching the provider locally', () => {
     const deepLinkHandler = functionBlock(mainSource, /async function handleDesktopDeepLink\(/);
     const handoffHandler = functionBlock(mainSource, /async function handleDesktopSubmissionHandoff\(/);

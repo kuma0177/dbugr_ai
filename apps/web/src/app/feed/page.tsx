@@ -478,7 +478,6 @@ export default function FeedPage() {
                             <div className="review-comment-actions">
                               <button onClick={() => curate(comment, 'accepted')}>Accept</button>
                               <button onClick={() => curate(comment, 'rejected')}>Decline</button>
-                              <button onClick={() => curate(comment, 'duplicate')}>Duplicate</button>
                             </div>
                           </article>
                         );

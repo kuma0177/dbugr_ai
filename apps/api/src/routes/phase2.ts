@@ -97,6 +97,16 @@ async function demoContext() {
   return { user, membership, organization: membership.organization };
 }
 
+function preferredMembership<T extends { organization: { createdByUserId: string | null; id: string } }>(
+  memberships: T[],
+  userId: string,
+): T | null {
+  return memberships.find((membership) => membership.organization.createdByUserId === userId)
+    ?? memberships.find((membership) => membership.organization.id !== 'org_demo')
+    ?? memberships[0]
+    ?? null;
+}
+
 function slugify(value: string, fallback = 'workspace') {
   return value
     .toLowerCase()
@@ -118,7 +128,7 @@ async function requestContext(req: Request) {
       throw error;
     }
 
-    const membership = await prisma.organizationMembership.findFirst({
+    const exactMembership = await prisma.organizationMembership.findFirst({
       where: {
         userId: desktopLink.userId,
         organizationId: desktopLink.organizationId,
@@ -128,19 +138,30 @@ async function requestContext(req: Request) {
       orderBy: { createdAt: 'asc' },
     });
 
-    if (!membership) {
+    if (!exactMembership) {
       const error = new Error('This linked Mac no longer has active access to this organization.');
       error.name = 'FORBIDDEN';
       throw error;
     }
 
+    let membership = exactMembership;
+    if (exactMembership.organization.id === 'org_demo') {
+      const memberships = await prisma.organizationMembership.findMany({
+        where: { userId: desktopLink.userId, status: 'active' },
+        include: { organization: true, team: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      membership = preferredMembership(memberships, desktopLink.userId) ?? exactMembership;
+    }
+
     logPhase2('desktop_token.context_loaded', {
       userId: desktopLink.userId,
-      organizationId: desktopLink.organizationId,
+      desktopLinkOrganizationId: desktopLink.organizationId,
+      organizationId: membership.organization.id,
       desktopLinkId: desktopLink.id,
       deviceId: desktopLink.desktopDeviceId,
     });
-    return { user: desktopLink.user, membership, organization: desktopLink.organization };
+    return { user: desktopLink.user, membership, organization: membership.organization };
   }
 
   const email = typeof req.headers['x-dbugr-user-email'] === 'string'
@@ -155,11 +176,12 @@ async function requestContext(req: Request) {
     throw error;
   }
 
-  const membership = await prisma.organizationMembership.findFirst({
+  const memberships = await prisma.organizationMembership.findMany({
     where: { userId: user.id, status: 'active' },
     include: { organization: true, team: true },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { createdAt: 'desc' },
   });
+  const membership = preferredMembership(memberships, user.id);
   if (!membership) {
     const error = new Error('This account is not attached to an active organization.');
     error.name = 'FORBIDDEN';
@@ -320,6 +342,19 @@ function normalizeDesktopCaptureTimestampMs(
     return Math.min(raw - firstCaptureTimestampMs, SQLITE_INT_MAX);
   }
   return index;
+}
+
+function uniqueNonEmptyText(parts: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  return parts
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part))
+    .filter((part) => {
+      const key = part.toLowerCase().replace(/\s+/g, ' ');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 const desktopLinkSchema = z.object({
@@ -1820,11 +1855,10 @@ phase2Router.post('/phase2/desktop-sessions/sync', async (req: Request, res: Res
   await prisma.feedbackFrame.deleteMany({ where: { feedbackSessionId: session.id } });
   const firstCaptureTimestampMs = parsed.data.captures.find((capture) => Number.isFinite(capture.timestampMs))?.timestampMs ?? null;
   const frameInputs = parsed.data.captures.map((capture, index) => {
-    const annotationSummary = capture.annotations
+    const annotationNotes = capture.annotations
       .filter((annotation) => annotation.text?.trim())
-      .map((annotation) => annotation.text?.trim())
-      .join('\n');
-    const description = [capture.note, annotationSummary].filter(Boolean).join('\n\n') || capture.title || 'Desktop capture';
+      .map((annotation) => annotation.text?.trim());
+    const description = uniqueNonEmptyText([capture.note, ...annotationNotes]).join('\n\n') || capture.title || 'Desktop capture';
 
     return {
       feedbackSessionId: session.id,
@@ -1846,40 +1880,6 @@ phase2Router.post('/phase2/desktop-sessions/sync', async (req: Request, res: Res
       const body = annotation.text?.trim();
       if (!body) continue;
       syncedAnnotationCount += 1;
-
-      const existingComment = await prisma.feedbackComment.findFirst({
-        where: {
-          feedbackSessionId: session.id,
-          authorId: user.id,
-          targetType: 'annotation',
-          targetId: annotation.id,
-        },
-      });
-
-      if (existingComment) {
-        await prisma.feedbackComment.update({
-          where: { id: existingComment.id },
-          data: {
-            body,
-            visibility: mapping.visibility,
-            sourceScope: 'owner',
-            contributionType: 'comment',
-          },
-        });
-      } else {
-        await prisma.feedbackComment.create({
-          data: {
-            feedbackSessionId: session.id,
-            authorId: user.id,
-            targetType: 'annotation',
-            targetId: annotation.id,
-            sourceScope: 'owner',
-            contributionType: 'comment',
-            body,
-            visibility: mapping.visibility,
-          },
-        });
-      }
     }
   }
 
@@ -2056,29 +2056,55 @@ phase2Router.post('/phase2/sessions/:id/contributions', async (req: Request, res
     logPhase2('contribution.permission_denied', { sessionId: req.params.id, userId: user.id });
     return res.status(404).json({ error: 'Session not found or not visible to this account.' });
   }
-  const contribution = await prisma.feedbackComment.create({
-    data: {
+  const existingContribution = await prisma.feedbackComment.findFirst({
+    where: {
       feedbackSessionId: req.params.id,
       authorId: user.id,
-      targetType: parsed.data.targetType,
-      targetId: parsed.data.targetId ?? null,
-      contributionType: parsed.data.contributionType,
-      sourceScope: parsed.data.visibility === 'public' ? 'public' : 'team',
-      body: parsed.data.body,
-      suggestedText: parsed.data.suggestedText,
-      visibility: parsed.data.visibility,
+      sourceScope: { in: ['team', 'public'] },
+      parentCommentId: null,
     },
-    include: { author: true },
+    orderBy: { createdAt: 'asc' },
   });
+  const contribution = existingContribution
+    ? await prisma.$transaction(async (tx) => {
+        await tx.curationDecision.deleteMany({ where: { contributionId: existingContribution.id } });
+        return tx.feedbackComment.update({
+          where: { id: existingContribution.id },
+          data: {
+            targetType: parsed.data.targetType,
+            targetId: parsed.data.targetId ?? null,
+            contributionType: parsed.data.contributionType,
+            sourceScope: parsed.data.visibility === 'public' ? 'public' : 'team',
+            body: parsed.data.body,
+            suggestedText: parsed.data.suggestedText,
+            visibility: parsed.data.visibility,
+          },
+          include: { author: true },
+        });
+      })
+    : await prisma.feedbackComment.create({
+        data: {
+          feedbackSessionId: req.params.id,
+          authorId: user.id,
+          targetType: parsed.data.targetType,
+          targetId: parsed.data.targetId ?? null,
+          contributionType: parsed.data.contributionType,
+          sourceScope: parsed.data.visibility === 'public' ? 'public' : 'team',
+          body: parsed.data.body,
+          suggestedText: parsed.data.suggestedText,
+          visibility: parsed.data.visibility,
+        },
+        include: { author: true },
+      });
   await auditLog({
     organizationId: organization.id,
     actorId: user.id,
-    action: 'phase2.contribution_created',
+    action: existingContribution ? 'phase2.contribution_updated' : 'phase2.contribution_created',
     targetType: parsed.data.targetType,
     targetId: parsed.data.targetId ?? req.params.id,
     metadata: { sessionId: req.params.id, contributionType: parsed.data.contributionType, visibility: parsed.data.visibility },
   });
-  logPhase2('contribution.created', {
+  logPhase2(existingContribution ? 'contribution.updated' : 'contribution.created', {
     sessionId: req.params.id,
     contributionId: contribution.id,
     targetType: contribution.targetType,
