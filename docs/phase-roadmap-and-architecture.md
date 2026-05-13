@@ -275,6 +275,12 @@ Quality-gated status as of 2026-05-03:
 - [x] Phase 1 capture gate now points to the native Swift/AppKit smoke path because native capture is the intended macOS architecture and it validates real ScreenCaptureKit output instead of Playwright mocks.
 - [x] Current Tauri shell CoreGraphics smoke is deprecated legacy diagnostic coverage, not a Phase 1 gate. `apps/desktop/src-tauri` `env DEBUGR_CAPTURE_SMOKE=1 cargo run` may still fail with `CoreGraphics did not return a display image`; that failure is tracked as legacy-shell debt while the app moves to Swift/AppKit capture.
 
+Architecture update as of 2026-05-13:
+
+- Direct Claude/Codex handoff no longer embeds the full prompt or API key in the AppleScript `do script` command. The Tauri backend writes a private prompt file, optional private key file, and short zsh runner under the Dbugr application-support handoff directory, then opens Terminal with only the runner path. This keeps multiline prompts shell-safe and prevents provider keys from being printed in Terminal history.
+- Provider CLI setup is a user-controlled readiness step, not a hidden DMG side effect. `scripts/setup-macos-providers.sh` verifies Claude Code, Codex CLI, Cursor, and Screen Recording state, and only installs provider CLIs when the user opts in. macOS malware/XProtect warnings must never be bypassed by Dbugr.
+- Team/public review routes are committed locally only after the desktop sync endpoint accepts the session. If the API at the configured base URL is unreachable, the desktop keeps the previous flow and shows a recovery message that points users to the local API/web stack or Mac relink flow.
+
 Quality tracker:
 
 | Milestone | Logging | Unit / component tests | Regression tests | Functional verification | Quality gate |

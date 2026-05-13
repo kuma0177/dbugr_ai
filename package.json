@@ -11,6 +11,8 @@
     "db:seed": "pnpm --filter @feedbackagent/api seed",
     "db:setup": "pnpm db:generate && pnpm db:push && pnpm db:seed",
     "db:migrate": "pnpm --filter @feedbackagent/db migrate",
+    "setup:macos-providers": "bash scripts/setup-macos-providers.sh",
+    "setup:macos-providers:install": "bash scripts/setup-macos-providers.sh --install",
     "railway:api:prepare-db": "node scripts/prepare-railway-db.mjs",
     "railway:api:start": "pnpm railway:api:prepare-db && pnpm --filter @feedbackagent/api start",
     "test:phase2:auth": "pnpm --filter @feedbackagent/api test:phase2:auth",

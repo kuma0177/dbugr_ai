@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(unexpected_cfgs)]
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     ffi::{c_char, c_void, CStr},
@@ -411,6 +413,10 @@ fn escape_applescript_text(value: &str) -> String {
     value.replace('\\', r"\\").replace('"', r#"\""#)
 }
 
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r#"'\''"#))
+}
+
 /// Open any URL in the user's default browser.
 /// Uses `sh -c "open URL"` so the process inherits the user's full
 /// environment and is not affected by any Tauri process sandboxing.
@@ -751,7 +757,7 @@ fn open_command_in_terminal(
     command: String,
     title: Option<String>,
 ) -> Result<(), String> {
-    let shell_command = format!("cd '{}' && {}", cwd.replace('\'', r"'\''"), command);
+    let shell_command = format!("cd {} && {}", shell_single_quote(&cwd), command);
     let applescript = match title {
         Some(title) => format!(
             r#"tell application "Terminal"
@@ -782,6 +788,100 @@ end tell"#,
     }
 
     Ok(())
+}
+
+#[tauri::command]
+fn open_ai_cli_in_terminal(
+    cwd: String,
+    cli_name: String,
+    prompt: String,
+    api_key: Option<String>,
+    title: Option<String>,
+) -> Result<(), String> {
+    let cli_name = match cli_name.as_str() {
+        "claude" => "claude",
+        "codex" => "codex",
+        other => return Err(format!("Unsupported AI CLI: {other}")),
+    };
+    let env_name = if cli_name == "codex" {
+        "OPENAI_API_KEY"
+    } else {
+        "ANTHROPIC_API_KEY"
+    };
+    let handoff_dir = debugr_root_dir().join("handoffs");
+    fs::create_dir_all(&handoff_dir).map_err(|e| format!("Failed to create handoff dir: {e}"))?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let prompt_path = handoff_dir.join(format!("prompt_{stamp}.txt"));
+    let key_path = handoff_dir.join(format!("key_{stamp}.txt"));
+    let script_path = handoff_dir.join(format!("run_{cli_name}_{stamp}.zsh"));
+    // Keep multiline prompts and secrets out of the AppleScript command line;
+    // Terminal only receives the short runner path.
+    fs::write(&prompt_path, prompt).map_err(|e| format!("Failed to write prompt file: {e}"))?;
+    fs::write(&key_path, api_key.unwrap_or_default().trim())
+        .map_err(|e| format!("Failed to write key file: {e}"))?;
+
+    #[cfg(unix)]
+    {
+        let _ = fs::set_permissions(&prompt_path, fs::Permissions::from_mode(0o600));
+        let _ = fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600));
+    }
+
+    let script = format!(
+        r#"#!/bin/zsh
+set -u
+PROMPT_FILE={prompt_file}
+KEY_FILE={key_file}
+cleanup() {{
+  rm -f "$PROMPT_FILE" "$KEY_FILE" {script_file}
+}}
+trap cleanup EXIT
+cd {cwd}
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/Codex.app/Contents/Resources:$PATH"
+if [ -s "$KEY_FILE" ]; then
+  export {env_name}="$(cat "$KEY_FILE")"
+fi
+if ! command -v {cli_name} >/dev/null 2>&1; then
+  echo "Dbugr could not find the {cli_name} CLI in this Terminal session."
+  echo "Run the Dbugr provider setup helper, then retry:"
+  echo "  pnpm setup:macos-providers"
+  exit 127
+fi
+{cli_name} "$(cat "$PROMPT_FILE")"
+cli_status=$?
+exit "$cli_status"
+"#,
+        prompt_file = shell_single_quote(&prompt_path.to_string_lossy()),
+        key_file = shell_single_quote(&key_path.to_string_lossy()),
+        script_file = shell_single_quote(&script_path.to_string_lossy()),
+        cwd = shell_single_quote(&cwd),
+    );
+    fs::write(&script_path, script).map_err(|e| format!("Failed to write handoff script: {e}"))?;
+    #[cfg(unix)]
+    {
+        let _ = fs::set_permissions(&script_path, fs::Permissions::from_mode(0o700));
+    }
+
+    log_backend(
+        "ai_cli_handoff.prepared",
+        format!(
+            "cli={cli_name} cwd={} prompt_path={} key_present={} script_path={}",
+            sanitize_log_line(&cwd),
+            prompt_path.display(),
+            key_path.metadata().map(|m| m.len() > 0).unwrap_or(false),
+            script_path.display()
+        ),
+    );
+    open_command_in_terminal(
+        cwd,
+        format!(
+            "/bin/zsh {}",
+            shell_single_quote(&script_path.to_string_lossy())
+        ),
+        title,
+    )
 }
 
 /// Shows a native macOS folder-picker via AppleScript.
@@ -2187,6 +2287,7 @@ fn main() {
             reveal_in_finder,
             capture_interactive_screenshot,
             open_command_in_terminal,
+            open_ai_cli_in_terminal,
             open_auth_popup,
             finish_annotations,
             show_overlay,

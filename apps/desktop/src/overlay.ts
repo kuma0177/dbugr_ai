@@ -717,9 +717,13 @@ function renderAnnotationPermissionGate(reason: string) {
 }
 
 async function ensureScreenRecordingPermissionBeforeAnnotating(reason: string): Promise<boolean> {
-  if (annotationPermissionCheckInFlight) return annotationPermissionCheckInFlight;
+  if (annotationPermissionCheckInFlight) {
+    addDebugLog(`permission.annotation_gate.reuse_inflight reason=${reason}`);
+    return annotationPermissionCheckInFlight;
+  }
   annotationPermissionCheckInFlight = (async () => {
     try {
+      addDebugLog(`permission.annotation_gate.start reason=${reason}`);
       const granted = await invoke<boolean>('get_screen_capture_annotation_ready');
       addDebugLog(`permission.annotation_gate reason=${reason} granted=${granted}`);
       if (!granted) {
@@ -1166,6 +1170,7 @@ function setPickerLoading() {
   const token = pickerLoadingToken;
   clearPickerLoadingTimer();
   const cached = readCachedPickerSessions();
+  addDebugLog(`picker.loading.start token=${token} cached_count=${cached.length}`);
   if (cached.length > 0) {
     renderPickerSessions(cached);
   } else {
@@ -1174,6 +1179,7 @@ function setPickerLoading() {
     pickerLoadingTimer = window.setTimeout(() => {
       if (token !== pickerLoadingToken) return;
       const refreshedCached = readCachedPickerSessions();
+      addDebugLog(`picker.loading.timeout token=${token} refreshed_cached_count=${refreshedCached.length}`);
       renderPickerSessions(refreshedCached);
     }, 1200);
   }
@@ -1235,6 +1241,7 @@ function renderPickerSessions(list: Array<{ id: string; title: string; createdAt
   // would prevent users from adding their first annotation to a brand-new session.
   const visibleSessions = list;
   pickerSessions = visibleSessions;
+  addDebugLog(`picker.render count=${visibleSessions.length} ids=${visibleSessions.map(s => `${s.id}:${s.annotationCount ?? 'na'}`).join(',').slice(0, 500)}`);
   if (visibleSessions.length === 0) {
     pickerListEl.innerHTML = '<div class="picker-empty">No past sessions yet. Start a new one to create your first list item.</div>';
     return;
@@ -1254,13 +1261,20 @@ function renderPickerSessions(list: Array<{ id: string; title: string; createdAt
     </button>
   `).join('');
   pickerListEl.querySelectorAll<HTMLButtonElement>('.picker-session-item').forEach(btn => {
+    btn.addEventListener('pointerdown', e => {
+      const sessionId = btn.dataset.id ?? null;
+      addDebugLog(`picker.session.pointerdown session_id=${sessionId ?? 'null'} button=${e.button} pointer_type=${e.pointerType}`);
+    });
     btn.addEventListener('click', e => {
       e.stopPropagation();
       targetSessionId = btn.dataset.id ?? null;
       newSessionName = btn.querySelector('.picker-session-title')?.textContent ?? '';
       newSessionAbout = '';
       const remaining = remainingAnnotationSlots();
+      const existingCount = targetSessionAnnotationCount();
+      addDebugLog(`picker.session.click session_id=${targetSessionId ?? 'null'} title=${JSON.stringify(newSessionName)} existing_count=${existingCount} remaining=${remaining}`);
       if (remaining <= 0) {
+        addDebugLog(`picker.session.blocked_full session_id=${targetSessionId ?? 'null'} existing_count=${existingCount} max=${MAX_ANNOTATIONS}`);
         setToast(`"${newSessionName}" already has the maximum ${MAX_ANNOTATIONS} annotations. Start a new session instead.`);
         return;
       }
@@ -1512,13 +1526,18 @@ window.addEventListener('blur', () => {
 });
 
 async function enterAnnotating(reason = 'manual') {
+  addDebugLog(`enter_annotating.start reason=${reason} target_session_id=${targetSessionId ?? 'new_session'} step=${step} capture_mode=${captureSourceMode} source_frame=${Boolean(sourceFrameDataUrl)}`);
   const hasPermission = await ensureScreenRecordingPermissionBeforeAnnotating(reason);
-  if (!hasPermission) return;
+  if (!hasPermission) {
+    addDebugLog(`enter_annotating.blocked_permission reason=${reason} target_session_id=${targetSessionId ?? 'new_session'} step=${step}`);
+    return;
+  }
   if (targetSessionId) {
     newSessionAbout = '';
   }
 
   setTool('region', false);
+  addDebugLog(`enter_annotating.begin_capture reason=${reason} target_session_id=${targetSessionId ?? 'new_session'} capture_mode=${captureSourceMode}`);
   beginCaptureFlowForMode();
 }
 
@@ -2263,6 +2282,7 @@ async function initializeEventListeners() {
 
   // Sessions list from main window
   await listen<Array<PickerSession>>('sessions-list', event => {
+    addDebugLog(`picker.sessions_list.received count=${event.payload?.length ?? 0} ids=${(event.payload ?? []).map(s => `${s.id}:${s.annotationCount ?? 'na'}`).join(',').slice(0, 500)}`);
     try {
       localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(event.payload));
     } catch {
@@ -2274,6 +2294,7 @@ async function initializeEventListeners() {
 
   // Reset on each new invocation
   await listen<OverlayLaunchPayload>('overlay-will-show', event => {
+    addDebugLog(`overlay.launch.received skip_picker=${Boolean(event.payload?.skipPicker)} target_session_id=${event.payload?.targetSessionId ?? 'null'} capture_in_progress=${captureInProgress}`);
     if (captureInProgress) {
       addDebugLog('overlay-will-show ignored: annotation capture pipeline still active');
       return;

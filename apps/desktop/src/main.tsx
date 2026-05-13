@@ -37,7 +37,6 @@ import {
   buildCombinedPrompt,
   getPromptDiagnostics,
   getCombinedPromptDiagnostics,
-  buildAiCliCommand,
   buildDesktopSessionSyncPayload,
 } from './core';
 
@@ -200,6 +199,19 @@ function safeErrorMessage(error: unknown): string {
   } catch {
     return 'Unknown error';
   }
+}
+
+function syncErrorMessage(error: unknown) {
+  const message = safeErrorMessage(error);
+  if (
+    message === 'Load failed' ||
+    message === 'Failed to fetch' ||
+    message.includes('NetworkError') ||
+    message.includes('fetch')
+  ) {
+    return `Could not reach the Dbugr web API at ${apiBaseUrl()}. Start the local API/web stack or relink this Mac from web onboarding, then retry.`;
+  }
+  return message;
 }
 
 function apiBaseUrl() {
@@ -1924,27 +1936,49 @@ function renderWorkspacePanel() {
       </div>
     `;
     document.querySelectorAll<HTMLButtonElement>('[data-flow]').forEach((button) => {
-      button.addEventListener('click', () => {
+      button.addEventListener('click', async () => {
         const flow = button.dataset.flow as SubmissionFlow | undefined;
         if (!flow || pendingFlowSelection) return;
         flowGateError = '';
         pendingFlowSelection = flow;
         schedulePendingFlowSelectionIndicator(flow);
-        session.submissionFlow = flow;
-        session.collaborationReady = flow === 'direct';
-        if (flow === 'direct') session.contributions = [];
         renderWorkspacePanel();
-        refreshSessionMetaDisplay(session);
-        renderSessionList();
-        window.requestAnimationFrame(() => {
+
+        if (flow === 'direct') {
+          session.submissionFlow = flow;
+          session.collaborationReady = true;
+          session.contributions = [];
           persistAppState();
-          if (flow !== 'direct') void syncSessionToWeb(session, 'submission_flow_selected');
           clearPendingFlowSelectionIndicator();
           pendingFlowSelection = null;
           renderWorkspacePanel();
           refreshSessionMetaDisplay(session);
           renderSessionList();
-        });
+          return;
+        }
+
+        const previousFlow = session.submissionFlow;
+        // Team/public review must exist on the web before the local route is
+        // committed; otherwise users see a selected flow that never synced.
+        session.submissionFlow = flow;
+        const synced = await syncSessionToWeb(session, 'submission_flow_selected');
+        clearPendingFlowSelectionIndicator();
+        pendingFlowSelection = null;
+        if (!synced) {
+          session.submissionFlow = previousFlow;
+          session.collaborationReady = previousFlow === 'direct';
+          flowGateError = session.webSyncError || 'Could not send this session to the web review feed. Check your Mac link and try again.';
+          persistAppState();
+          renderWorkspacePanel();
+          refreshSessionMetaDisplay(session);
+          renderSessionList();
+          return;
+        }
+        session.collaborationReady = false;
+        persistAppState();
+        renderWorkspacePanel();
+        refreshSessionMetaDisplay(session);
+        renderSessionList();
       });
     });
     document.getElementById('flow-next-btn')?.addEventListener('click', async () => {
@@ -2860,7 +2894,7 @@ async function syncSessionToWeb(session: Session, reason: string): Promise<boole
     return true;
   } catch (error) {
     session.webSyncStatus = 'failed';
-    session.webSyncError = safeErrorMessage(error);
+    session.webSyncError = syncErrorMessage(error);
     persistAppState();
     refreshSessionMetaDisplay(session);
     renderSessionList();
@@ -2914,7 +2948,6 @@ async function launchPromptHandoff(options: {
   }
 
   const cliName = options.provider === 'codex' ? 'codex' : 'claude';
-  const command = buildCliCommand(cliName, options.prompt);
   logUi('prompt_handoff_cli_launch', {
     source: options.source,
     sessionId: options.sessionId ?? null,
@@ -2922,9 +2955,11 @@ async function launchPromptHandoff(options: {
     cwd,
     promptLength: options.prompt.length,
   });
-  await invoke('open_command_in_terminal', {
+  await invoke('open_ai_cli_in_terminal', {
     cwd: cwd || process.env['HOME'] || '~',
-    command,
+    cliName,
+    prompt: options.prompt,
+    apiKey: cliName === 'codex' ? codexApiKey : claudeApiKey,
     title: options.title,
   });
 }
@@ -3155,10 +3190,11 @@ async function pushPendingSessions() {
       await invoke('copy_to_clipboard', { text: prompt }).catch(() => {});
     } else {
       const cliName = target === 'codex' ? 'codex' : 'claude';
-      const command = buildCliCommand(cliName, prompt);
-      await invoke('open_command_in_terminal', {
+      await invoke('open_ai_cli_in_terminal', {
         cwd: cwd || process.env['HOME'] || '~',
-        command,
+        cliName,
+        prompt,
+        apiKey: cliName === 'codex' ? codexApiKey : claudeApiKey,
         title: `Debugr → ${providerLabel(target)}: ${titleSuffix}`,
       });
     }
@@ -3219,12 +3255,6 @@ async function saveScreenshots(capturesToSave: Array<{ id: string; screenshotUrl
     }),
   );
   return paths;
-}
-
-/** Build the shell command string for launching the AI CLI with auth guidance. */
-function buildCliCommand(cliName: 'claude' | 'codex', prompt: string): string {
-  const apiKey = cliName === 'codex' ? codexApiKey : claudeApiKey;
-  return buildAiCliCommand(cliName, prompt, apiKey);
 }
 
 async function preparePromptPreview(session: Session) {
@@ -3341,9 +3371,14 @@ async function sendSession() {
       await invoke('copy_to_clipboard', { text: prompt }).catch(() => {});
     } else {
       const cliName = target === 'codex' ? 'codex' : 'claude';
-      const command = buildCliCommand(cliName, prompt);
       logUi('workspace_send_cli_launch', { sessionId: session.id, cliName, cwd, promptLength: prompt.length });
-      await invoke('open_command_in_terminal', { cwd: cwd || process.env['HOME'] || '~', command, title });
+      await invoke('open_ai_cli_in_terminal', {
+        cwd: cwd || process.env['HOME'] || '~',
+        cliName,
+        prompt,
+        apiKey: cliName === 'codex' ? codexApiKey : claudeApiKey,
+        title,
+      });
       feedback = {
         title: `${providerLabel(target)} is running in Terminal`,
         summary: `A Terminal window has opened with your session context. ${screenshotPaths.size > 0 ? `${screenshotPaths.size} screenshot(s) saved locally and referenced in the prompt.` : ''} ${providerLabel(target)} is now analysing your annotations.`.trim(),

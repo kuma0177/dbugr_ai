@@ -62,6 +62,48 @@ Then:
 
 This packaged app is useful for product testing. For development, use the source setup below.
 
+### Provider Setup After DMG Install
+
+Dbugr can hand a saved session to Claude Code, Codex CLI, or Cursor, but those
+provider tools are installed and trusted separately by macOS. A drag-and-drop
+DMG should not silently install third-party binaries or bypass macOS security
+warnings.
+
+After installing the app, run the provider readiness helper from a checkout of
+this repo:
+
+```bash
+pnpm setup:macos-providers
+```
+
+That command verifies:
+
+- `claude --version` for Claude Code
+- `codex --version` for Codex CLI
+- `/Applications/Cursor.app` for Cursor
+- the Dbugr app path used for Screen Recording permission
+
+To opt into installing missing provider tools from their official package
+channels, run:
+
+```bash
+pnpm setup:macos-providers:install
+```
+
+The helper uses these official install routes when requested:
+
+- Claude Code: `brew install --cask claude-code` when Homebrew exists, otherwise `npm install -g @anthropic-ai/claude-code`
+- Codex CLI: `npm install -g @openai/codex`
+- Cursor: `brew install --cask cursor` when Homebrew exists, otherwise it prints the manual download path
+
+If macOS shows a malware or XProtect warning for any provider binary, do not
+bypass it. Remove that provider package and wait for a clean upstream release.
+For Codex CLI, removal is:
+
+```bash
+npm uninstall -g @openai/codex
+```
+
 ## Option 2: Run From Source
 
 Clone the repo:
@@ -81,6 +123,14 @@ Install dependencies:
 
 ```bash
 pnpm install
+```
+
+Verify or install the local provider tools used by Direct AI handoff:
+
+```bash
+pnpm setup:macos-providers
+# or, to install missing tools interactively:
+pnpm setup:macos-providers:install
 ```
 
 Create and seed the local SQLite database:

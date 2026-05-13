@@ -115,6 +115,9 @@ For detailed setup, permissions, troubleshooting, and install options, see [INST
 # install dependencies
 pnpm install
 
+# verify Claude/Codex/Cursor handoff tools on macOS
+pnpm setup:macos-providers
+
 # generate Prisma client, push schema, and seed local data
 pnpm db:setup
 
@@ -171,6 +174,17 @@ If you want to try the current packaged macOS build instead of running from sour
 - [Release page](https://github.com/kuma0177/debgr_ai/releases/tag/stable-macos-claude-codex-cli)
 
 macOS may require Screen Recording permission before capture works. See [INSTALL.md](INSTALL.md#macos-permissions) for details.
+
+Claude, Codex, and Cursor handoffs depend on provider tools installed on the
+user's Mac. Use the setup helper to verify them:
+
+```bash
+pnpm setup:macos-providers
+```
+
+Use `pnpm setup:macos-providers:install` only when you want the helper to
+install missing provider CLIs from official package channels. The helper will
+not bypass macOS malware/XProtect warnings.
 
 ## Environment
 
