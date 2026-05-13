@@ -114,7 +114,7 @@ function slugify(value: string, fallback = 'workspace') {
     .replace(/(^-|-$)/g, '') || fallback;
 }
 
-async function requestContext(req: Request) {
+async function requestContext(req: Request, options: { allowQueryEmail?: boolean } = {}) {
   const desktopToken = desktopBearerToken(req);
   if (desktopToken) {
     const desktopLink = await prisma.desktopLink.findFirst({
@@ -164,9 +164,13 @@ async function requestContext(req: Request) {
     return { user: desktopLink.user, membership, organization: membership.organization };
   }
 
-  const email = typeof req.headers['x-dbugr-user-email'] === 'string'
+  const headerEmail = typeof req.headers['x-dbugr-user-email'] === 'string'
     ? req.headers['x-dbugr-user-email'].trim().toLowerCase()
     : '';
+  const queryEmail = options.allowQueryEmail && typeof req.query.viewerEmail === 'string'
+    ? req.query.viewerEmail.trim().toLowerCase()
+    : '';
+  const email = headerEmail || queryEmail;
   if (!email) return demoContext();
 
   const user = await prisma.user.findUnique({ where: { email } });
@@ -1977,7 +1981,7 @@ phase2Router.get('/phase2/feed', async (req: Request, res: Response) => {
 phase2Router.get('/phase2/frames/:id/image', async (req: Request, res: Response) => {
   let context;
   try {
-    context = await requestContext(req);
+    context = await requestContext(req, { allowQueryEmail: true });
   } catch (error) {
     return handleContextError(error, res);
   }

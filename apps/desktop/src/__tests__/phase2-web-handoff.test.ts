@@ -119,6 +119,20 @@ describe('phase 2 team/public web handoff', () => {
     expect(phase2Source).toContain('organization: membership.organization');
   });
 
+  it('authorizes frame image previews with the same local viewer identity as the feed', () => {
+    const framePreviewUrl = functionBlock(feedSource, /function framePreviewUrl\(/);
+    const frameImageApi = functionBlock(phase2Source, /phase2Router\.get\('\/phase2\/frames\/:id\/image'/);
+
+    expect(framePreviewUrl).toContain("params.set('viewerEmail'");
+    expect(framePreviewUrl).toContain('viewerEmail.trim().toLowerCase()');
+    expect(feedSource).toContain('const [viewerEmail, setViewerEmail] = useState');
+    expect(feedSource).toContain("setViewerEmail(next?.userEmail || '')");
+    expect(feedSource).toContain('framePreviewUrl(frame, viewerEmail)');
+    expect(phase2Source).toContain('allowQueryEmail?: boolean');
+    expect(phase2Source).toContain('req.query.viewerEmail');
+    expect(frameImageApi).toContain('requestContext(req, { allowQueryEmail: true })');
+  });
+
   it('handles dbugr://handoff links by fetching the frozen web prompt and launching the provider locally', () => {
     const deepLinkHandler = functionBlock(mainSource, /async function handleDesktopDeepLink\(/);
     const handoffHandler = functionBlock(mainSource, /async function handleDesktopSubmissionHandoff\(/);

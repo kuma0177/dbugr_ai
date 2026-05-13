@@ -43,6 +43,7 @@ Before editing any of these files, read this ledger and update it when a new reg
 - A user may have only one top-level review note per session; posting again edits that note and clears stale curation decisions so it returns to review.
 - When a real account has multiple local memberships, the API must prefer that user's real/owned workspace over the seeded `org_demo` workspace for web review context.
 - When an older desktop link points at `org_demo`, the API must still route that real user to their real/owned workspace before syncing team/public sessions.
+- Web review frame images must authorize with the same local viewer identity as the feed JSON request; image tags cannot send custom auth headers.
 
 ## Known Regression Cases
 
@@ -72,6 +73,7 @@ Before editing any of these files, read this ledger and update it when a new reg
 | DSK-022 | The review feed allowed the same user to post multiple top-level notes on one session. | Contribution POST must upsert the user's existing top-level team/public note for that session and reset old curation decisions on edit. |
 | DSK-023 | The web feed selected `Demo Organization` for a real user because the API picked the oldest active membership. | Header-authenticated web context must prefer the user's owned/non-demo workspace when multiple memberships exist. |
 | DSK-024 | An old desktop link still pointed at `org_demo`, so future desktop syncs could recreate duplicate/missing review sessions even after the web feed used the real workspace. | Desktop-token context must prefer the real/owned workspace over `org_demo` for real multi-membership users while preserving the exact linked org for non-demo links. |
+| DSK-025 | The web feed loaded the session through header auth, but frame `<img>` requests had no header, fell back to demo context, and returned `Capture not found`. | Frame image URLs must carry the local viewer email for the asset endpoint, and `/phase2/frames/:id/image` must accept that viewer query only for image authorization. |
 
 ## Required Checks
 
@@ -111,6 +113,7 @@ For macOS permission or real capture changes, also manually verify:
 - Team/Public review feed: posting a second note from the same user edits the existing note and leaves only one top-level comment for that user/session.
 - Team/Public review feed: a real signed-in user with a seeded demo membership still loads their real workspace sessions, not `Demo Organization`.
 - Team/Public desktop sync: a real user's existing desktop link with `org_demo` still syncs into the real workspace rather than creating a duplicate demo-org session.
+- Team/Public review feed: frame image `<img>` requests return the actual saved screenshot for the same signed-in viewer that loaded the feed.
 - Test cleanup: after any smoke/manual cleanup, query the DB or API and confirm the user's real synced session still exists.
 
 ## Test Ownership

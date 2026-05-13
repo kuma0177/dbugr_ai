@@ -54,8 +54,11 @@ function sessionFrame(session?: FeedbackSession) {
   return session?.frames?.find((frame) => frame.imageUrl) ?? session?.frames?.[0] ?? null;
 }
 
-function framePreviewUrl(frame?: FeedbackFrame | null) {
-  return frame ? apiAssetUrl(`/phase2/frames/${frame.id}/image`) : '';
+function framePreviewUrl(frame?: FeedbackFrame | null, viewerEmail?: string) {
+  if (!frame) return '';
+  const params = new URLSearchParams();
+  if (viewerEmail?.trim()) params.set('viewerEmail', viewerEmail.trim().toLowerCase());
+  return apiAssetUrl(`/phase2/frames/${frame.id}/image${params.size ? `?${params.toString()}` : ''}`);
 }
 
 function updatedCopy(value?: string) {
@@ -81,6 +84,7 @@ export default function FeedPage() {
   const [isOnboarded, setIsOnboarded] = useState(false);
   const [workspaceName, setWorkspaceName] = useState('Dbugr workspace');
   const [signedInAs, setSignedInAs] = useState('');
+  const [viewerEmail, setViewerEmail] = useState('');
 
   const selected = useMemo(
     () => sessions.find((session) => session.id === selectedId),
@@ -129,6 +133,7 @@ export default function FeedPage() {
       const next = readOnboardingState();
       setWorkspaceName(next?.organizationName || 'Dbugr workspace');
       setSignedInAs(displayOnboardingName(next) || next?.userEmail || '');
+      setViewerEmail(next?.userEmail || '');
       return next;
     };
     const onboarding = syncWorkspaceIdentity();
@@ -436,7 +441,7 @@ export default function FeedPage() {
 
                     <div className="review-frame-strip" aria-label={`${session.title} captures`}>
                       {frames.length ? frames.map((frame, index) => {
-                        const image = framePreviewUrl(frame);
+                        const image = framePreviewUrl(frame, viewerEmail);
                         return (
                           <figure key={frame.id} className="review-frame-card">
                             <div className="review-frame-media">
