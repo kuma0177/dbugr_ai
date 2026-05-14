@@ -162,6 +162,7 @@ See [apps/desktop-native-mac/README.md](apps/desktop-native-mac/README.md) and [
 ## Documentation
 
 - [INSTALL.md](INSTALL.md) - install, local development, permissions, and troubleshooting
+- [docs/install-for-mac-users.md](docs/install-for-mac-users.md) - plain-English Mac install guide
 - [02_ARCHITECTURE.md](02_ARCHITECTURE.md) - system architecture and data flow
 - [docs/design-system-dbugr.md](docs/design-system-dbugr.md) - product design system
 - [docs/native-macos-migration.md](docs/native-macos-migration.md) - native macOS migration plan
@@ -173,6 +174,13 @@ If you want to try the current packaged macOS build instead of running from sour
 
 - [Download Dbugr for macOS](https://github.com/kuma0177/debgr_ai/releases/download/pre-open-source-ready-stable/dbugr-ai-0.0.1-macos-aarch64.dmg)
 - [Release page](https://github.com/kuma0177/debgr_ai/releases/tag/pre-open-source-ready-stable)
+- [Non-technical install guide](docs/install-for-mac-users.md)
+
+Optional Terminal installer:
+
+```bash
+curl -L https://raw.githubusercontent.com/kuma0177/debgr_ai/main/scripts/install-macos.sh | bash
+```
 
 macOS may require Screen Recording permission before capture works. See [INSTALL.md](INSTALL.md#macos-permissions) for details.
 

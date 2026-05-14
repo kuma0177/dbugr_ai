@@ -2,6 +2,9 @@
 
 This guide walks through installing and running Dbugr locally on macOS.
 
+If you only want to install the Mac app and do not plan to work on the code,
+start with [Install Dbugr on a Mac](docs/install-for-mac-users.md).
+
 ## Choose A Path
 
 Use one of these paths depending on what you want to do:
@@ -50,7 +53,7 @@ Restart your terminal after installing Rust.
 
 Download the current DMG:
 
-- [Dbugr for macOS](https://github.com/kuma0177/debgr_ai/releases/download/stable-macos-claude-codex-cli/dbugr-ai-0.0.1-macos-aarch64.dmg)
+- [Dbugr for macOS](https://github.com/kuma0177/debgr_ai/releases/download/pre-open-source-ready-stable/dbugr-ai-0.0.1-macos-aarch64.dmg)
 
 Then:
 
@@ -61,6 +64,15 @@ Then:
 5. Grant Screen Recording permission when prompted.
 
 This packaged app is useful for product testing. For development, use the source setup below.
+
+Optional Terminal installer:
+
+```bash
+curl -L https://raw.githubusercontent.com/kuma0177/debgr_ai/main/scripts/install-macos.sh | bash
+```
+
+The installer downloads the GitHub Release DMG, copies Dbugr into Applications,
+and opens the app. It does not bypass macOS security prompts.
 
 ### Provider Setup After DMG Install
 
