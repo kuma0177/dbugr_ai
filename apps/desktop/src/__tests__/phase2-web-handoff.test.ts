@@ -5,12 +5,14 @@ import { fileURLToPath } from 'node:url';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const mainSource = readFileSync(resolve(testDir, '../main.tsx'), 'utf8');
+const coreSource = readFileSync(resolve(testDir, '../core.ts'), 'utf8');
 const feedSource = readFileSync(resolve(testDir, '../../../web/src/app/feed/page.tsx'), 'utf8');
 const publicFeedSource = readFileSync(resolve(testDir, '../../../web/src/app/public/page.tsx'), 'utf8');
 const webCssSource = readFileSync(resolve(testDir, '../../../web/src/app/globals.css'), 'utf8');
 const phase2Source = readFileSync(resolve(testDir, '../../../api/src/routes/phase2.ts'), 'utf8');
 const apiIndexSource = readFileSync(resolve(testDir, '../../../api/src/index.ts'), 'utf8');
 const rustMainSource = readFileSync(resolve(testDir, '../../src-tauri/src/main.rs'), 'utf8');
+const dbSchemaSource = readFileSync(resolve(testDir, '../../../../packages/db/prisma/schema.prisma'), 'utf8');
 
 function functionBlock(source: string, startPattern: RegExp) {
   const start = source.search(startPattern);
@@ -34,10 +36,9 @@ describe('phase 2 team/public web handoff', () => {
     const renderWorkspacePanel = functionBlock(mainSource, /function renderWorkspacePanel\(/);
 
     expect(renderWorkspacePanel).toContain("id=\"flow-next-btn\"");
-    expect(renderWorkspacePanel).toContain("syncSessionToWeb(session, 'submission_flow_selected')");
     expect(renderWorkspacePanel).toContain("syncSessionToWeb(session, 'start_collaboration')");
-    expect(renderWorkspacePanel).toContain('const previousFlow = session.submissionFlow');
-    expect(renderWorkspacePanel).toContain('session.submissionFlow = previousFlow');
+    expect(renderWorkspacePanel).toContain('session.submissionFlow = flow');
+    expect(renderWorkspacePanel).toContain("session.collaborationReady = false");
     expect(renderWorkspacePanel).toContain('openWebReviewForSession(session)');
     expect(renderWorkspacePanel).toContain("session.submissionFlow === 'direct'");
     expect(renderWorkspacePanel).toContain('flowGateError');
@@ -45,7 +46,19 @@ describe('phase 2 team/public web handoff', () => {
     expect(renderWorkspacePanel).not.toContain('Seed the review queue');
   });
 
-  it('shows a specific recovery message when desktop web sync cannot reach the API', () => {
+  it('allows team or public flow selection locally even when web sync is unavailable', () => {
+    const renderWorkspacePanel = functionBlock(mainSource, /function renderWorkspacePanel\(/);
+    const flowClickStart = renderWorkspacePanel.indexOf("document.querySelectorAll<HTMLButtonElement>('[data-flow]')");
+    const flowNextStart = renderWorkspacePanel.indexOf("document.getElementById('flow-next-btn')");
+    const flowClickBlock = renderWorkspacePanel.slice(flowClickStart, flowNextStart);
+
+    expect(flowClickBlock).toContain('session.submissionFlow = flow');
+    expect(flowClickBlock).toContain('persistAppState()');
+    expect(flowClickBlock).not.toContain('syncSessionToWeb');
+    expect(flowClickBlock).not.toContain('session.submissionFlow = previousFlow');
+  });
+
+  it('shows production-safe recovery copy when hosted web sync cannot reach the API', () => {
     const syncErrorStart = mainSource.indexOf('function syncErrorMessage');
     const syncErrorEnd = mainSource.indexOf('function apiBaseUrl', syncErrorStart);
     expect(syncErrorStart).toBeGreaterThanOrEqual(0);
@@ -54,6 +67,11 @@ describe('phase 2 team/public web handoff', () => {
     const syncSessionToWeb = functionBlock(mainSource, /async function syncSessionToWeb\(/);
 
     expect(syncErrorMessage).toContain('Load failed');
+    expect(syncErrorMessage).toContain('Could not reach Dbugr web services');
+    expect(syncErrorMessage).toContain('Check your internet connection');
+    expect(syncErrorMessage).toContain('relink this Mac from Dbugr web onboarding');
+    expect(syncErrorMessage).toContain('ENABLE_LOCAL_API_DISCOVERY');
+    expect(syncErrorMessage).toContain('isLocalApiBaseUrl(apiBaseUrl())');
     expect(syncErrorMessage).toContain('Could not reach the Dbugr web API');
     expect(syncErrorMessage).toContain('common local API ports');
     expect(syncErrorMessage).toContain('Last advertised API was');
@@ -61,10 +79,13 @@ describe('phase 2 team/public web handoff', () => {
     expect(syncSessionToWeb).toContain('session.webSyncError = syncErrorMessage(error)');
   });
 
-  it('discovers a moved local API before failing team or public review sync', () => {
+  it('uses hosted API URLs in production and gates local API discovery to dev builds', () => {
     const discoverApiBaseUrl = functionBlock(mainSource, /async function discoverApiBaseUrl\(/);
+    const apiBaseUrl = functionBlock(mainSource, /function apiBaseUrl\(/);
+    const usableApiBaseUrl = functionBlock(mainSource, /function usableApiBaseUrl\(/);
     const fetchWithApiDiscovery = functionBlock(mainSource, /async function fetchWithApiDiscovery\(/);
     const syncSessionToWeb = functionBlock(mainSource, /async function syncSessionToWeb\(/);
+    const createDesktopLink = functionBlock(phase2Source, /phase2Router\.post\('\/phase2\/desktop-link'/);
 
     expect(apiIndexSource).toContain('api-discovery.json');
     expect(apiIndexSource).toContain('writeLocalApiDiscovery(PORT)');
@@ -73,11 +94,23 @@ describe('phase 2 team/public web handoff', () => {
     expect(mainSource).toContain("invoke<string | null>('read_api_discovery')");
     expect(mainSource).toContain('api_discovery_file_loaded');
     expect(mainSource).toContain('lastApiDiscoveryAdvertisement');
+    expect(mainSource).toContain('BUILD_API_URL');
+    expect(mainSource).toContain('LOCAL_DEV_API');
+    expect(mainSource).toContain('ENABLE_LOCAL_API_DISCOVERY');
+    expect(apiBaseUrl.indexOf('readDesktopLinkProfile()?.apiBaseUrl')).toBeLessThan(apiBaseUrl.indexOf("localStorage.getItem(API_BASE_URL_KEY)"));
+    expect(apiBaseUrl).toContain('apiBaseUrlFromWebAppUrl()');
+    expect(usableApiBaseUrl).toContain('!ENABLE_LOCAL_API_DISCOVERY && isLocalApiBaseUrl(normalized)');
+    expect(discoverApiBaseUrl).toContain('if (!ENABLE_LOCAL_API_DISCOVERY && isLocalApiBaseUrl(normalized)) return');
+    expect(discoverApiBaseUrl).toContain('if (ENABLE_LOCAL_API_DISCOVERY)');
     expect(discoverApiBaseUrl).toContain('API_DISCOVERY_PORTS');
     expect(discoverApiBaseUrl).toContain('probeApiBaseUrl(candidate)');
     expect(fetchWithApiDiscovery).toContain('discoverApiBaseUrl()');
     expect(fetchWithApiDiscovery).toContain('api_fetch_retrying_with_discovered_base');
     expect(syncSessionToWeb).toContain("fetchWithApiDiscovery('/phase2/desktop-sessions/sync'");
+    expect(phase2Source).toContain('function getDesktopLinkApiBaseUrl');
+    expect(phase2Source).toContain("req.headers['x-forwarded-host']");
+    expect(createDesktopLink).toContain('const apiUrl = getDesktopLinkApiBaseUrl(req)');
+    expect(createDesktopLink).not.toContain("process.env.API_URL ?? `http://localhost:${process.env.PORT ?? 3001}/api`");
   });
 
   it('keeps desktop capture timestamps within the FeedbackFrame integer range', () => {
@@ -215,6 +248,18 @@ describe('phase 2 team/public web handoff', () => {
     expect(handoffHandler).toContain("updateDesktopSubmissionStatus(submissionId, 'sent')");
   });
 
+  it('imports web profile company and role when redeeming a desktop link', () => {
+    const onboardingApi = functionBlock(phase2Source, /phase2Router\.post\('\/phase2\/onboarding'/);
+    const redeemHandler = functionBlock(mainSource, /async function handleDesktopDeepLink\(/);
+
+    expect(dbSchemaSource).toContain('profileRole String?');
+    expect(onboardingApi).toContain('profileRole: parsed.data.role?.trim() || null');
+    expect(onboardingApi).toContain('profileRole: parsed.data.role');
+    expect(redeemHandler).toContain('profile.userProfileRole || authState.role');
+    expect(redeemHandler).toContain('company: profile.organizationName || authState.company');
+    expect(redeemHandler).not.toContain('role: profile.organizationName');
+  });
+
   it('launches local AI CLIs through a native temp-file handoff instead of inline shell-quoting the prompt', () => {
     const launchPromptStart = mainSource.indexOf('async function launchPromptHandoff');
     const launchPromptEnd = mainSource.indexOf('async function handleDesktopSubmissionHandoff', launchPromptStart);
@@ -236,6 +281,43 @@ describe('phase 2 team/public web handoff', () => {
     expect(nativeHandoff).toContain('"$(cat "$PROMPT_FILE")"');
     expect(nativeHandoff).not.toContain('do script');
     expect(nativeHandoff).not.toContain('\nstatus=$?');
+  });
+
+  it('makes Cursor handoff visible and fails loudly when copy or launch fails', () => {
+    const launchPromptStart = mainSource.indexOf('async function launchPromptHandoff');
+    const launchPromptEnd = mainSource.indexOf('async function handleDesktopSubmissionHandoff', launchPromptStart);
+    const launchPromptHandoff = mainSource.slice(launchPromptStart, launchPromptEnd);
+    const sendSession = functionBlock(mainSource, /async function sendSession\(/);
+    const nativeClipboard = functionBlock(rustMainSource, /fn copy_to_clipboard\(/);
+    const nativeCursor = functionBlock(rustMainSource, /fn open_in_cursor\(/);
+
+    expect(launchPromptHandoff.indexOf("invoke('copy_to_clipboard'")).toBeLessThan(launchPromptHandoff.indexOf("invoke('open_in_cursor'"));
+    expect(launchPromptHandoff).not.toContain("copy_to_clipboard', { text: options.prompt }).catch");
+    expect(sendSession).toContain("target === 'cursor'");
+    expect(sendSession).toContain("workspaceSection = 'insights'");
+    expect(sendSession).toContain('Cursor handoff ready');
+    expect(sendSession).toContain('promptText: prompt');
+    expect(sendSession).toContain('No CLI window opens for Cursor');
+    expect(sendSession).toContain('Cursor handoff failed');
+    expect(nativeClipboard).toContain('pbcopy exited with status');
+    expect(nativeCursor).toContain('String::from_utf8_lossy(&output.stderr)');
+  });
+
+  it('copies the Cursor prompt from Insights actions and shows an inline confirmation', () => {
+    const renderWorkspacePanel = functionBlock(mainSource, /function renderWorkspacePanel\(/);
+    const feedbackPromptText = functionBlock(mainSource, /function feedbackPromptText\(/);
+    const showInsightsToast = functionBlock(mainSource, /function showInsightsToast\(/);
+
+    expect(coreSource).toContain('promptText?: string;');
+    expect(renderWorkspacePanel).toContain('id="insights-action-toast"');
+    expect(renderWorkspacePanel).toContain("document.getElementById('copy-insights-summary')");
+    expect(renderWorkspacePanel).toContain("invoke('copy_to_clipboard', { text: feedbackPromptText(currentFeedback, activeSession()) })");
+    expect(renderWorkspacePanel).toContain("document.getElementById('open-in-cursor-btn')");
+    expect(renderWorkspacePanel).toContain("invoke('open_in_cursor'");
+    expect(renderWorkspacePanel).toContain("showInsightsToast('Prompt copied. Paste it into Cursor chat.')");
+    expect(feedbackPromptText).toContain('item.promptText');
+    expect(feedbackPromptText).toContain('currentPromptPreview(session)?.prompt');
+    expect(showInsightsToast).toContain('insights-action-toast visible');
   });
 
   it('has an API handoff endpoint for the desktop to load and acknowledge web submissions', () => {

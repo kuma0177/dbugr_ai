@@ -43,6 +43,10 @@ Before editing any of these files, read this ledger and update it when a new reg
 - A user may have only one top-level review note per session; posting again edits that note and clears stale curation decisions so it returns to review.
 - When a real account has multiple local memberships, the API must prefer that user's real/owned workspace over the seeded `org_demo` workspace for web review context.
 - When an older desktop link points at `org_demo`, the API must still route that real user to their real/owned workspace before syncing team/public sessions.
+- Desktop link redemption must import the linked web organization as desktop Company and the user's web profile/job role as desktop Role without confusing either with organization membership roles.
+- Cursor handoff must visibly confirm that Cursor.app opened and the prompt was copied, and must surface copy/open failures instead of silently staying on Submit.
+- Team/Public flow selection must update locally even when the web API is unavailable; API reachability should only block the later collaboration sync/open step.
+- Downloaded desktop builds must use the hosted API URL from web onboarding or build config, not stale localhost discovery; localhost port probing and pid diagnostics are local-dev only.
 - Web review frame images must authorize with the same local viewer identity as the feed JSON request; image tags cannot send custom auth headers.
 - Public visibility controls shown in the review feed must have a working API path for session owners/org admins, including older org rows created before public sharing was enabled by default.
 - Publicly published sessions must have a discoverable web URL that can be read without login, while public comments require sign-in/sign-up and never fall back to `Demo User`.
@@ -85,6 +89,10 @@ Before editing any of these files, read this ledger and update it when a new reg
 | DSK-028 | Review feed cards and hero widths did not align, the sidebar stayed fixed too long, and split-screen widths made fonts/cards feel cramped. | Review/public CSS must share one content max-width, collapse heavyweight sidebar navigation at medium widths, and avoid re-applying generic `.main` padding to review pages. |
 | DSK-029 | Mobile and narrow desktop web rendered the global nav and then the full review sidebar, pushing the actual feed below admin/session/workspace links. | At small-screen widths, hide heavyweight review sidebars, keep the top nav from colliding, and expose compact in-content feed scope controls before the feed hero/cards. |
 | DSK-030 | The narrow-desktop nav fix gave `.nav-links` a large flex basis that leaked into mobile column layout, creating giant gaps between signed-in and feed/admin pills. | Mobile nav rules must reset inherited flex basis to compact sizing after switching the nav to a column layout. |
+| DSK-031 | Linking the Mac imported name/email/company but dropped the web onboarding profile role, leaving desktop Optional profile incomplete. | Persist web onboarding's human profile role separately from membership/platform roles, return it from desktop-link redeem, and hydrate desktop Role from that profile field only. |
+| DSK-032 | Sending to Cursor appeared to do nothing because no CLI opens for Cursor and Debugr did not switch to a visible confirmation/failure state. | Cursor sends must copy the prompt without swallowing failures, open Cursor.app, switch to Insights with clear paste instructions, and include native stderr when launch fails. |
+| DSK-033 | Team/Public flow cards could not stay selected while the local web API was down because selection attempted sync immediately and rolled back to Direct. | Flow card clicks must commit the local selection without API calls; Start collaboration performs the required web sync and reports API errors without losing the selected flow. |
+| DSK-034 | Production desktop links could fall back to `localhost:3001/api` and expose local-dev port/pid diagnostics to downloaded app users. | Web-created desktop links must advertise a public API URL from env or request origin, and desktop builds must ignore localhost candidates unless local API discovery is explicitly enabled. |
 
 ## Required Checks
 

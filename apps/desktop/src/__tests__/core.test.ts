@@ -45,6 +45,7 @@ import {
   getCombinedPromptDiagnostics,
   buildDesktopSessionSyncPayload,
   buildSessionIdentityMap,
+  updateAnnotationNoteInCapture,
   makeSession,
   makeCapture,
   makeAnnotation,
@@ -211,6 +212,38 @@ describe('makeCapture()', () => {
     const capture = makeCapture();
     expect(capture.annotations).toHaveLength(0);
     expect(capture.id).toMatch(/^capture_/);
+  });
+});
+
+describe('updateAnnotationNoteInCapture()', () => {
+  it('updates the annotation note plus derived capture title and preview', () => {
+    const capture = makeCapture({
+      title: 'Old first note',
+      preview: 'Old first note · Second note',
+      annotations: [
+        makeAnnotation({ id: 'ann_1', number: 1, text: 'Old first note' }),
+        makeAnnotation({ id: 'ann_2', number: 2, text: 'Second note' }),
+      ],
+    });
+
+    const updated = updateAnnotationNoteInCapture(capture, 'ann_1', 'Make the logo bigger');
+
+    expect(updated).toBe(true);
+    expect(capture.annotations[0]?.text).toBe('Make the logo bigger');
+    expect(capture.preview).toBe('Make the logo bigger · Second note');
+    expect(capture.title).toBe('Make the logo bigger');
+  });
+
+  it('returns false without changing the capture when the annotation is missing', () => {
+    const capture = makeCapture({
+      title: 'Original',
+      preview: 'Original',
+      annotations: [makeAnnotation({ id: 'ann_1', text: 'Original' })],
+    });
+
+    expect(updateAnnotationNoteInCapture(capture, 'ann_missing', 'Nope')).toBe(false);
+    expect(capture.title).toBe('Original');
+    expect(capture.preview).toBe('Original');
   });
 });
 

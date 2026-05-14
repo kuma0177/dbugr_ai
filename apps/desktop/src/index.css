@@ -40,7 +40,7 @@
   --color-eggshell: #fafaf9;
   --color-powder: #f5f3f1;
   --color-chalk: #e5e5e5;
-  --color-fog: #b1b0b0;
+  --color-fog: #f5f3f1;
   --color-gravel: #777169;
   --color-slate: #a59f97;
   --color-cinder: #57534f;
@@ -405,8 +405,8 @@ kbd {
   align-items: flex-start;
   padding: 12px;
   border-radius: 12px;
-  background: var(--surface-soft);
-  border: 1px solid var(--border-soft);
+  background: var(--bg);
+  border: 1px solid var(--border);
 }
 
 .onboarding-dot {
@@ -1602,16 +1602,86 @@ kbd {
   border: 1px solid var(--border-soft);
 }
 
+.capture-payload-note.editing {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-ring);
+}
+
+.capture-payload-note-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
 .capture-payload-note-title {
   color: var(--text-secondary);
   font-size: 11px;
-  margin-bottom: 4px;
 }
 
 .capture-payload-note-body {
   color: var(--text);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.annotation-note-edit-btn,
+.annotation-note-cancel-btn {
+  border: none;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.annotation-note-input {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  margin-top: 6px;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: inset 0 -1px 0 var(--text);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.annotation-note-input:focus {
+  outline: none;
+  box-shadow: inset 0 -1px 0 var(--text), 0 2px 0 var(--blue-soft);
+}
+
+.annotation-note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.annotation-note-save-btn {
+  border: 0;
+  border-radius: 999px;
+  background: var(--blue);
+  color: var(--bg);
+  box-shadow: var(--shadow-lg);
+  padding: 5px 12px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.annotation-note-save-btn:hover {
+  background: var(--blue-hover);
 }
 
 .capture-payload-tags {
@@ -2050,6 +2120,32 @@ kbd {
 .insights-actions .btn-secondary {
   width: auto;
   min-height: 36px;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.insights-action-toast {
+  min-height: 26px;
+  margin-top: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.insights-action-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.insights-action-toast.success {
+  color: var(--success);
+}
+
+.insights-action-toast.error {
+  color: var(--danger);
 }
 
 @media (max-width: 900px) {

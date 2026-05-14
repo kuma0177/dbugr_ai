@@ -489,6 +489,47 @@ function getPublicWebBaseUrl() {
   return 'https://dbugrweb-production.up.railway.app';
 }
 
+function normalizeApiUrl(raw: string | null | undefined) {
+  const trimmed = raw?.trim().replace(/\/+$/, '');
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    if (!url.pathname || url.pathname === '/') {
+      url.pathname = '/api';
+    }
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function requestOrigin(req: Request) {
+  const forwardedHost = req.headers['x-forwarded-host'];
+  const host = Array.isArray(forwardedHost)
+    ? forwardedHost[0]
+    : typeof forwardedHost === 'string'
+      ? forwardedHost
+      : req.headers.host;
+  if (!host) return null;
+
+  const forwardedProto = req.headers['x-forwarded-proto'];
+  const proto = Array.isArray(forwardedProto)
+    ? forwardedProto[0]
+    : typeof forwardedProto === 'string'
+      ? forwardedProto
+      : req.protocol;
+  return `${proto || 'https'}://${host}`;
+}
+
+function getDesktopLinkApiBaseUrl(req: Request) {
+  return normalizeApiUrl(process.env.API_URL)
+    || normalizeApiUrl(process.env.DEBUGR_API_URL)
+    || normalizeApiUrl(requestOrigin(req))
+    || normalizeApiUrl(`http://localhost:${process.env.PORT ?? 3001}/api`)
+    || `http://localhost:${process.env.PORT ?? 3001}/api`;
+}
+
 function deriveNameFromEmail(email: string) {
   const local = email.split('@')[0] || 'Dbugr user';
   const cleaned = local.replace(/[._-]+/g, ' ').trim();
@@ -529,20 +570,24 @@ async function ensureUserIdentity({
   email,
   name,
   authProvider,
+  profileRole,
 }: {
   email: string;
   name?: string;
   authProvider: 'email' | 'google';
+  profileRole?: string | null;
 }) {
   const normalizedEmail = normalizeEmail(email);
   const existingUser = await prisma.user.findUnique({ where: { email: normalizedEmail } });
   const resolvedName = name?.trim() || existingUser?.name || deriveNameFromEmail(normalizedEmail);
+  const resolvedProfileRole = profileRole?.trim() || undefined;
 
   if (existingUser) {
     const user = await prisma.user.update({
       where: { email: normalizedEmail },
       data: {
         name: resolvedName,
+        ...(resolvedProfileRole ? { profileRole: resolvedProfileRole } : {}),
         authProvider: mergeAuthProviders(existingUser.authProvider, authProvider),
         lastSeenAt: new Date(),
       },
@@ -554,6 +599,7 @@ async function ensureUserIdentity({
     data: {
       email: normalizedEmail,
       name: resolvedName,
+      profileRole: resolvedProfileRole ?? null,
       role: 'member',
       authProvider,
       lastSeenAt: new Date(),
@@ -804,7 +850,7 @@ phase2Router.post('/phase2/onboarding', async (req: Request, res: Response) => {
           update: {
             email,
             name: parsed.data.name,
-            role: parsed.data.role || 'owner',
+            profileRole: parsed.data.role?.trim() || null,
             authProvider,
             lastSeenAt: new Date(),
           },
@@ -812,7 +858,8 @@ phase2Router.post('/phase2/onboarding', async (req: Request, res: Response) => {
             id: DEMO_USER_ID,
             email,
             name: parsed.data.name,
-            role: parsed.data.role || 'owner',
+            profileRole: parsed.data.role?.trim() || null,
+            role: 'member',
             authProvider,
             lastSeenAt: new Date(),
           },
@@ -823,6 +870,7 @@ phase2Router.post('/phase2/onboarding', async (req: Request, res: Response) => {
         email,
         name: parsed.data.name,
         authProvider,
+        profileRole: parsed.data.role,
       });
 
   const user = identity.user;
@@ -1678,7 +1726,7 @@ phase2Router.post('/phase2/desktop-link', async (req: Request, res: Response) =>
   const codeHash = hashDesktopLinkCode(code);
   const expiresAt = new Date(Date.now() + 1000 * 60 * 10);
   const appUrl = parsed.data.appUrl ?? 'http://localhost:3000';
-  const apiUrl = process.env.API_URL ?? `http://localhost:${process.env.PORT ?? 3001}/api`;
+  const apiUrl = getDesktopLinkApiBaseUrl(req);
   const deepLinkUrl = `dbugr://link?code=${encodeURIComponent(code)}&api=${encodeURIComponent(apiUrl)}&app=${encodeURIComponent(appUrl)}`;
 
   const link = await prisma.desktopLink.create({

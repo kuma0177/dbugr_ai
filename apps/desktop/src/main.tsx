@@ -39,6 +39,7 @@ import {
   getCombinedPromptDiagnostics,
   buildDesktopSessionSyncPayload,
   buildSessionIdentityMap,
+  updateAnnotationNoteInCapture,
 } from './core';
 
 /** Image URL suitable for `<img src>` — Tauri cannot load raw POSIX paths without conversion. */
@@ -89,6 +90,7 @@ interface DesktopLinkProfile {
   userId: string;
   userEmail: string;
   userName: string;
+  userProfileRole?: string;
   organizationId: string;
   organizationName: string;
   apiBaseUrl: string;
@@ -97,8 +99,11 @@ interface DesktopLinkProfile {
   deviceId: string;
 }
 
-const DEFAULT_API = (import.meta.env.VITE_DEBUGR_API_URL as string | undefined)?.trim() || 'http://localhost:3001/api';
+const BUILD_API_URL = (import.meta.env.VITE_DEBUGR_API_URL as string | undefined)?.trim() || '';
+const LOCAL_DEV_API = 'http://localhost:3001/api';
 const WEB_APP_URL = (import.meta.env.VITE_DEBUGR_WEB_APP_URL as string | undefined)?.trim() || 'http://localhost:3000';
+const ENABLE_LOCAL_API_DISCOVERY =
+  import.meta.env.DEV || (import.meta.env.VITE_DEBUGR_ENABLE_LOCAL_API_DISCOVERY as string | undefined) === 'true';
 const API_BASE_URL_KEY = 'debugr-desktop-api-base-url';
 const DESKTOP_LINK_PROFILE_KEY = 'debugr-desktop-link-profile';
 const DESKTOP_DEVICE_ID_KEY = 'debugr-desktop-device-id';
@@ -119,6 +124,7 @@ let deletedSessionIds = new Set<string>();
 let activeSessionId: string | null = null;
 let activeCaptureId: string | null = null;
 let activeAnnotationId: string | null = null;
+let editingAnnotationId: string | null = null;
 let activePreviewCaptureId: string | null = null;
 let workspaceSection: WorkspaceSection = 'notes';
 let target: Target = 'claude';
@@ -149,6 +155,7 @@ const screenshotFileDataUrlCache = new Map<string, string>();
 const screenshotFileLoadsInFlight = new Set<string>();
 let screenshotCacheRefreshQueued = false;
 let persistMirrorsTimer: number | null = null;
+let insightsToastTimer: number | null = null;
 let sessionsApiLoadInFlight: Promise<void> | null = null;
 let lastSessionsApiLoadAt = 0;
 let pendingSessionSwitchId: string | null = null;
@@ -214,6 +221,9 @@ function syncErrorMessage(error: unknown) {
     message.includes('NetworkError') ||
     message.includes('fetch')
   ) {
+    if (!ENABLE_LOCAL_API_DISCOVERY && !isLocalApiBaseUrl(apiBaseUrl())) {
+      return 'Could not reach Dbugr web services. Check your internet connection and try again. If this keeps happening, relink this Mac from Dbugr web onboarding.';
+    }
     const advertised = lastApiDiscoveryAdvertisement
       ? ` Last advertised API was ${lastApiDiscoveryAdvertisement.apiBaseUrl}${lastApiDiscoveryAdvertisement.pid ? ` from pid ${lastApiDiscoveryAdvertisement.pid}` : ''}${lastApiDiscoveryAdvertisement.updatedAt ? ` at ${lastApiDiscoveryAdvertisement.updatedAt}` : ''}.`
       : '';
@@ -237,12 +247,45 @@ function normalizeApiBaseUrl(raw: string | null | undefined): string | null {
   }
 }
 
+function isLocalApiBaseUrl(raw: string | null | undefined) {
+  const normalized = normalizeApiBaseUrl(raw);
+  if (!normalized) return false;
+  try {
+    const hostname = new URL(normalized).hostname.toLowerCase();
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+
+function apiBaseUrlFromWebAppUrl() {
+  try {
+    const url = new URL(WEB_APP_URL);
+    if (isLocalApiBaseUrl(url.toString())) return null;
+    url.pathname = '/api';
+    url.search = '';
+    url.hash = '';
+    return normalizeApiBaseUrl(url.toString());
+  } catch {
+    return null;
+  }
+}
+
+function usableApiBaseUrl(raw: string | null | undefined) {
+  const normalized = normalizeApiBaseUrl(raw);
+  if (!normalized) return null;
+  if (!ENABLE_LOCAL_API_DISCOVERY && isLocalApiBaseUrl(normalized)) return null;
+  return normalized;
+}
+
 function apiBaseUrl() {
   return discoveredApiBaseUrl
-    || normalizeApiBaseUrl(localStorage.getItem(API_BASE_URL_KEY))
-    || normalizeApiBaseUrl(readDesktopLinkProfile()?.apiBaseUrl)
-    || normalizeApiBaseUrl(DEFAULT_API)
-    || 'http://localhost:3001/api';
+    || usableApiBaseUrl(readDesktopLinkProfile()?.apiBaseUrl)
+    || usableApiBaseUrl(localStorage.getItem(API_BASE_URL_KEY))
+    || usableApiBaseUrl(BUILD_API_URL)
+    || apiBaseUrlFromWebAppUrl()
+    || normalizeApiBaseUrl(LOCAL_DEV_API)
+    || LOCAL_DEV_API;
 }
 
 function rememberApiBaseUrl(baseUrl: string, source: string) {
@@ -311,17 +354,23 @@ async function discoverApiBaseUrl(): Promise<string | null> {
   const candidates = new Set<string>();
   const addCandidate = (candidate: string | null | undefined) => {
     const normalized = normalizeApiBaseUrl(candidate);
-    if (normalized) candidates.add(normalized);
+    if (!normalized) return;
+    if (!ENABLE_LOCAL_API_DISCOVERY && isLocalApiBaseUrl(normalized)) return;
+    candidates.add(normalized);
   };
 
   addCandidate(discoveredApiBaseUrl);
   addCandidate(localStorage.getItem(API_BASE_URL_KEY));
   addCandidate(readDesktopLinkProfile()?.apiBaseUrl);
-  addCandidate(await readAdvertisedApiBaseUrl());
-  addCandidate(DEFAULT_API);
-  for (const port of API_DISCOVERY_PORTS) {
-    addCandidate(`http://127.0.0.1:${port}/api`);
-    addCandidate(`http://localhost:${port}/api`);
+  addCandidate(BUILD_API_URL);
+  addCandidate(apiBaseUrlFromWebAppUrl());
+  if (ENABLE_LOCAL_API_DISCOVERY) {
+    addCandidate(await readAdvertisedApiBaseUrl());
+    addCandidate(LOCAL_DEV_API);
+    for (const port of API_DISCOVERY_PORTS) {
+      addCandidate(`http://127.0.0.1:${port}/api`);
+      addCandidate(`http://localhost:${port}/api`);
+    }
   }
 
   logUi('api_discovery_started', { candidates: candidates.size });
@@ -480,6 +529,37 @@ function activePreviewCapture() {
   const session = activeSession();
   if (!session || !activePreviewCaptureId) return undefined;
   return session.captures.find((capture) => capture.id === activePreviewCaptureId);
+}
+
+function feedbackPromptText(item: AgentFeedback, session?: Session | null) {
+  const promptText = item.promptText?.trim();
+  if (promptText) return promptText;
+  const previewPrompt = session ? currentPromptPreview(session)?.prompt?.trim() : '';
+  if (previewPrompt) return previewPrompt;
+  return [
+    item.title,
+    item.summary,
+    item.rootCause ? `Root cause:\n${item.rootCause}` : '',
+    item.suggestedFix ? `Suggested fix:\n${item.suggestedFix}` : '',
+    (item.nextSteps ?? []).length > 0
+      ? `Next steps:\n${(item.nextSteps ?? []).map((step, index) => `${index + 1}. ${step}`).join('\n')}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function showInsightsToast(message: string, tone: 'success' | 'error' = 'success') {
+  const toast = document.getElementById('insights-action-toast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.className = `insights-action-toast visible ${tone}`;
+  if (insightsToastTimer !== null) window.clearTimeout(insightsToastTimer);
+  insightsToastTimer = window.setTimeout(() => {
+    toast.className = 'insights-action-toast';
+    toast.textContent = '';
+    insightsToastTimer = null;
+  }, 2200);
 }
 
 function sessionLevelNote(session: Session): string {
@@ -739,6 +819,9 @@ function deleteAnnotationFromCapture(session: Session, captureId: string, annota
   });
   if (activeAnnotationId === annotationId) {
     activeAnnotationId = capture.annotations[0]?.id ?? null;
+  }
+  if (editingAnnotationId === annotationId) {
+    editingAnnotationId = null;
   }
   persistAppState();
 }
@@ -1808,6 +1891,7 @@ function renderCapturePayload(session: Session) {
   }
 
   const selected = activeAnnotation() ?? capture.annotations[0];
+  const isEditingSelectedAnnotation = Boolean(selected && editingAnnotationId === selected.id);
   const payloadImgSrc = captureDashboardImgSrc(capture);
   const hasScreenshot = Boolean(payloadImgSrc);
   const showLegacyLabel = captureNeedsLegacyScreenshotLabel(capture);
@@ -1867,9 +1951,22 @@ function renderCapturePayload(session: Session) {
           ${annotationRows || '<div class="capture-payload-empty">No annotations on this capture yet.</div>'}
         </div>
         ${selected ? `
-          <div class="capture-payload-note">
-            <div class="capture-payload-note-title">Selected annotation note</div>
-            <div class="capture-payload-note-body">${escapeHtml(selected.text || 'No note text')}</div>
+          <div class="capture-payload-note ${isEditingSelectedAnnotation ? 'editing' : ''}">
+            <div class="capture-payload-note-head">
+              <div class="capture-payload-note-title">Selected annotation note</div>
+              ${isEditingSelectedAnnotation
+                ? ''
+                : '<button type="button" class="annotation-note-edit-btn" id="edit-annotation-note-btn">Edit</button>'}
+            </div>
+            ${isEditingSelectedAnnotation ? `
+              <textarea class="annotation-note-input" id="annotation-note-input" maxlength="500" spellcheck="true">${escapeHtml(selected.text || '')}</textarea>
+              <div class="annotation-note-actions">
+                <button type="button" class="annotation-note-save-btn" id="save-annotation-note-btn">Save</button>
+                <button type="button" class="annotation-note-cancel-btn" id="cancel-annotation-note-btn">Cancel</button>
+              </div>
+            ` : `
+              <div class="capture-payload-note-body">${escapeHtml(selected.text || 'No note text')}</div>
+            `}
             <div class="capture-payload-tags">${selected.tags.length ? selected.tags.map((tag) => `<span>#${escapeHtml(tag)}</span>`).join('') : '<span>No tags</span>'}</div>
           </div>
         ` : ''}
@@ -1899,6 +1996,9 @@ function renderCapturePayload(session: Session) {
       const annotationId = row.dataset.annotationId;
       if (!annotationId) return;
       activeAnnotationId = annotationId;
+      if (editingAnnotationId && editingAnnotationId !== annotationId) {
+        editingAnnotationId = null;
+      }
       logUi('workspace_annotation_selected', {
         sessionId: session.id,
         captureId: capture.id,
@@ -1924,6 +2024,51 @@ function renderCapturePayload(session: Session) {
       renderCaptureList(session);
       renderCapturePayload(session);
     });
+  });
+
+  document.getElementById('edit-annotation-note-btn')?.addEventListener('click', () => {
+    if (!selected) return;
+    editingAnnotationId = selected.id;
+    logUi('workspace_annotation_note_edit_started', {
+      sessionId: session.id,
+      captureId: capture.id,
+      annotationId: selected.id,
+    });
+    renderCapturePayload(session);
+    window.setTimeout(() => {
+      const input = document.getElementById('annotation-note-input') as HTMLTextAreaElement | null;
+      input?.focus();
+      input?.setSelectionRange(input.value.length, input.value.length);
+    }, 0);
+  });
+
+  document.getElementById('cancel-annotation-note-btn')?.addEventListener('click', () => {
+    editingAnnotationId = null;
+    logUi('workspace_annotation_note_edit_cancelled', {
+      sessionId: session.id,
+      captureId: capture.id,
+      annotationId: selected?.id ?? null,
+    });
+    renderCapturePayload(session);
+  });
+
+  document.getElementById('save-annotation-note-btn')?.addEventListener('click', () => {
+    if (!selected) return;
+    const input = document.getElementById('annotation-note-input') as HTMLTextAreaElement | null;
+    const nextText = input?.value.trim() ?? '';
+    const updated = updateAnnotationNoteInCapture(capture, selected.id, nextText);
+    if (!updated) return;
+    editingAnnotationId = null;
+    invalidatePromptPreview(session.id);
+    persistAppState();
+    logUi('workspace_annotation_note_saved', {
+      sessionId: session.id,
+      captureId: capture.id,
+      annotationId: selected.id,
+      length: nextText.length,
+    });
+    renderCaptureList(session);
+    renderCapturePayload(session);
   });
 
   document.getElementById('open-capture-preview')?.addEventListener('click', () => {
@@ -2077,45 +2222,18 @@ function renderWorkspacePanel() {
       </div>
     `;
     document.querySelectorAll<HTMLButtonElement>('[data-flow]').forEach((button) => {
-      button.addEventListener('click', async () => {
+      button.addEventListener('click', () => {
         const flow = button.dataset.flow as SubmissionFlow | undefined;
         if (!flow || pendingFlowSelection) return;
         flowGateError = '';
-        pendingFlowSelection = flow;
-        schedulePendingFlowSelectionIndicator(flow);
-        renderWorkspacePanel();
-
+        session.submissionFlow = flow;
         if (flow === 'direct') {
-          session.submissionFlow = flow;
           session.collaborationReady = true;
           session.contributions = [];
-          persistAppState();
-          clearPendingFlowSelectionIndicator();
-          pendingFlowSelection = null;
-          renderWorkspacePanel();
-          refreshSessionMetaDisplay(session);
-          renderSessionList();
-          return;
+          session.webSyncError = null;
+        } else {
+          session.collaborationReady = false;
         }
-
-        const previousFlow = session.submissionFlow;
-        // Team/public review must exist on the web before the local route is
-        // committed; otherwise users see a selected flow that never synced.
-        session.submissionFlow = flow;
-        const synced = await syncSessionToWeb(session, 'submission_flow_selected');
-        clearPendingFlowSelectionIndicator();
-        pendingFlowSelection = null;
-        if (!synced) {
-          session.submissionFlow = previousFlow;
-          session.collaborationReady = previousFlow === 'direct';
-          flowGateError = session.webSyncError || 'Could not send this session to the web review feed. Check your Mac link and try again.';
-          persistAppState();
-          renderWorkspacePanel();
-          refreshSessionMetaDisplay(session);
-          renderSessionList();
-          return;
-        }
-        session.collaborationReady = false;
         persistAppState();
         renderWorkspacePanel();
         refreshSessionMetaDisplay(session);
@@ -2392,7 +2510,7 @@ function renderWorkspacePanel() {
               : preview ? `Send to ${providerLabel(target)} ⌘↵` : `Review payload first`}
           </button>
           <div class="send-tip">${target === 'cursor'
-            ? 'Debugr will open Cursor with your project folder and the session prompt ready to paste.'
+            ? 'Debugr opens Cursor.app and copies the prompt. Cursor does not open a CLI window.'
             : 'Tip: set a project folder so the agent can navigate your code.'}</div>
           ${session.projectFolder
             ? `<div class="context-folder">📁 ${escapeHtml(session.projectFolder)}</div>`
@@ -2549,6 +2667,7 @@ function renderWorkspacePanel() {
               ${feedback.codeSnippet ? '<button type="button" class="btn-secondary" id="copy-insights-code">Copy code</button>' : ''}
               <button type="button" class="btn-secondary" id="open-in-cursor-btn">Open in Cursor</button>
             </div>
+            <div class="insights-action-toast" id="insights-action-toast" role="status" aria-live="polite"></div>
           </div>
         </div>
       ` : `
@@ -2568,37 +2687,35 @@ function renderWorkspacePanel() {
   const currentFeedback = feedback;
   if (currentFeedback) {
     document.getElementById('copy-insights-summary')?.addEventListener('click', async () => {
-      const text = [
-        currentFeedback.title,
-        currentFeedback.summary,
-        currentFeedback.rootCause ? `Root cause:\n${currentFeedback.rootCause}` : '',
-        currentFeedback.suggestedFix ? `Suggested fix:\n${currentFeedback.suggestedFix}` : '',
-        (currentFeedback.nextSteps ?? []).length > 0
-          ? `Next steps:\n${(currentFeedback.nextSteps ?? []).map((s, i) => `${i + 1}. ${s}`).join('\n')}`
-          : '',
-      ]
-        .filter(Boolean)
-        .join('\n\n');
       try {
-        await navigator.clipboard.writeText(text);
-      } catch {
-        window.alert('Could not copy to clipboard.');
+        await invoke('copy_to_clipboard', { text: feedbackPromptText(currentFeedback, activeSession()) });
+        showInsightsToast('Prompt copied. Paste it into Cursor chat.');
+        logUi('workspace_insights_prompt_copied', { source: 'copy_summary', target });
+      } catch (error) {
+        showInsightsToast('Could not copy prompt.', 'error');
+        logUi('workspace_insights_prompt_copy_failed', { source: 'copy_summary', error: safeErrorMessage(error) });
       }
     });
     document.getElementById('copy-insights-code')?.addEventListener('click', async () => {
       if (!currentFeedback.codeSnippet) return;
       try {
-        await navigator.clipboard.writeText(currentFeedback.codeSnippet);
-      } catch {
-        window.alert('Could not copy to clipboard.');
+        await invoke('copy_to_clipboard', { text: currentFeedback.codeSnippet });
+        showInsightsToast('Code copied.');
+      } catch (error) {
+        showInsightsToast('Could not copy code.', 'error');
+        logUi('workspace_insights_code_copy_failed', { error: safeErrorMessage(error) });
       }
     });
     document.getElementById('open-in-cursor-btn')?.addEventListener('click', async () => {
       const folder = activeSession()?.projectFolder?.trim();
       try {
+        await invoke('copy_to_clipboard', { text: feedbackPromptText(currentFeedback, activeSession()) });
         await invoke('open_in_cursor', { projectFolder: folder && folder.length > 0 ? folder : null });
+        showInsightsToast('Prompt copied. Paste it into Cursor chat.');
+        logUi('workspace_insights_open_cursor_clicked', { hasProjectFolder: Boolean(folder), copiedPrompt: true });
       } catch (e) {
-        window.alert(e instanceof Error ? e.message : 'Could not open Cursor. Is it installed?');
+        showInsightsToast('Could not open Cursor or copy prompt.', 'error');
+        logUi('workspace_insights_open_cursor_failed', { error: safeErrorMessage(e) });
       }
     });
   }
@@ -3089,8 +3206,8 @@ async function launchPromptHandoff(options: {
   const cwd = normalizeProjectFolderInput(options.projectFolder) || '';
   if (options.provider === 'cursor') {
     logUi('prompt_handoff_cursor_launch', { source: options.source, sessionId: options.sessionId ?? null, cwd });
+    await invoke('copy_to_clipboard', { text: options.prompt });
     await invoke('open_in_cursor', { projectFolder: cwd || null });
-    await invoke('copy_to_clipboard', { text: options.prompt }).catch(() => {});
     return;
   }
 
@@ -3230,7 +3347,7 @@ async function handleDesktopDeepLink(rawUrl: string) {
     const json = await response.json().catch(() => ({})) as {
       data?: {
         desktopLinkToken?: string;
-        user?: { id?: string; email?: string; name?: string };
+        user?: { id?: string; email?: string; name?: string; profileRole?: string | null };
         organization?: { id?: string; name?: string };
       };
       error?: unknown;
@@ -3249,6 +3366,7 @@ async function handleDesktopDeepLink(rawUrl: string) {
       userId: user.id ?? '',
       userEmail: user.email ?? authState.email,
       userName: user.name ?? authState.name,
+      userProfileRole: user.profileRole?.trim() || authState.role,
       organizationId: organization.id ?? '',
       organizationName: organization.name ?? authState.company,
       apiBaseUrl: baseUrl,
@@ -3264,6 +3382,7 @@ async function handleDesktopDeepLink(rawUrl: string) {
       name: profile.userName || authState.name,
       email: profile.userEmail || authState.email,
       company: profile.organizationName || authState.company,
+      role: profile.userProfileRole || authState.role,
       avatarInitials: (profile.userName || profile.userEmail || 'DB')
         .split(/\s+|@/)
         .filter(Boolean)
@@ -3503,19 +3622,29 @@ async function sendSession() {
     promptLength: prompt.length,
     diagnostics: getPromptDiagnostics(session, screenshotPaths),
   });
-  const cwd = normalizeProjectFolderInput(session.projectFolder) || normalizeProjectFolderInput(await invoke<string>('pick_folder').catch(() => '')) || '';
+  const cwd = target === 'cursor'
+    ? normalizeProjectFolderInput(session.projectFolder) || ''
+    : normalizeProjectFolderInput(session.projectFolder) || normalizeProjectFolderInput(await invoke<string>('pick_folder').catch(() => '')) || '';
   const title = `Debugr → ${providerLabel(target)}: ${session.title}`;
 
   try {
     if (target === 'cursor') {
-      logUi('workspace_send_cursor_launch', { sessionId: session.id, cwd });
+      logUi('workspace_send_cursor_copy_prompt', { sessionId: session.id, promptLength: prompt.length });
+      await invoke('copy_to_clipboard', { text: prompt });
+      logUi('workspace_send_cursor_launch', { sessionId: session.id, cwd, hasProjectFolder: Boolean(cwd) });
       await invoke('open_in_cursor', { projectFolder: cwd || null });
       feedback = {
-        title: 'Cursor opened',
-        summary: 'Your project has been opened in Cursor. The session prompt has been copied to your clipboard — paste it into Cursor chat to continue.',
-        nextSteps: ['Paste the session prompt into Cursor chat', 'The agent will analyse the annotated areas'],
+        title: 'Cursor handoff ready',
+        summary: cwd
+          ? 'Cursor was opened with your project folder. The session prompt has been copied to your clipboard — paste it into Cursor chat to continue.'
+          : 'Cursor was opened. The session prompt has been copied to your clipboard — paste it into Cursor chat to continue. Add a project folder next time if you want Cursor opened directly in the repo.',
+        promptText: prompt,
+        nextSteps: [
+          'Open Cursor chat and paste the copied session prompt',
+          cwd ? 'Cursor should already be focused on the linked project folder' : 'Use Add project folder in Debugr before sending when this needs repo context',
+          'No CLI window opens for Cursor; the handoff uses Cursor.app plus your clipboard',
+        ],
       };
-      await invoke('copy_to_clipboard', { text: prompt }).catch(() => {});
     } else {
       const cliName = target === 'codex' ? 'codex' : 'claude';
       logUi('workspace_send_cli_launch', { sessionId: session.id, cliName, cwd, promptLength: prompt.length });
@@ -3539,9 +3668,9 @@ async function sendSession() {
   } catch (err) {
     logUi('workspace_send_failed', { sessionId: session.id, target, error: err instanceof Error ? err.message : String(err) });
     feedback = {
-      title: target === 'cursor' ? 'Could not open Cursor' : 'Could not launch CLI',
+      title: target === 'cursor' ? 'Could not complete Cursor handoff' : 'Could not launch CLI',
       summary: target === 'cursor'
-        ? `Failed to open Cursor: ${err instanceof Error ? err.message : String(err)}. Make sure Cursor is installed on this Mac.`
+        ? `Cursor handoff failed: ${err instanceof Error ? err.message : String(err)}. Make sure Cursor is installed on this Mac and clipboard access is available.`
         : `Failed to open ${providerLabel(target)}: ${err instanceof Error ? err.message : String(err)}. Make sure the CLI is installed and on your PATH.`,
       nextSteps: [
         target === 'cursor'
@@ -3560,6 +3689,7 @@ async function sendSession() {
   }
 
   session.status = 'responded';
+  workspaceSection = 'insights';
   logUi('workspace_send_complete', { sessionId: session.id, target, status: session.status });
   isSending = false;
   clearSendLoadingIndicator();

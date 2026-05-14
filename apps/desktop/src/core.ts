@@ -98,6 +98,7 @@ export interface AgentFeedback {
   rootCause?: string;
   suggestedFix?: string;
   codeSnippet?: string;
+  promptText?: string;
   nextSteps: string[];
 }
 
@@ -210,7 +211,7 @@ export function providerConnectionReadyCopy(
   if (provider === 'codex') {
     return 'Your OpenAI API key is stored locally on this Mac. When you click Send, Debugr will open Codex CLI in Terminal and hand off the session there.';
   }
-  return 'No login needed. Debugr will open your project folder directly in Cursor and copy the session prompt so you can paste it into chat.';
+  return 'No login needed. Debugr will open Cursor.app and copy the session prompt so you can paste it into chat. No CLI window opens for Cursor.';
 }
 
 export function shellSingleQuote(value: string): string {
@@ -539,6 +540,23 @@ export function buildDesktopSessionSyncPayload(
       };
     }),
   };
+}
+
+export function updateAnnotationNoteInCapture(
+  capture: CaptureCard,
+  annotationId: string,
+  nextText: string,
+) {
+  const annotation = capture.annotations.find((item) => item.id === annotationId);
+  if (!annotation) return false;
+
+  annotation.text = nextText;
+  capture.preview = capture.annotations
+    .map((item) => item.text)
+    .filter(Boolean)
+    .join(' · ') || 'No annotation notes yet';
+  capture.title = capture.annotations.find((item) => item.text.trim())?.text.slice(0, 40) || 'Untitled capture';
+  return true;
 }
 
 export function makeCapture(overrides: Partial<CaptureCard> = {}): CaptureCard {

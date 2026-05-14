@@ -1933,9 +1933,12 @@ fn copy_to_clipboard(text: String) -> Result<(), String> {
             .write_all(text.as_bytes())
             .map_err(|e| format!("write failed: {e}"))?;
     }
-    child
+    let status = child
         .wait()
         .map_err(|e| format!("pbcopy wait failed: {e}"))?;
+    if !status.success() {
+        return Err(format!("pbcopy exited with status {status}"));
+    }
     Ok(())
 }
 
@@ -1952,11 +1955,17 @@ fn open_in_cursor(project_folder: Option<String>) -> Result<(), String> {
                 cmd.arg(trimmed);
             }
         }
-        let status = cmd
-            .status()
+        let output = cmd
+            .output()
             .map_err(|e| format!("Failed to launch Cursor: {e}"))?;
-        if !status.success() {
-            return Err("Cursor did not open successfully.".into());
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let extra = if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(" {stderr}")
+            };
+            return Err(format!("Cursor did not open successfully.{extra}"));
         }
         Ok(())
     }

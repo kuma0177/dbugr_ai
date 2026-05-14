@@ -12,6 +12,7 @@ model User {
   email     String   @unique
   name      String
   avatarUrl String?
+  profileRole String?
   role      String   @default("member")
   authProvider String @default("demo")
   lastSeenAt DateTime?

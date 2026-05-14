@@ -38,6 +38,7 @@ type IdentityResponse = {
 };
 
 type OnboardingResponse = {
+  user: { id: string; email: string; name: string; profileRole?: string | null };
   organization: { id: string; name: string; defaultVisibility: string };
   membership: { id: string; role: string };
   invites: Array<{ id: string; email: string; acceptUrl?: string }>;
@@ -66,7 +67,7 @@ type DesktopLinkResponse = {
 type DesktopLinkRedeemResponse = {
   desktopLinkToken: string;
   desktopLink: { id: string; status: string; redeemedAt?: string | null };
-  user: { email: string };
+  user: { email: string; profileRole?: string | null };
   organization: { name: string };
 };
 
@@ -167,6 +168,7 @@ async function createWorkspace(email: string, name: string, organizationName: st
     }),
   });
   assert(result.data.membership.role === 'owner', 'Workspace creator should become owner');
+  assert(result.data.user.profileRole === 'Founder', 'Workspace creator profile role should preserve the web onboarding role');
   assert(result.data.invites.length === 1, 'Workspace should stage exactly one invite');
   return result.data;
 }
@@ -324,6 +326,7 @@ async function scenarioDesktopLinkHandshakePersistsAfterCodeExpiry(email: string
   assert(redeemed.data.desktopLinkToken.length > 20, 'Redeemed desktop link should return a bearer token');
   assert(redeemed.data.desktopLink.status === 'redeemed', 'Redeemed desktop link should be marked redeemed');
   assert(redeemed.data.user.email === email, 'Redeemed desktop link should return the linked web user');
+  assert(redeemed.data.user.profileRole === 'Founder', 'Redeemed desktop link should return the web profile role for Mac profile import');
 
   const duplicateRedeem = await request('redeem desktop link twice', '/phase2/desktop-link/redeem', {
     method: 'POST',
