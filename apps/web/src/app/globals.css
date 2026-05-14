@@ -36,7 +36,7 @@
   --color-eggshell: #fafaf9;
   --color-powder: #f5f3f1;
   --color-chalk: #e5e5e5;
-  --color-fog: #b1b0b0;
+  --color-fog: #f5f3f1;
   --color-gravel: #777169;
   --color-slate: #a59f97;
   --color-cinder: #57534f;
@@ -3738,6 +3738,51 @@ select:focus {
 
 .hv2-trust-sep { color: var(--hv2-chalk); }
 
+.hv2-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 18px;
+}
+
+.hv2-hero-download,
+.hv2-hero-source {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 20px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-decoration: none;
+}
+
+.hv2-hero-download {
+  background: var(--hv2-blue);
+  color: #fff;
+  box-shadow: var(--db-shadow-blue);
+}
+
+.hv2-hero-download:hover {
+  background: var(--db-blue-hover);
+  color: #fff;
+}
+
+.hv2-hero-source {
+  background: var(--hv2-surface);
+  color: var(--hv2-text-sec);
+  border: 1px solid var(--hv2-chalk);
+  box-shadow: var(--hv2-shadow-sm);
+}
+
+.hv2-hero-source:hover {
+  color: var(--hv2-text);
+  border-color: var(--db-border-strong);
+}
+
 .home-signed-in-empty {
   display: none;
 }
@@ -4167,6 +4212,99 @@ body:has(.home-signed-in-empty) .hv2-features {
   margin: 0;
 }
 
+/* ── Open source release strip ─────────────────────────── */
+.hv2-open-source {
+  background: var(--hv2-bg);
+  padding: 72px 40px;
+  border-top: 1px solid var(--hv2-chalk);
+}
+
+.hv2-open-source-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 48px;
+  align-items: center;
+}
+
+.hv2-open-source-copy p {
+  max-width: 610px;
+  margin: -18px 0 0;
+  color: var(--hv2-text-sec);
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.hv2-release-card {
+  background: var(--hv2-surface);
+  border: 1px solid var(--hv2-chalk);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: var(--hv2-shadow-md);
+}
+
+.hv2-release-kicker {
+  display: inline-flex;
+  margin-bottom: 14px;
+  color: var(--hv2-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.hv2-release-card strong {
+  display: block;
+  color: var(--hv2-text);
+  font-size: 22px;
+  line-height: 1.15;
+  letter-spacing: -0.4px;
+}
+
+.hv2-release-card p {
+  margin: 12px 0 20px;
+  color: var(--hv2-text-sec);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.hv2-release-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.hv2-release-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: var(--hv2-blue);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.hv2-release-actions a + a {
+  background: var(--hv2-bg);
+  color: var(--hv2-text-sec);
+  border: 1px solid var(--hv2-chalk);
+}
+
+.hv2-release-actions a:hover {
+  background: var(--db-blue-hover);
+  color: #fff;
+}
+
+.hv2-release-actions a + a:hover {
+  background: var(--hv2-surface);
+  color: var(--hv2-text);
+  border-color: var(--db-border-strong);
+}
+
 /* ── CTA banner ────────────────────────────────────────── */
 .hv2-cta {
   background: var(--hv2-text);
@@ -4379,6 +4517,7 @@ body:has(.home-signed-in-empty) .hv2-features {
   .hv2-flow,
   .hv2-targets,
   .hv2-features,
+  .hv2-open-source,
   .hv2-cta { padding-left: 24px; padding-right: 24px; }
   .hv2-footer { padding: 24px; flex-direction: column; gap: 20px; }
   .hv2-footer-links { flex-wrap: wrap; justify-content: center; }
@@ -4393,11 +4532,17 @@ body:has(.home-signed-in-empty) .hv2-features {
   .hv2-hero-inner { padding: 0; }
   .hv2-section-inner { padding: 0; }
   .hv2-targets-inner { padding: 0 24px; }
+  .hv2-open-source-inner { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 480px) {
   .hv2-flow-grid { grid-template-columns: 1fr; }
   .hv2-features-grid { grid-template-columns: 1fr; }
+  .hv2-hero-actions,
+  .hv2-release-actions { align-items: stretch; flex-direction: column; }
+  .hv2-hero-download,
+  .hv2-hero-source,
+  .hv2-release-actions a { width: 100%; }
 }
 
 /* ── Signup strip — V2 layout (Google first) ──────────────── */

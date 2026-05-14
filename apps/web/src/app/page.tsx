@@ -2,6 +2,12 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { HomeSignupStrip } from './home-signup-strip';
 
+const GITHUB_REPO_URL = 'https://github.com/kuma0177/debgr_ai';
+const GITHUB_RELEASE_TAG = 'pre-open-source-ready-stable';
+const DEFAULT_MAC_DMG_URL = `${GITHUB_REPO_URL}/releases/download/${GITHUB_RELEASE_TAG}/dbugr-ai-0.0.1-macos-aarch64.dmg`;
+const MAC_DMG_DOWNLOAD_URL = process.env.NEXT_PUBLIC_MAC_DMG_URL ?? DEFAULT_MAC_DMG_URL;
+const GITHUB_RELEASE_URL = `${GITHUB_REPO_URL}/releases/tag/${GITHUB_RELEASE_TAG}`;
+
 export const metadata: Metadata = {
   title: 'Dbugr.ai | Capture feedback. Ship it to AI.',
   description:
@@ -131,6 +137,14 @@ export default function HomePage() {
               Annotate any screen on your Mac and send a structured, repo-aware
               feedback session to Claude Code, Codex, or Cursor — in under 30 seconds.
             </p>
+            <div className="hv2-hero-actions" aria-label="Get Dbugr">
+              <a className="hv2-hero-download" href={MAC_DMG_DOWNLOAD_URL}>
+                Download for macOS
+              </a>
+              <a className="hv2-hero-source" href={GITHUB_REPO_URL} rel="noreferrer" target="_blank">
+                View source
+              </a>
+            </div>
             <HomeSignupStrip />
             <div className="hv2-trust">
               <span className="hv2-trust-item">
@@ -219,6 +233,29 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ── Open Source ───────────────────────────── */}
+      <section className="hv2-open-source">
+        <div className="hv2-open-source-inner">
+          <div className="hv2-open-source-copy">
+            <div className="hv2-section-label">Open source</div>
+            <h2 className="hv2-section-title">Local-first, inspectable, and ready to fork.</h2>
+            <p>
+              Dbugr is published as a monorepo with the desktop app, web review surface,
+              API, worker, shared packages, and release notes in one place.
+            </p>
+          </div>
+          <div className="hv2-release-card">
+            <span className="hv2-release-kicker">macOS release</span>
+            <strong>Dbugr.ai DMG</strong>
+            <p>Download the packaged Mac app from GitHub Releases, then link it from web onboarding.</p>
+            <div className="hv2-release-actions">
+              <a href={MAC_DMG_DOWNLOAD_URL}>Download DMG</a>
+              <a href={GITHUB_RELEASE_URL} rel="noreferrer" target="_blank">Release notes</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── CTA Banner ────────────────────────────── */}
       <section className="hv2-cta">
         <div className="hv2-cta-inner">
@@ -231,7 +268,7 @@ export default function HomePage() {
               <img src="/brand/google-g.svg" alt="" width={18} height={18} aria-hidden="true" />
               Continue with Google
             </a>
-            <a className="hv2-cta-btn-secondary" href="#">
+            <a className="hv2-cta-btn-secondary" href={MAC_DMG_DOWNLOAD_URL}>
               Download Mac app
             </a>
           </div>
@@ -251,7 +288,7 @@ export default function HomePage() {
           <Link className="hv2-footer-link" href="/terms">Terms</Link>
           <a
             className="hv2-footer-link"
-            href="https://github.com/kuma0177/debgr_ai"
+            href={GITHUB_REPO_URL}
             rel="noreferrer"
             target="_blank"
           >

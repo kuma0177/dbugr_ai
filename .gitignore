@@ -14,5 +14,7 @@ apps/**/.env.local
 apps/desktop/src-tauri/target
 apps/desktop/src-tauri/gen
 apps/desktop-native-mac/.build
+apps/**/test-results
+apps/web/public/downloads/*.dmg
 uploads/
 dev.db

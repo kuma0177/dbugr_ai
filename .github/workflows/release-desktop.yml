@@ -1,0 +1,53 @@
+name: Release desktop DMG
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "*stable*"
+      - "*release*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos-dmg:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop DMG
+        run: pnpm --filter @feedbackagent/desktop bundle
+
+      - name: Normalize DMG name
+        run: |
+          mkdir -p release
+          dmg_path="$(find apps/desktop/src-tauri/target/release/bundle -name '*.dmg' -type f | head -n 1)"
+          test -n "$dmg_path"
+          cp "$dmg_path" release/dbugr-ai-0.0.1-macos-aarch64.dmg
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/dbugr-ai-0.0.1-macos-aarch64.dmg
+          generate_release_notes: true
+          prerelease: true

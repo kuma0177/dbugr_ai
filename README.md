@@ -2,7 +2,7 @@
 
 Dbugr.ai is a macOS screen-capture and annotation tool for AI coding workflows. It lets you capture what is on screen, mark the exact area that needs attention, attach project context, and hand the resulting session to Claude, Codex, Cursor, or an MCP-aware coding agent.
 
-The project is currently a local-first monorepo with a Tauri desktop app, a Next.js review surface, local API and worker services, shared packages, and MCP server experiments.
+The project is a local-first open-source monorepo with a Tauri desktop app, a Next.js review surface, local API and worker services, shared packages, and MCP server experiments.
 
 ## Why It Exists
 
@@ -10,7 +10,7 @@ AI coding agents are strongest when they receive the same context a human review
 
 ## Current Status
 
-Dbugr is usable for local development and product iteration on macOS. It is not yet a polished public cloud service.
+Dbugr is usable for local development and product iteration on macOS. Packaged macOS builds are published through GitHub Releases for people who want to try the desktop app without running the full source stack.
 
 What works today:
 
@@ -27,7 +27,8 @@ Still in progress:
 - hosted artifact storage
 - durable background jobs
 - full native macOS parity
-- final open-source license and contribution policy
+- production signing/notarization for packaged macOS builds
+- hosted storage hardening for team/public review artifacts
 
 ## Repository Structure
 
@@ -170,8 +171,8 @@ See [apps/desktop-native-mac/README.md](apps/desktop-native-mac/README.md) and [
 
 If you want to try the current packaged macOS build instead of running from source:
 
-- [Download Dbugr for macOS](https://github.com/kuma0177/debgr_ai/releases/download/stable-macos-claude-codex-cli/dbugr-ai-0.0.1-macos-aarch64.dmg)
-- [Release page](https://github.com/kuma0177/debgr_ai/releases/tag/stable-macos-claude-codex-cli)
+- [Download Dbugr for macOS](https://github.com/kuma0177/debgr_ai/releases/download/pre-open-source-ready-stable/dbugr-ai-0.0.1-macos-aarch64.dmg)
+- [Release page](https://github.com/kuma0177/debgr_ai/releases/tag/pre-open-source-ready-stable)
 
 macOS may require Screen Recording permission before capture works. See [INSTALL.md](INSTALL.md#macos-permissions) for details.
 
@@ -203,13 +204,14 @@ Important local defaults:
 - `ANTHROPIC_API_KEY` is optional for local runs
 - GitHub and Jira variables are optional integration settings
 
-## Opening The Repo
+## Open Source
 
-Before accepting outside contributors, this repository still needs:
+Dbugr is released under the [MIT License](LICENSE).
 
-- a license file
-- contribution guidelines
-- a security policy for reporting issues
-- a clear stance on bundled binaries, screenshots, and test data
+Useful project files:
 
-Until a license is added, assume the code is source-available for review but not formally open-source licensed.
+- [CONTRIBUTING.md](CONTRIBUTING.md) - setup, checks, and pull request guidance
+- [SECURITY.md](SECURITY.md) - private vulnerability reporting and data-safety notes
+- [docs/releasing-macos.md](docs/releasing-macos.md) - DMG release workflow
+
+Do not post private screenshots, customer data, API keys, or local workspace paths in public issues.
