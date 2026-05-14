@@ -361,6 +361,11 @@ function uniqueNonEmptyText(parts: Array<string | null | undefined>) {
     });
 }
 
+function scrubPublicIdentity<T extends { email?: string | null } | null>(identity: T): T {
+  if (!identity) return identity;
+  return { ...identity, email: '' };
+}
+
 const desktopLinkSchema = z.object({
   appUrl: z.string().url().optional(),
 });
@@ -437,6 +442,10 @@ function desktopBearerToken(req: Request) {
   }
   const headerToken = req.headers['x-dbugr-desktop-token'];
   return typeof headerToken === 'string' ? headerToken.trim() : '';
+}
+
+function hasWebViewerIdentity(req: Request) {
+  return typeof req.headers['x-dbugr-user-email'] === 'string' && req.headers['x-dbugr-user-email'].trim().length > 0;
 }
 
 function createInviteToken() {
@@ -836,6 +845,7 @@ phase2Router.post('/phase2/onboarding', async (req: Request, res: Response) => {
       name: parsed.data.organizationName,
       logoUrl: parsed.data.organizationLogoUrl ?? null,
       defaultVisibility: parsed.data.defaultVisibility,
+      allowPublicSharing: true,
     },
     create: {
       name: parsed.data.organizationName,
@@ -843,6 +853,7 @@ phase2Router.post('/phase2/onboarding', async (req: Request, res: Response) => {
       logoUrl: parsed.data.organizationLogoUrl ?? null,
       createdByUserId: user.id,
       defaultVisibility: parsed.data.defaultVisibility,
+      allowPublicSharing: true,
     },
   });
 
@@ -1960,7 +1971,11 @@ phase2Router.get('/phase2/feed', async (req: Request, res: Response) => {
     include: {
       creator: true,
       project: { include: { organization: true } },
-      comments: { include: { author: true, curationDecisions: true }, orderBy: { createdAt: 'desc' } },
+      comments: {
+        where: scope === 'public' ? { visibility: 'public' } : undefined,
+        include: { author: true, curationDecisions: true },
+        orderBy: { createdAt: 'desc' },
+      },
       frames: true,
       _count: { select: { comments: true, frames: true, curationDecisions: true, submissions: true } },
     },
@@ -1975,7 +1990,18 @@ phase2Router.get('/phase2/feed', async (req: Request, res: Response) => {
     resultCount: sessions.length,
   });
 
-  return res.json({ data: { scope, sessions } });
+  const responseSessions = scope === 'public'
+    ? sessions.map((session) => ({
+        ...session,
+        creator: scrubPublicIdentity(session.creator),
+        comments: session.comments.map((comment) => ({
+          ...comment,
+          author: scrubPublicIdentity(comment.author),
+        })),
+      }))
+    : sessions;
+
+  return res.json({ data: { scope, sessions: responseSessions } });
 });
 
 phase2Router.get('/phase2/frames/:id/image', async (req: Request, res: Response) => {
@@ -2038,6 +2064,10 @@ phase2Router.post('/phase2/sessions/:id/contributions', async (req: Request, res
   if (!parsed.success) {
     logPhase2('contribution.validation_failed', { sessionId: req.params.id, issues: parsed.error.issues.length });
     return res.status(400).json({ error: parsed.error.flatten() });
+  }
+  if (!hasWebViewerIdentity(req)) {
+    logPhase2('contribution.auth_required', { sessionId: req.params.id });
+    return res.status(401).json({ error: 'Sign in or sign up before adding a public review comment.' });
   }
   let context;
   try {
@@ -2269,7 +2299,8 @@ phase2Router.post('/phase2/sessions/:id/visibility', async (req: Request, res: R
     return res.status(404).json({ error: 'Session not found in this organization.' });
   }
   if (parsed.data.visibility === 'public') {
-    if (!organization.allowPublicSharing) {
+    const canPublishDespiteLegacyPolicy = session.createdBy === user.id || membership.role === 'owner' || membership.role === 'admin';
+    if (!organization.allowPublicSharing && !canPublishDespiteLegacyPolicy) {
       logPhase2('visibility.public_blocked_by_policy', { sessionId: session.id, organizationId: organization.id });
       return res.status(403).json({ error: 'Public sharing is disabled by organization policy.' });
     }

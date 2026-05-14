@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 const testDir = dirname(fileURLToPath(import.meta.url));
 const mainSource = readFileSync(resolve(testDir, '../main.tsx'), 'utf8');
 const feedSource = readFileSync(resolve(testDir, '../../../web/src/app/feed/page.tsx'), 'utf8');
+const publicFeedSource = readFileSync(resolve(testDir, '../../../web/src/app/public/page.tsx'), 'utf8');
+const webCssSource = readFileSync(resolve(testDir, '../../../web/src/app/globals.css'), 'utf8');
 const phase2Source = readFileSync(resolve(testDir, '../../../api/src/routes/phase2.ts'), 'utf8');
 const apiIndexSource = readFileSync(resolve(testDir, '../../../api/src/index.ts'), 'utf8');
 const rustMainSource = readFileSync(resolve(testDir, '../../src-tauri/src/main.rs'), 'utf8');
@@ -131,6 +133,76 @@ describe('phase 2 team/public web handoff', () => {
     expect(phase2Source).toContain('allowQueryEmail?: boolean');
     expect(phase2Source).toContain('req.query.viewerEmail');
     expect(frameImageApi).toContain('requestContext(req, { allowQueryEmail: true })');
+  });
+
+  it('keeps the visible Public review route usable for session owners and org admins', () => {
+    const onboardingApi = functionBlock(phase2Source, /phase2Router\.post\('\/phase2\/onboarding'/);
+    const visibilityApi = functionBlock(phase2Source, /phase2Router\.post\('\/phase2\/sessions\/:id\/visibility'/);
+    const changeVisibility = functionBlock(feedSource, /async function changeVisibility\(/);
+
+    expect(onboardingApi).toContain('allowPublicSharing: true');
+    expect(feedSource).toContain("changeVisibility(session, 'public')");
+    expect(changeVisibility).toContain("submissionFlow = visibility === 'public' ? 'public_feed'");
+    expect(changeVisibility).toContain('redactionConfirmed: visibility ===');
+    expect(visibilityApi).toContain('canPublishDespiteLegacyPolicy');
+    expect(visibilityApi).toContain('session.createdBy === user.id');
+    expect(visibilityApi).toContain("membership.role === 'owner'");
+    expect(visibilityApi).toContain("membership.role === 'admin'");
+    expect(visibilityApi).toContain('!organization.allowPublicSharing && !canPublishDespiteLegacyPolicy');
+  });
+
+  it('exposes a public discovery URL while requiring sign-in before public comments', () => {
+    const publicLoad = functionBlock(publicFeedSource, /async function load\(/);
+    const publicComment = functionBlock(publicFeedSource, /async function addPublicComment\(/);
+    const feedApi = functionBlock(phase2Source, /phase2Router\.get\('\/phase2\/feed'/);
+    const contributionApi = functionBlock(phase2Source, /phase2Router\.post\('\/phase2\/sessions\/:id\/contributions'/);
+
+    expect(publicFeedSource).toContain("api.phase2.publicFeed()");
+    expect(publicFeedSource).toContain("new URLSearchParams(window.location.search)");
+    expect(publicFeedSource).toContain("params.get('sessionId')");
+    expect(publicFeedSource).toContain('/public?sessionId=${selected.id}');
+    expect(publicFeedSource).toContain('/onboarding?flow=sign-in');
+    expect(publicFeedSource).toContain('/onboarding?flow=sign-up');
+    expect(publicComment).toContain("if (!viewerEmail)");
+    expect(publicComment).toContain("visibility: 'public'");
+    expect(publicLoad).not.toContain('setIsOnboarded');
+    expect(feedApi).toContain("where: scope === 'public' ? { visibility: 'public' } : undefined");
+    expect(feedApi).toContain('creator: scrubPublicIdentity(session.creator)');
+    expect(feedApi).toContain('author: scrubPublicIdentity(comment.author)');
+    expect(phase2Source).toContain('function hasWebViewerIdentity');
+    expect(phase2Source).toContain('function scrubPublicIdentity');
+    expect(contributionApi).toContain('Sign in or sign up before adding a public review comment.');
+    expect(contributionApi).toContain('contribution.auth_required');
+  });
+
+  it('keeps the review/public feed layout responsive with aligned content widths', () => {
+    expect(webCssSource).toContain('grid-template-columns: 280px minmax(0, 1fr)');
+    expect(webCssSource).toContain('.review-topbar,\n.review-hero,\n.review-feed-stack');
+    expect(webCssSource).toContain('width: min(100%, 980px)');
+    expect(webCssSource).toContain('@media (max-width: 1080px)');
+    expect(webCssSource).toContain('.main:not(:has(.hv2)):not(:has(.review-shell))');
+    expect(webCssSource).toContain('.review-shell {\n    grid-template-columns: 1fr;');
+    expect(webCssSource).toContain('@media (max-width: 1180px)');
+    expect(webCssSource).toContain('.nav-links {\n    flex: 1 1 620px;\n    justify-content: flex-end;\n    flex-wrap: wrap;');
+    expect(webCssSource).toContain('.review-sidebar {\n    display: none;');
+    expect(webCssSource).toContain('.review-mobile-scope-tabs {\n    width: min(100%, 980px);\n    display: grid;');
+  });
+
+  it('keeps small-screen review feed content above heavyweight sidebar navigation', () => {
+    expect(feedSource).toContain('review-mobile-scope-tabs');
+    expect(feedSource).toContain("aria-label=\"Notes feed scope\"");
+    expect(webCssSource).toContain('.review-mobile-scope-tabs {\n  display: none;');
+    expect(webCssSource).toContain('@media (max-width: 1080px)');
+    expect(webCssSource).toContain('.review-sidebar {\n    display: none;');
+    expect(webCssSource).toContain('.review-mobile-scope-tabs {\n    width: min(100%, 980px);\n    display: grid;');
+    expect(webCssSource).toContain('grid-template-columns: repeat(3, minmax(0, 1fr));');
+  });
+
+  it('resets narrow-desktop nav flex sizing on mobile so links do not create huge vertical gaps', () => {
+    expect(webCssSource).toContain('@media (max-width: 1180px)');
+    expect(webCssSource).toContain('.nav-links {\n    flex: 1 1 620px;');
+    expect(webCssSource).toContain('@media (max-width: 700px)');
+    expect(webCssSource).toContain('.nav-links {\n    width: 100%;\n    display: flex;\n    flex: 0 0 auto;');
   });
 
   it('handles dbugr://handoff links by fetching the frozen web prompt and launching the provider locally', () => {

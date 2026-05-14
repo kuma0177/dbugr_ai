@@ -44,6 +44,12 @@ Before editing any of these files, read this ledger and update it when a new reg
 - When a real account has multiple local memberships, the API must prefer that user's real/owned workspace over the seeded `org_demo` workspace for web review context.
 - When an older desktop link points at `org_demo`, the API must still route that real user to their real/owned workspace before syncing team/public sessions.
 - Web review frame images must authorize with the same local viewer identity as the feed JSON request; image tags cannot send custom auth headers.
+- Public visibility controls shown in the review feed must have a working API path for session owners/org admins, including older org rows created before public sharing was enabled by default.
+- Publicly published sessions must have a discoverable web URL that can be read without login, while public comments require sign-in/sign-up and never fall back to `Demo User`.
+- Public feed responses must not expose private viewer/creator emails to unauthenticated readers.
+- Review and public feed layouts must keep navigation, hero, and cards readable at desktop, split-screen, tablet, and mobile widths with aligned content columns.
+- Small-screen review feed must not bury the feed below duplicate/global and sidebar navigation; the primary content and scope controls must be reachable before secondary workspace links.
+- Mobile global navigation must reset tablet/narrow-desktop flex sizing so top-nav pills stay compact and do not create large vertical whitespace.
 
 ## Known Regression Cases
 
@@ -74,6 +80,11 @@ Before editing any of these files, read this ledger and update it when a new reg
 | DSK-023 | The web feed selected `Demo Organization` for a real user because the API picked the oldest active membership. | Header-authenticated web context must prefer the user's owned/non-demo workspace when multiple memberships exist. |
 | DSK-024 | An old desktop link still pointed at `org_demo`, so future desktop syncs could recreate duplicate/missing review sessions even after the web feed used the real workspace. | Desktop-token context must prefer the real/owned workspace over `org_demo` for real multi-membership users while preserving the exact linked org for non-demo links. |
 | DSK-025 | The web feed loaded the session through header auth, but frame `<img>` requests had no header, fell back to demo context, and returned `Capture not found`. | Frame image URLs must carry the local viewer email for the asset endpoint, and `/phase2/frames/:id/image` must accept that viewer query only for image authorization. |
+| DSK-026 | The review feed showed a `Public` visibility button, but the API rejected it for an older real workspace whose `allowPublicSharing` flag was still false. | Onboarding must enable public sharing for this review workflow, and legacy policy blocks must not prevent session owners/org admins from publishing a visible public-review session. |
+| DSK-027 | Public sessions had no real discovery URL, and unauthenticated contribution calls could fall back to `Demo User`. | `/public` must load public sessions without onboarding, expose a shareable session URL, scrub public emails, and the contribution API must require a signed-in web identity before posting. |
+| DSK-028 | Review feed cards and hero widths did not align, the sidebar stayed fixed too long, and split-screen widths made fonts/cards feel cramped. | Review/public CSS must share one content max-width, collapse heavyweight sidebar navigation at medium widths, and avoid re-applying generic `.main` padding to review pages. |
+| DSK-029 | Mobile and narrow desktop web rendered the global nav and then the full review sidebar, pushing the actual feed below admin/session/workspace links. | At small-screen widths, hide heavyweight review sidebars, keep the top nav from colliding, and expose compact in-content feed scope controls before the feed hero/cards. |
+| DSK-030 | The narrow-desktop nav fix gave `.nav-links` a large flex basis that leaked into mobile column layout, creating giant gaps between signed-in and feed/admin pills. | Mobile nav rules must reset inherited flex basis to compact sizing after switching the nav to a column layout. |
 
 ## Required Checks
 
@@ -114,6 +125,11 @@ For macOS permission or real capture changes, also manually verify:
 - Team/Public review feed: a real signed-in user with a seeded demo membership still loads their real workspace sessions, not `Demo Organization`.
 - Team/Public desktop sync: a real user's existing desktop link with `org_demo` still syncs into the real workspace rather than creating a duplicate demo-org session.
 - Team/Public review feed: frame image `<img>` requests return the actual saved screenshot for the same signed-in viewer that loaded the feed.
+- Team/Public review feed: clicking `Public` on a session owned by the signed-in user moves it to public review rather than failing because of a stale org policy flag.
+- Public discovery: `/public` shows public sessions without onboarding, `/public?sessionId=...` opens a specific public session, and unauthenticated visitors see sign-in/sign-up before commenting.
+- Responsive review/public feed: desktop cards align with the hero, split-screen/tablet hides heavyweight sidebar navigation, and mobile keeps readable text and card widths.
+- Small-screen review feed: after the global nav, the feed scope controls and review content appear before secondary workspace/admin/session navigation.
+- Mobile global nav: signed-in, feed, and admin controls remain compact without inherited tablet flex spacing.
 - Test cleanup: after any smoke/manual cleanup, query the DB or API and confirm the user's real synced session still exists.
 
 ## Test Ownership

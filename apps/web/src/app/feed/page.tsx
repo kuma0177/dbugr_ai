@@ -355,6 +355,21 @@ export default function FeedPage() {
           </label>
         </header>
 
+        <div className="review-mobile-scope-tabs" role="tablist" aria-label="Notes feed scope">
+          {(['private', 'organization', 'public'] as Scope[]).map((item) => (
+            <button
+              key={item}
+              className={scope === item ? 'active' : ''}
+              onClick={() => setScope(item)}
+              role="tab"
+              aria-selected={scope === item}
+              type="button"
+            >
+              {scopeLabels[item]}
+            </button>
+          ))}
+        </div>
+
         <div className="review-hero">
           <div>
             <div className="phase2-kicker">Notes Feed</div>

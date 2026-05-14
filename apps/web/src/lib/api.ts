@@ -242,6 +242,8 @@ export const api = {
       }),
     feed: (scope: 'private' | 'organization' | 'public') =>
       apiFetch<{ scope: string; sessions: FeedbackSession[] }>(`/phase2/feed?scope=${scope}`),
+    publicFeed: () =>
+      apiFetch<{ scope: string; sessions: FeedbackSession[] }>('/phase2/feed?scope=public'),
     syncDesktopSession: (body: DesktopSessionSyncRequest) =>
       apiFetch<DesktopSessionSyncResponse>('/phase2/desktop-sessions/sync', {
         method: 'POST',

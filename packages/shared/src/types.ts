@@ -230,6 +230,7 @@ export interface FeedbackSession {
   userIntent?: UserIntent;
   createdAt: string;
   updatedAt: string;
+  creator?: User;
   frames?: FeedbackFrame[];
   comments?: FeedbackComment[];
   tasks?: ImprovementTask[];
