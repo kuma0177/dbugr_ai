@@ -52,6 +52,8 @@ Before editing any of these files, read this ledger and update it when a new reg
 - Publicly published sessions must have a discoverable web URL that can be read without login, while public comments require sign-in/sign-up and never fall back to `Demo User`.
 - Public feed and public frame-image reads must not depend on seeded demo records; production databases may start without `user_demo`.
 - Public feed responses must not expose private viewer/creator emails to unauthenticated readers.
+- Public pages must not show duplicate anonymous sign-in/sign-up entry points that compete with the global header CTAs.
+- Email-code sign-in must never dead-end when outbound email delivery is misconfigured; it should either send email or expose the explicit preview-code fallback unless strict delivery is enabled.
 - Review and public feed layouts must keep navigation, hero, and cards readable at desktop, split-screen, tablet, and mobile widths with aligned content columns.
 - Small-screen review feed must not bury the feed below duplicate/global and sidebar navigation; the primary content and scope controls must be reachable before secondary workspace links.
 - Mobile global navigation must reset tablet/narrow-desktop flex sizing so top-nav pills stay compact and do not create large vertical whitespace.
@@ -99,6 +101,7 @@ Before editing any of these files, read this ledger and update it when a new reg
 | DSK-035 | Opening `/feed` in local dev could throw `ENOENT ... .next/server/app/feed/page.js` after `.next` contained only a partial client manifest for that route. | Web dev startup must clear `.next` before launching so Next regenerates server and client route artifacts together. |
 | DSK-036 | Signed-in users could reach Admin or Notes Feed without any visible way to sign out, inspect their profile, review their organization/team membership, or delete their account. | Global signed-in navigation, review sidebars, and the profile route must keep Profile, Sign out, team/member details, admin summary access, and account deletion wired together. |
 | DSK-037 | Production public feed crashed with `No User found` because anonymous `/phase2/feed?scope=public` tried to load seeded demo context in a database without `user_demo`. | Public feed and public frame image endpoints must use anonymous public-safe reads when no viewer identity is present, and only load request context for signed-in/private/org access. |
+| DSK-038 | Public discovery repeated anonymous sign-in/sign-up links in the sidebar while the global header already showed auth CTAs, and email-code sign-in could fail hard when Resend was configured but rejected delivery. | Anonymous public sidebar navigation should stay focused on feed links, and email-code requests should return the stored preview fallback on delivery failure unless `EMAIL_DELIVERY_STRICT=1`; the auth regression suite simulates delivery failure and verifies the fallback code. |
 
 ## Required Checks
 

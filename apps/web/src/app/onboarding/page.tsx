@@ -33,6 +33,11 @@ function deriveWorkspaceName(userName: string) {
   return `${firstName}'s workspace`;
 }
 
+function initialAuthFlowFromLocation(): AuthFlow {
+  if (typeof window === 'undefined') return 'sign-up';
+  return new URLSearchParams(window.location.search).get('flow') === 'sign-in' ? 'sign-in' : 'sign-up';
+}
+
 export default function OnboardingPage() {
   const router = useRouter();
   const [name, setName] = useState('');
@@ -56,14 +61,18 @@ export default function OnboardingPage() {
   const [desktopRedeemStatus, setDesktopRedeemStatus] = useState('');
   const [inviteToken, setInviteToken] = useState('');
   const [inviteLinks, setInviteLinks] = useState<Array<{ email: string; acceptUrl: string }>>([]);
-  const [status, setStatus] = useState('Sign up with Google or email first, then create your organization workspace.');
+  const [status, setStatus] = useState(() => {
+    const initialFlow = initialAuthFlowFromLocation();
+    return `${initialFlow === 'sign-in' ? 'Sign in' : 'Sign up'} with Google or email first, then create your organization workspace.`;
+  });
   const [loading, setLoading] = useState(false);
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('sign-in');
-  const [authFlow, setAuthFlow] = useState<AuthFlow>('sign-up');
+  const [authFlow, setAuthFlow] = useState<AuthFlow>(initialAuthFlowFromLocation);
   const [autoRequestedEmailCode, setAutoRequestedEmailCode] = useState(false);
 
   const authAction = authFlow === 'sign-in' ? 'sign in' : 'sign up';
   const authActionTitle = authFlow === 'sign-in' ? 'Sign in' : 'Sign up';
+  const authActionGerund = authFlow === 'sign-in' ? 'signing in' : 'signing up';
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -74,6 +83,7 @@ export default function OnboardingPage() {
     const incomingFlow = params.get('flow') === 'sign-in' ? 'sign-in' : 'sign-up';
     const hasExplicitEntry = Boolean(incomingInvite || incomingAuth || incomingEmail);
     setAuthFlow(incomingFlow);
+    setStatus(`${incomingFlow === 'sign-in' ? 'Sign in' : 'Sign up'} with Google or email first, then create your organization workspace.`);
     if (incomingAuth === 'google' || incomingAuth === 'email') {
       setAuthMethod(incomingAuth);
       setCurrentStep('sign-in');
@@ -105,6 +115,7 @@ export default function OnboardingPage() {
         setIdentityConnected(true);
         setWorkspaceReady(true);
         setCurrentStep('link');
+        setAuthFlow('sign-in');
         setStatus(`Workspace ready: ${localState.organizationName}. ${localState.inviteEmails.length} invite(s) staged.`);
       }
     }
@@ -601,7 +612,7 @@ export default function OnboardingPage() {
           <div className="onboarding-section-header">
             <span className="step-chip">01</span>
             <div>
-              <h2>Choose how to {authAction}</h2>
+              <h2>{authFlow === 'sign-in' ? 'Choose how to sign in' : 'Choose how to sign up'}</h2>
               <p>Use Google for OAuth, or use email to verify with a one-time code.</p>
             </div>
           </div>
@@ -619,7 +630,7 @@ export default function OnboardingPage() {
             <div className={`auth-method ${authMethod === 'email' ? 'active' : ''}`}>
               <div>
                 <div className="auth-method-title">Email code</div>
-                <p className="phase2-muted">Receive a one-time code by email, then enter it to finish {authAction}.</p>
+                <p className="phase2-muted">Receive a one-time code by email, then enter it to finish {authActionGerund}.</p>
               </div>
               <div className="email-code-grid">
                 <div className="email-entry-row">

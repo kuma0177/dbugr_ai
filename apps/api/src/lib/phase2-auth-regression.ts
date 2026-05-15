@@ -240,6 +240,27 @@ async function scenarioWrongCodeFriendlyError() {
   log('scenario.passed', { scenario: 'wrong_code_friendly_error' });
 }
 
+async function scenarioEmailDeliveryFailureFallsBackToPreview() {
+  const email = `phase2-delivery-fallback-${runId}@example.com`;
+
+  log('scenario.started', { scenario: 'email_delivery_failure_falls_back_to_preview', email: redactEmail(email) });
+  const result = await request<EmailCodeRequest>('request email code with delivery failure fallback', '/phase2/auth/email-code/request', {
+    method: 'POST',
+    expectedStatus: 201,
+    headers: { 'x-dbugr-test-email-delivery-failure': '1' },
+    body: JSON.stringify({ email }),
+  });
+
+  assert(!result.data.delivered, 'Failed email delivery should fall back to preview delivery');
+  assert(result.data.provider === 'preview', 'Failed email delivery should report preview provider');
+  assert(result.data.previewCode, 'Failed email delivery should return a temporary preview code');
+  assert(/^\d{6}$/.test(result.data.previewCode!), 'Fallback preview code must be a 6-digit string');
+  const verified = await verifyCode(email, result.data.previewCode!);
+  assert(verified.data.created, 'Fallback preview code should still verify the account');
+
+  log('scenario.passed', { scenario: 'email_delivery_failure_falls_back_to_preview' });
+}
+
 async function scenarioGoogleResolvesExistingEmail(email: string, organizationName: string) {
   log('scenario.started', { scenario: 'google_resolves_existing_email', email: redactEmail(email) });
   const result = await request<IdentityResponse>('google ensure identity', '/phase2/auth/identity/ensure', {
@@ -380,6 +401,7 @@ async function main() {
   const primary = await scenarioNewUserSignupThenExistingDashboard();
   await scenarioExistingUserWithoutWorkspaceStillSetsUpWorkspace();
   await scenarioWrongCodeFriendlyError();
+  await scenarioEmailDeliveryFailureFallsBackToPreview();
   await scenarioGoogleResolvesExistingEmail(primary.email, primary.organizationName);
   await scenarioDesktopLinkHandshakePersistsAfterCodeExpiry(primary.email);
   await scenarioAdminOwnerCanInspectWorkspace(primary.email);

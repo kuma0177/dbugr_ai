@@ -137,12 +137,7 @@ export default function PublicFeedPage() {
               <a href="/profile">Profile</a>
               <LogoutButton className="review-nav-button" />
             </>
-          ) : (
-            <>
-              <a href="/onboarding?flow=sign-in">Sign in</a>
-              <a href="/onboarding?flow=sign-up">Sign up</a>
-            </>
-          )}
+          ) : null}
         </nav>
       </aside>
 

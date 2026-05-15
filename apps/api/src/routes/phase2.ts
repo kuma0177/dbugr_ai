@@ -553,6 +553,10 @@ function emailProviderConfigured() {
   return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
 }
 
+function allowEmailPreviewFallback() {
+  return process.env.EMAIL_DELIVERY_STRICT !== '1';
+}
+
 function getPublicWebBaseUrl() {
   const candidates = [
     process.env.EMAIL_ASSET_BASE_URL,
@@ -1235,6 +1239,9 @@ phase2Router.post('/phase2/auth/email-code/request', async (req: Request, res: R
   const forcePreviewDelivery =
     req.headers['x-dbugr-test-preview-email'] === '1' &&
     process.env.NODE_ENV !== 'production';
+  const forceDeliveryFailure =
+    req.headers['x-dbugr-test-email-delivery-failure'] === '1' &&
+    process.env.NODE_ENV !== 'production';
   emailCodeStore.set(email, {
     codeHash: hashEmailCode(code),
     expiresAt: Date.now() + 1000 * 60 * EMAIL_CODE_EXPIRY_MINUTES,
@@ -1242,9 +1249,27 @@ phase2Router.post('/phase2/auth/email-code/request', async (req: Request, res: R
   });
 
   try {
-    const delivery = forcePreviewDelivery
-      ? { delivered: false as const, provider: 'preview' as const }
-      : await sendEmailCode(email, code);
+    let delivery: Awaited<ReturnType<typeof sendEmailCode>>;
+    try {
+      if (forcePreviewDelivery) {
+        delivery = { delivered: false as const, provider: 'preview' as const };
+      } else if (forceDeliveryFailure) {
+        throw new Error('Simulated email delivery failure');
+      } else {
+        delivery = await sendEmailCode(email, code);
+      }
+    } catch (deliveryError) {
+      if (!allowEmailPreviewFallback()) {
+        throw deliveryError;
+      }
+      delivery = { delivered: false as const, provider: 'preview' as const };
+      logPhase2('email_code.request_preview_fallback', {
+        email,
+        configured: emailProviderConfigured(),
+        forceDeliveryFailure,
+        message: deliveryError instanceof Error ? deliveryError.message : String(deliveryError),
+      });
+    }
     logPhase2('email_code.requested', {
       email,
       delivered: delivery.delivered,
@@ -1252,6 +1277,7 @@ phase2Router.post('/phase2/auth/email-code/request', async (req: Request, res: R
       configured: emailProviderConfigured(),
       accountExists: Boolean(existingUser),
       forcePreviewDelivery,
+      forceDeliveryFailure,
     });
     return res.status(201).json({
       data: {
