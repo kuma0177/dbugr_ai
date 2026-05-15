@@ -166,7 +166,7 @@ a:hover { color: var(--blue-hover); }
 .nav-brand {
   display: inline-flex;
   align-items: center;
-  gap: 14px;
+  gap: 18px;
   font-weight: 700;
   font-size: 24px;
   line-height: 1;
@@ -174,8 +174,8 @@ a:hover { color: var(--blue-hover); }
   color: var(--text);
 }
 .nav-brand-icon {
-  width: 34px;
-  height: 34px;
+  width: 68px;
+  height: 68px;
   display: block;
   image-rendering: auto;
 }
@@ -3294,14 +3294,14 @@ a:hover { color: var(--blue-hover); }
   }
 
   .nav-brand {
-    gap: 10px;
+    gap: 14px;
     font-size: 24px;
     letter-spacing: -0.45px;
   }
 
   .nav-brand-icon {
-    width: 34px;
-    height: 34px;
+    width: 56px;
+    height: 56px;
   }
 
   .nav-links {
@@ -4996,13 +4996,13 @@ body:has(.hv2) .nav {
 
 body:has(.hv2) .nav-brand {
   font-size: 24px;
-  gap: 14px;
+  gap: 18px;
   letter-spacing: -0.45px;
 }
 
 body:has(.hv2) .nav-brand-icon {
-  width: 34px;
-  height: 34px;
+  width: 68px;
+  height: 68px;
 }
 
 body:has(.hv2) .nav-auth-button {
@@ -5388,13 +5388,13 @@ body:has(.guide-page) .main {
   }
 
   body:has(.hv2) .nav-brand {
-    gap: 10px;
+    gap: 14px;
     font-size: 24px;
   }
 
   body:has(.hv2) .nav-brand-icon {
-    width: 34px;
-    height: 34px;
+    width: 56px;
+    height: 56px;
   }
 
   body:has(.hv2) .nav-auth-button {
