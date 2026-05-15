@@ -142,7 +142,7 @@ export default function HomePage() {
                 Download for macOS
               </a>
               <a className="hv2-hero-source" href={GITHUB_REPO_URL} rel="noreferrer" target="_blank">
-                View source
+                View source on Github
               </a>
             </div>
             <HomeSignupStrip />
