@@ -81,7 +81,7 @@ export default function OnboardingPage() {
     const incomingAuth = params.get('auth');
     const launchedFromDesktop = params.get('desktop') === '1';
     const incomingFlow = params.get('flow') === 'sign-in' ? 'sign-in' : 'sign-up';
-    const hasExplicitEntry = Boolean(incomingInvite || incomingAuth || incomingEmail);
+    const hasExplicitEntry = Boolean(incomingInvite || incomingAuth || incomingEmail || params.has('flow'));
     setAuthFlow(incomingFlow);
     setStatus(`${incomingFlow === 'sign-in' ? 'Sign in' : 'Sign up'} with Google or email first, then create your organization workspace.`);
     if (incomingAuth === 'google' || incomingAuth === 'email') {
