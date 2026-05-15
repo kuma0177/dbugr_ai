@@ -3,6 +3,7 @@
 import { ChangeEvent, FormEvent, KeyboardEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { signIn } from 'next-auth/react';
 import { JourneyInfographic } from '@/app/journey-infographic';
 import { api } from '@/lib/api';
 import { clearOnboardingState, readOnboardingState, writeOnboardingState } from '@/lib/onboarding';
@@ -308,7 +309,7 @@ export default function OnboardingPage() {
 
   function connectGooglePreview() {
     const callbackUrl = `/onboarding?flow=${authFlow}&auth=google`;
-    window.location.href = `/api/auth/signin/google?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+    void signIn('google', { callbackUrl });
   }
 
   function requestEmailCodePreview() {
