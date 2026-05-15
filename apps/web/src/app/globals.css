@@ -3884,6 +3884,85 @@ select:focus {
   letter-spacing: -0.2px;
 }
 
+.hv2-hero-bullets {
+  display: grid;
+  gap: 10px;
+  max-width: 520px;
+  margin: 0 0 22px;
+  padding: 0;
+  list-style: none;
+}
+
+.hv2-hero-bullets li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--hv2-text-sec);
+  font-size: 17px;
+  line-height: 1.35;
+  letter-spacing: -0.2px;
+}
+
+.hv2-hero-bullets li span:first-child {
+  width: 24px;
+  flex: 0 0 24px;
+  text-align: center;
+}
+
+.hv2-proof-note {
+  max-width: 540px;
+  margin: 0 0 26px;
+  padding: 16px 18px;
+  border: 1px solid var(--hv2-chalk);
+  border-radius: 8px;
+  background: var(--hv2-surface);
+  box-shadow: var(--hv2-shadow-sm);
+}
+
+.hv2-proof-note > span {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--hv2-text);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hv2-proof-note p {
+  margin: 0;
+  color: var(--hv2-text-sec);
+  font-size: 14px;
+  line-height: 1.55;
+  letter-spacing: -0.1px;
+}
+
+.hv2-proof-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.hv2-proof-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--hv2-chalk);
+  border-radius: 999px;
+  color: var(--hv2-blue);
+  background: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.hv2-proof-links a:hover {
+  border-color: rgba(47, 100, 246, 0.35);
+  background: var(--hv2-blue-soft);
+}
+
 .hv2-trust {
   display: flex;
   align-items: center;
@@ -5295,6 +5374,11 @@ body:has(.guide-page) .main {
     max-width: 100%;
     font-size: 18px;
     line-height: 1.55;
+  }
+
+  .hv2-hero-bullets,
+  .hv2-proof-note {
+    max-width: 100%;
   }
 
   .hv2 .signup-strip {

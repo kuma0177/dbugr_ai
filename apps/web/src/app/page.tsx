@@ -113,6 +113,14 @@ const FEATURES = [
   { emoji: '🔒',   title: 'Local-first',       body: 'API keys never leave your Mac. Screenshots stay in your workspace until you submit.' },
 ];
 
+const HERO_BULLETS = [
+  { emoji: '📸', text: 'Capture the bug.' },
+  { emoji: '✍️', text: 'Mark exactly what should change.' },
+  { emoji: '🚀', text: 'Send it to Claude, Codex, or Cursor.' },
+  { emoji: '👥', text: 'Work solo, with your team, or in public.' },
+  { emoji: '🧭', text: 'Ship without the ticket archaeology.' },
+] as const;
+
 function AnnotationPreview() {
   return (
     <div className="hv2-preview" aria-label="Annotation capture preview">
@@ -179,13 +187,36 @@ export default function HomePage() {
               Now with Claude, Codex &amp; Cursor
             </div>
             <h1 className="hv2-title">
-              Screenshot feedback<br />for{' '}
-              <span className="hv2-title-accent">AI.</span>
+              Turn visual feedback into shipped AI code in fewer steps.
             </h1>
-            <p className="hv2-lede">
-              Capture and annotate any screen on your Mac, then send structured,
-              repo-aware product feedback to Claude Code, Codex, or Cursor in under 30 seconds.
-            </p>
+            <ul className="hv2-hero-bullets" aria-label="How Dbugr turns visual feedback into code">
+              {HERO_BULLETS.map((item) => (
+                <li key={item.text}>
+                  <span aria-hidden="true">{item.emoji}</span>
+                  <span>{item.text}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="hv2-proof-note">
+              <span>Why this matters</span>
+              <p>
+                Bug-report research shows developers need clear reproduction steps and context,
+                while reporters often struggle to provide them. Newer research on automated bug
+                reproduction also points to screenshots as useful visual evidence. Dbugr captures
+                that context at the source and turns it into an agent-ready coding prompt.
+              </p>
+              <div className="hv2-proof-links" aria-label="Research references">
+                <a href="https://www.st.cs.uni-saarland.de/publications/details/bettenburg-tr-2008/" rel="noreferrer" target="_blank">
+                  Bug report quality study
+                </a>
+                <a href="https://link.springer.com/article/10.1007/s10664-020-09882-z" rel="noreferrer" target="_blank">
+                  Debugging context study
+                </a>
+                <a href="https://2025.msrconf.org/details/msr-2025-technical-papers/26/An-Empirical-Study-on-Leveraging-Images-in-Automated-Bug-Report-Reproduction" rel="noreferrer" target="_blank">
+                  Screenshot reproduction research
+                </a>
+              </div>
+            </div>
             <div className="hv2-hero-actions" aria-label="Get Dbugr">
               <a className="hv2-hero-download" href={MAC_DMG_DOWNLOAD_URL}>
                 Download for macOS
