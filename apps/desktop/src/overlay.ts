@@ -1786,6 +1786,10 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
         });
         applySourceFrameDisplay(frameDataUrl, { visible: false });
       }
+      const sourceDataUrl = sourceFrameDataUrl;
+      if (!sourceDataUrl) {
+        throw new Error('No source frame is available for region capture');
+      }
       await ensureScreenshotImgReady();
       const layout = viewportLayoutSnapshot();
       logAnnotationPipeline('place_region_capture_start', {
@@ -1807,7 +1811,7 @@ async function placeRegion(x: number, y: number, w: number, h: number) {
         img_sw: sw,
         img_sh: sh,
       });
-      dataUrl = await cropImageDataUrl(sourceFrameDataUrl, sx, sy, sw, sh);
+      dataUrl = await cropImageDataUrl(sourceDataUrl, sx, sy, sw, sh);
       const got = describeScreenshotRef(dataUrl);
       logAnnotationPipeline('place_region_capture_ok', { data_kind: got.kind, data_len: got.len });
     } catch (err) {

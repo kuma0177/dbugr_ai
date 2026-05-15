@@ -138,6 +138,24 @@ export interface PromptDiagnostics {
   hasGithubRepo: boolean;
 }
 
+export type PromptReceiptItemState = 'ready' | 'attention' | 'neutral';
+
+export interface PromptReceiptItem {
+  icon: string;
+  label: string;
+  detail: string;
+  confirmation: string;
+  state: PromptReceiptItemState;
+}
+
+export interface PromptReceipt {
+  headline: string;
+  summary: string;
+  modeLabel: string;
+  destinationLabel: string;
+  items: PromptReceiptItem[];
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 export function uid(prefix: string): string {
@@ -388,8 +406,14 @@ export function buildSessionPrompt(
   if (githubRepo) lines.push(`\nGitHub repo: ${githubRepo}`);
 
   session.captures.forEach((capture, ci) => {
-    lines.push(`\n## Capture ${ci + 1}: ${capture.title || 'Untitled'}`);
-    if (capture.preview && capture.preview !== 'No annotation notes yet') {
+    const captureTitle = capture.title?.trim() || 'Untitled';
+    const capturePreview = capture.preview?.trim() || '';
+    lines.push(`\n## Capture ${ci + 1}: ${captureTitle}`);
+    if (
+      capturePreview
+      && capturePreview !== 'No annotation notes yet'
+      && capturePreview !== captureTitle
+    ) {
       lines.push(`Preview: ${capture.preview}`);
     }
     const shotPath = screenshotPaths.get(capture.id);
@@ -443,6 +467,87 @@ export function getPromptDiagnostics(
     hasSessionNote: Boolean(session.about?.trim() || session.sessionNote?.trim()),
     hasProjectFolder: Boolean(normalizeProjectFolderInput(session.projectFolder)),
     hasGithubRepo: Boolean(normalizeGithubRepoInput(session.githubRepo)),
+  };
+}
+
+function pluralize(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+export function buildPromptReceipt(
+  session: Session,
+  provider: Target,
+  screenshotPaths: Map<string, string> = new Map(),
+): PromptReceipt {
+  const diagnostics = getPromptDiagnostics(session, screenshotPaths);
+  const destinationLabel = providerLabel(provider);
+  const modeLabel = flowLabel(session.submissionFlow);
+  const contextParts = [
+    diagnostics.hasSessionNote ? 'note' : '',
+    diagnostics.hasProjectFolder ? 'folder' : '',
+    diagnostics.hasGithubRepo ? 'repo' : '',
+  ].filter(Boolean);
+  const hasRepoContext = diagnostics.hasProjectFolder || diagnostics.hasGithubRepo;
+  const screenshotDetail = diagnostics.screenshotReferenceCount > 0
+    ? `${pluralize(diagnostics.captureCount, 'capture')} with ${pluralize(diagnostics.screenshotReferenceCount, 'saved screenshot path')}`
+    : `${pluralize(diagnostics.captureCount, 'capture')} ready to review`;
+
+  return {
+    headline: `Ready for ${destinationLabel}`,
+    summary: `${modeLabel} receipt for the exact prompt Debugr will hand off.`,
+    modeLabel,
+    destinationLabel,
+    items: [
+      {
+        icon: '📸',
+        label: 'Screens',
+        detail: screenshotDetail,
+        confirmation: diagnostics.screenshotReferenceCount > 0
+          ? 'Screenshot files are saved locally and referenced in the handoff prompt.'
+          : 'Captured screens are part of this session. Review payload to save local screenshot paths before sending.',
+        state: diagnostics.captureCount > 0 ? 'ready' : 'attention',
+      },
+      {
+        icon: '✍️',
+        label: 'Markup',
+        detail: `${pluralize(diagnostics.annotationCount, 'annotation')} included`,
+        confirmation: diagnostics.annotationCount > 0
+          ? 'Annotation notes and tags are included in the prompt.'
+          : 'Add at least one annotation so the agent knows what changed.',
+        state: diagnostics.annotationCount > 0 ? 'ready' : 'attention',
+      },
+      {
+        icon: '🧠',
+        label: 'Context',
+        detail: contextParts.length > 0
+          ? `${contextParts.join(' + ')} attached`
+          : 'Add a session note or repo context for stronger AI output',
+        confirmation: contextParts.length > 0
+          ? 'Session context is attached so the agent gets the why, not just the screenshot.'
+          : 'Optional context is missing. Add a note, folder, or repo when the agent needs more background.',
+        state: contextParts.length > 0 ? 'ready' : 'attention',
+      },
+      {
+        icon: '🗂️',
+        label: 'Repo signal',
+        detail: hasRepoContext ? 'Agent can orient around the linked codebase' : 'No folder or GitHub repo attached yet',
+        confirmation: hasRepoContext
+          ? 'Repo context is included so the agent can connect visual feedback to code.'
+          : 'This prompt can still be sent, but the agent will not receive repo context.',
+        state: hasRepoContext ? 'ready' : 'neutral',
+      },
+      {
+        icon: provider === 'cursor' ? '📋' : '🚀',
+        label: 'Handoff',
+        detail: provider === 'cursor'
+          ? 'Copies prompt for Cursor chat'
+          : `Launches ${destinationLabel} with this prompt`,
+        confirmation: provider === 'cursor'
+          ? 'Debugr will copy the prompt and open Cursor. Paste it into Cursor chat to continue.'
+          : `Debugr will open ${destinationLabel} and pass the reviewed prompt to the CLI.`,
+        state: 'ready',
+      },
+    ],
   };
 }
 

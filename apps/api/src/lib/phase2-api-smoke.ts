@@ -1,4 +1,5 @@
 const BASE = process.env.PHASE2_API_BASE_URL ?? 'http://127.0.0.1:3001/api';
+const SMOKE_VIEWER_EMAIL = 'demo@example.com';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const startedAt = Date.now();
@@ -70,6 +71,7 @@ async function main() {
 
   async function syncDesktopFlow(flow: 'direct' | 'team' | 'public') {
     const synced = await request<{
+      session: { id: string };
       mapping: {
         desktopFlow: string;
         visibility: string;
@@ -130,18 +132,32 @@ async function main() {
   }
 
   await syncDesktopFlow('direct');
-  await syncDesktopFlow('team');
-  await syncDesktopFlow('public');
+  const teamSync = await syncDesktopFlow('team');
+  const publicSync = await syncDesktopFlow('public');
 
   const feed = await request<{ sessions: Array<{ id: string; comments?: Array<{ id: string }> }> }>('/phase2/feed?scope=organization');
-  const session = feed.sessions[0];
+  if (!feed.sessions.some((item) => item.id === teamSync.session.id)) {
+    throw new Error('Team desktop sync did not publish the session to the organization feed.');
+  }
+
+  const publicFeed = await request<{ sessions: Array<{ id: string; creator?: { email?: string | null } }> }>('/phase2/feed?scope=public');
+  const publicSession = publicFeed.sessions.find((item) => item.id === publicSync.session.id);
+  if (!publicSession) {
+    throw new Error('Public desktop sync did not publish the session to the public feed.');
+  }
+  if (publicSession.creator?.email) {
+    throw new Error('Anonymous public feed exposed the public session creator email.');
+  }
+
+  const session = feed.sessions.find((item) => item.id === teamSync.session.id);
 
   if (!session) {
-    throw new Error('Phase 2 smoke needs at least one organization-visible session. Run pnpm db:setup.');
+    throw new Error('Phase 2 smoke needs the team-synced session to be organization-visible.');
   }
 
   const contribution = await request<{ id: string }>(`/phase2/sessions/${session.id}/contributions`, {
     method: 'POST',
+    headers: { 'x-dbugr-user-email': SMOKE_VIEWER_EMAIL },
     body: JSON.stringify({
       targetType: 'session',
       contributionType: 'suggested_edit',
@@ -152,6 +168,7 @@ async function main() {
 
   await request(`/phase2/contributions/${contribution.id}/curation`, {
     method: 'POST',
+    headers: { 'x-dbugr-user-email': SMOKE_VIEWER_EMAIL },
     body: JSON.stringify({
       decision: 'accepted',
       reason: 'Smoke test verifies accepted feedback enters preflight.',
@@ -160,6 +177,7 @@ async function main() {
 
   const summary = await request<{ finalPromptDraft: string }>(`/phase2/sessions/${session.id}/preflight`, {
     method: 'POST',
+    headers: { 'x-dbugr-user-email': SMOKE_VIEWER_EMAIL },
     body: JSON.stringify({ providerTarget: 'claude' }),
   });
 
@@ -169,11 +187,13 @@ async function main() {
 
   await request(`/phase2/sessions/${session.id}/visibility`, {
     method: 'POST',
+    headers: { 'x-dbugr-user-email': SMOKE_VIEWER_EMAIL },
     body: JSON.stringify({ visibility: 'org', submissionFlow: 'internal_review' }),
   });
 
   await request(`/phase2/sessions/${session.id}/submissions`, {
     method: 'POST',
+    headers: { 'x-dbugr-user-email': SMOKE_VIEWER_EMAIL },
     body: JSON.stringify({
       providerTarget: 'claude',
       finalPrompt: summary.finalPromptDraft,

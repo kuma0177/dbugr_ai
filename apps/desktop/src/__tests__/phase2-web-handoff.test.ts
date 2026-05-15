@@ -113,6 +113,22 @@ describe('phase 2 team/public web handoff', () => {
     expect(createDesktopLink).not.toContain("process.env.API_URL ?? `http://localhost:${process.env.PORT ?? 3001}/api`");
   });
 
+  it('opens team and public review on the hosted web app unless a local web URL is explicitly configured', () => {
+    const webAppBaseUrl = functionBlock(mainSource, /function webAppBaseUrl\(/);
+    const webReviewUrlForSession = functionBlock(mainSource, /function webReviewUrlForSession\(/);
+
+    expect(mainSource).toContain("const HOSTED_WEB_APP_URL = 'https://www.dbugr.ai'");
+    expect(mainSource).toContain('const BUILD_WEB_APP_URL =');
+    expect(mainSource).toContain('const WEB_APP_URL = BUILD_WEB_APP_URL || HOSTED_WEB_APP_URL');
+    expect(mainSource).toContain('const ENABLE_LOCAL_WEB_APP = BUILD_WEB_APP_URL ? isLocalWebAppUrl(BUILD_WEB_APP_URL) : false');
+    expect(mainSource).toContain('function normalizeWebAppBaseUrl');
+    expect(mainSource).toContain('function isLocalWebAppUrl');
+    expect(webAppBaseUrl).toContain('readDesktopLinkProfile()?.appUrl');
+    expect(webAppBaseUrl).toContain('ENABLE_LOCAL_WEB_APP || !isLocalWebAppUrl(profileUrl)');
+    expect(webAppBaseUrl).toContain('HOSTED_WEB_APP_URL');
+    expect(webReviewUrlForSession).toContain("new URL('/feed', webAppBaseUrl())");
+  });
+
   it('keeps desktop capture timestamps within the FeedbackFrame integer range', () => {
     expect(phase2Source).toContain('const SQLITE_INT_MAX = 2_147_483_647');
     expect(phase2Source).toContain('function normalizeDesktopCaptureTimestampMs');
@@ -246,6 +262,29 @@ describe('phase 2 team/public web handoff', () => {
     expect(handoffHandler).toContain('/phase2/desktop-submissions/');
     expect(handoffHandler).toContain('launchPromptHandoff');
     expect(handoffHandler).toContain("updateDesktopSubmissionStatus(submissionId, 'sent')");
+  });
+
+  it('shows a prompt receipt before launching a direct provider handoff', () => {
+    const renderWorkspacePanel = functionBlock(mainSource, /function renderWorkspacePanel\(/);
+
+    expect(coreSource).toContain('export function buildPromptReceipt');
+    expect(mainSource).toContain('buildPromptReceipt');
+    expect(renderWorkspacePanel).toContain('const receipt = buildPromptReceipt(session, target');
+    expect(renderWorkspacePanel).toContain('prompt-receipt-card');
+    expect(renderWorkspacePanel).toContain('Prompt receipt');
+    expect(renderWorkspacePanel).toContain('data-prompt-receipt-tab="receipt"');
+    expect(renderWorkspacePanel).toContain('data-prompt-receipt-tab="raw"');
+    expect(renderWorkspacePanel).toContain('Payload preview</button>');
+    expect(renderWorkspacePanel).toContain('data-receipt-item');
+    expect(renderWorkspacePanel).toContain('prompt-receipt-check');
+    expect(renderWorkspacePanel).toContain('prettyPromptPreviewHtml(preview.prompt)');
+    expect(renderWorkspacePanel).toContain('copy-prompt-preview-btn');
+    expect(renderWorkspacePanel).toContain('workspace_prompt_preview_copied');
+    expect(renderWorkspacePanel).toContain('preparePromptPreview(session)');
+    expect(renderWorkspacePanel).toContain('Locked at ${fmtTime(preview.generatedAt)}');
+    expect(renderWorkspacePanel).toContain('Review payload first');
+    expect(renderWorkspacePanel).not.toContain('>Generate<');
+    expect(renderWorkspacePanel).not.toContain('id="prompt-preview-card"');
   });
 
   it('imports web profile company and role when redeeming a desktop link', () => {

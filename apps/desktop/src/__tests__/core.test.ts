@@ -40,6 +40,7 @@ import {
   isAbsoluteFilesystemScreenshotRef,
   classifyScreenshotRef,
   buildSessionPrompt,
+  buildPromptReceipt,
   buildCombinedPrompt,
   getPromptDiagnostics,
   getCombinedPromptDiagnostics,
@@ -631,6 +632,37 @@ describe('buildSessionPrompt()', () => {
     expect(prompt).toContain('Capture 1:');
   });
 
+  it('omits duplicate capture preview when it matches the capture title', () => {
+    session.captures = [
+      makeCapture({
+        title: 'Make the logo bigger',
+        preview: 'Make the logo bigger',
+        annotations: [makeAnnotation({ text: 'Make the logo bigger', tags: ['ux'] })],
+      }),
+    ];
+
+    const prompt = buildSessionPrompt(session);
+
+    expect(prompt).toContain('Capture 1: Make the logo bigger');
+    expect(prompt).not.toContain('Preview: Make the logo bigger');
+    expect(prompt).toContain('Note: Make the logo bigger');
+  });
+
+  it('keeps capture preview when it adds distinct context', () => {
+    session.captures = [
+      makeCapture({
+        title: 'Hero image issue',
+        preview: 'Logo is too small · Button is misaligned',
+        annotations: [makeAnnotation({ text: 'Logo is too small' })],
+      }),
+    ];
+
+    const prompt = buildSessionPrompt(session);
+
+    expect(prompt).toContain('Capture 1: Hero image issue');
+    expect(prompt).toContain('Preview: Logo is too small · Button is misaligned');
+  });
+
   it('includes the analysis instruction footer', () => {
     const prompt = buildSessionPrompt(session);
     expect(prompt).toContain('root cause');
@@ -667,7 +699,7 @@ describe('buildSessionPrompt()', () => {
         id: 'rejected-public',
         source: 'community',
         author: 'Public reviewer',
-        type: 'suggested_edit',
+        type: 'comment',
         body: 'Change the whole layout.',
         accepted: false,
         timestamp: '',
@@ -699,6 +731,42 @@ describe('buildSessionPrompt()', () => {
     expect(JSON.stringify(diagnostics)).not.toContain('Accepted');
     expect(JSON.stringify(diagnostics)).not.toContain('Onboarding flow bug');
     expect(JSON.stringify(diagnostics)).not.toContain('/tmp/debugr/capture.png');
+  });
+
+  it('builds a prompt receipt from prompt-safe diagnostics', () => {
+    const captureId = session.captures[0]!.id;
+    const receipt = buildPromptReceipt(session, 'cursor', new Map([[captureId, '/tmp/debugr/capture.png']]));
+
+    expect(receipt).toMatchObject({
+      headline: 'Ready for Cursor',
+      modeLabel: 'Direct to AI',
+      destinationLabel: 'Cursor',
+    });
+    expect(receipt.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          icon: '📸',
+          label: 'Screens',
+          detail: '1 capture with 1 saved screenshot path',
+          state: 'ready',
+        }),
+        expect.objectContaining({
+          icon: '✍️',
+          label: 'Markup',
+          detail: '2 annotations included',
+          state: 'ready',
+        }),
+        expect.objectContaining({
+          icon: '📋',
+          label: 'Handoff',
+          detail: 'Copies prompt for Cursor chat',
+          confirmation: 'Debugr will copy the prompt and open Cursor. Paste it into Cursor chat to continue.',
+          state: 'ready',
+        }),
+      ]),
+    );
+    expect(JSON.stringify(receipt)).not.toContain('/tmp/debugr/capture.png');
+    expect(JSON.stringify(receipt)).not.toContain('Button text is misleading');
   });
 });
 

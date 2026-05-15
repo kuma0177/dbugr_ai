@@ -34,6 +34,7 @@ import {
   classifyScreenshotRef,
   planAnnotationAppend,
   buildSessionPrompt,
+  buildPromptReceipt,
   buildCombinedPrompt,
   getPromptDiagnostics,
   getCombinedPromptDiagnostics,
@@ -101,9 +102,12 @@ interface DesktopLinkProfile {
 
 const BUILD_API_URL = (import.meta.env.VITE_DEBUGR_API_URL as string | undefined)?.trim() || '';
 const LOCAL_DEV_API = 'http://localhost:3001/api';
-const WEB_APP_URL = (import.meta.env.VITE_DEBUGR_WEB_APP_URL as string | undefined)?.trim() || 'http://localhost:3000';
+const HOSTED_WEB_APP_URL = 'https://www.dbugr.ai';
+const BUILD_WEB_APP_URL = (import.meta.env.VITE_DEBUGR_WEB_APP_URL as string | undefined)?.trim() || '';
+const WEB_APP_URL = BUILD_WEB_APP_URL || HOSTED_WEB_APP_URL;
 const ENABLE_LOCAL_API_DISCOVERY =
   import.meta.env.DEV || (import.meta.env.VITE_DEBUGR_ENABLE_LOCAL_API_DISCOVERY as string | undefined) === 'true';
+const ENABLE_LOCAL_WEB_APP = BUILD_WEB_APP_URL ? isLocalWebAppUrl(BUILD_WEB_APP_URL) : false;
 const API_BASE_URL_KEY = 'debugr-desktop-api-base-url';
 const DESKTOP_LINK_PROFILE_KEY = 'debugr-desktop-link-profile';
 const DESKTOP_DEVICE_ID_KEY = 'debugr-desktop-device-id';
@@ -176,6 +180,11 @@ let promptPreviewState: {
   screenshotPaths: Map<string, string>;
   generatedAt: string;
 } | null = null;
+let promptPreviewAutoKey = '';
+let promptPreviewCopyToast = '';
+let promptPreviewCopyTimer: number | null = null;
+let promptReceiptTab: 'receipt' | 'raw' = 'receipt';
+let selectedPromptReceiptItem = 'Screens';
 let permissionCheckInFlight: Promise<void> | null = null;
 let lastPermissionCheckAt = 0;
 let lastPermissionMarkup = '';
@@ -249,6 +258,32 @@ function normalizeApiBaseUrl(raw: string | null | undefined): string | null {
 
 function isLocalApiBaseUrl(raw: string | null | undefined) {
   const normalized = normalizeApiBaseUrl(raw);
+  if (!normalized) return false;
+  try {
+    const hostname = new URL(normalized).hostname.toLowerCase();
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+
+function normalizeWebAppBaseUrl(raw: string | null | undefined): string | null {
+  const trimmed = raw?.trim().replace(/\/+$/, '');
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    url.pathname = url.pathname === '/' ? '' : url.pathname.replace(/\/+$/, '');
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function isLocalWebAppUrl(raw: string | null | undefined) {
+  const normalized = normalizeWebAppBaseUrl(raw);
   if (!normalized) return false;
   try {
     const hostname = new URL(normalized).hostname.toLowerCase();
@@ -411,7 +446,9 @@ function desktopWebAuthUrl() {
 }
 
 function webAppBaseUrl() {
-  return readDesktopLinkProfile()?.appUrl?.trim() || WEB_APP_URL;
+  const profileUrl = normalizeWebAppBaseUrl(readDesktopLinkProfile()?.appUrl);
+  if (profileUrl && (ENABLE_LOCAL_WEB_APP || !isLocalWebAppUrl(profileUrl))) return profileUrl;
+  return normalizeWebAppBaseUrl(WEB_APP_URL) || HOSTED_WEB_APP_URL;
 }
 
 function webReviewUrlForSession(session: Session) {
@@ -603,10 +640,43 @@ function currentPromptPreview(session: Session) {
 }
 
 function invalidatePromptPreview(sessionId?: string) {
+  promptPreviewAutoKey = '';
   if (!promptPreviewState) return;
   if (!sessionId || promptPreviewState.sessionId === sessionId) {
     promptPreviewState = null;
   }
+}
+
+function prettyPromptPreviewHtml(prompt: string): string {
+  const lines = prompt.split('\n');
+  const blocks = lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return '<div class="prompt-payload-gap"></div>';
+    if (trimmed === '---') return '<div class="prompt-payload-divider"></div>';
+    if (trimmed.startsWith('# ')) {
+      return `<div class="prompt-payload-heading">${escapeHtml(trimmed.replace(/^#\s*/, ''))}</div>`;
+    }
+    if (trimmed.startsWith('## ')) {
+      return `<div class="prompt-payload-subheading">${escapeHtml(trimmed.replace(/^##\s*/, ''))}</div>`;
+    }
+    const labelMatch = trimmed.match(/^(Session note|Project folder|GitHub repo|Preview|Screenshot|Note|Tags):\s*(.*)$/);
+    if (labelMatch) {
+      return `
+        <div class="prompt-payload-row">
+          <span>${escapeHtml(labelMatch[1])}</span>
+          <strong>${escapeHtml(labelMatch[2] || 'Included')}</strong>
+        </div>
+      `;
+    }
+    if (/^Annotation\s+\d+/i.test(trimmed)) {
+      return `<div class="prompt-payload-annotation">${escapeHtml(trimmed)}</div>`;
+    }
+    if (/^\d+\.\s+/.test(trimmed)) {
+      return `<div class="prompt-payload-instruction">${escapeHtml(trimmed)}</div>`;
+    }
+    return `<div class="prompt-payload-text">${escapeHtml(trimmed)}</div>`;
+  });
+  return `<div class="prompt-payload-pretty">${blocks.join('')}</div>`;
 }
 
 function sandclockMarkup(label: string) {
@@ -2420,6 +2490,20 @@ function renderWorkspacePanel() {
     const isCursorReady = isProviderConnected('cursor', providerConnections.cursor);
     const isReady = target === 'claude' ? isClaudeReady : target === 'codex' ? isCodexReady : isCursorReady;
     const preview = currentPromptPreview(session);
+    const receipt = buildPromptReceipt(session, target, preview?.screenshotPaths ?? new Map());
+    const selectedReceiptItem = receipt.items.find((item) => item.label === selectedPromptReceiptItem) ?? receipt.items[0];
+    selectedPromptReceiptItem = selectedReceiptItem?.label ?? 'Screens';
+    const receiptItems = receipt.items.map((item) => `
+      <button type="button" class="prompt-receipt-item ${item.state} ${selectedReceiptItem?.label === item.label ? 'active' : ''}" data-receipt-item="${escapeHtml(item.label)}" title="${escapeHtml(item.confirmation)}">
+        <span class="prompt-receipt-icon" aria-hidden="true">${item.icon}</span>
+        <span class="prompt-receipt-copy">
+          <strong>${escapeHtml(item.label)}</strong>
+          <span>${escapeHtml(item.detail)}</span>
+        </span>
+        <span class="prompt-receipt-check ${item.state}" aria-label="${item.state === 'ready' ? 'Confirmed' : item.state === 'attention' ? 'Needs attention' : 'Optional'}">${item.state === 'ready' ? '✓' : item.state === 'attention' ? '!' : '·'}</span>
+      </button>
+    `).join('');
+    const previewIsPending = isReady && !preview;
 
     // ── Connect card for Claude ─────────────────────────────────────────────
     const claudeConnectCard = isClaudeReady ? '' : `
@@ -2485,23 +2569,52 @@ function renderWorkspacePanel() {
 
         ${isReady ? `
           <div class="save-banner">✓ ${escapeHtml(providerConnectionReadyCopy(target, providerConnections[target].method))}</div>
-          <div class="prompt-preview-card ${preview ? 'ready' : ''}" id="prompt-preview-card">
-            <div class="prompt-preview-head">
+          <div class="prompt-receipt-card ${preview ? 'ready' : ''}" id="prompt-receipt-card">
+            <div class="prompt-receipt-head">
               <div>
-                <div class="prompt-preview-title">Payload preview</div>
-                <div class="prompt-preview-sub">${preview
-                  ? `${preview.screenshotPaths.size} screenshot path${preview.screenshotPaths.size === 1 ? '' : 's'} · ${preview.prompt.length.toLocaleString()} characters`
-                  : 'Review the exact prompt before Debugr opens the provider handoff.'}</div>
+                <div class="prompt-receipt-eyebrow">Prompt receipt</div>
+                <div class="prompt-receipt-title">${escapeHtml(receipt.headline)}</div>
               </div>
-              <button type="button" class="prompt-preview-btn" id="prepare-prompt-preview-btn" ${promptPreviewPreparing || isSending ? 'disabled' : ''}>
-                ${promptPreviewPreparing ? sandclockMarkup('Preparing…') : preview ? 'Refresh preview' : 'Review payload'}
-              </button>
+              <div class="prompt-receipt-actions">
+                <span class="prompt-receipt-mode">${escapeHtml(receipt.modeLabel)}</span>
+                <button type="button" class="prompt-preview-btn" id="prepare-prompt-preview-btn" ${promptPreviewPreparing || isSending ? 'disabled' : ''}>
+                  ${promptPreviewPreparing || previewIsPending ? sandclockMarkup('Preparing…') : 'Refresh'}
+                </button>
+              </div>
             </div>
-            ${preview ? `
-              <pre class="prompt-preview-text" id="prompt-preview-text">${escapeHtml(preview.prompt)}</pre>
-              <div class="prompt-preview-foot">Generated ${fmtTime(preview.generatedAt)} for ${providerLabel(target)}. Any edit to the session requires a refreshed preview.</div>
+            <div class="prompt-receipt-summary">${preview
+              ? `Locked at ${fmtTime(preview.generatedAt)}. Refresh preview after edits.`
+              : escapeHtml(receipt.summary)}</div>
+            <div class="prompt-receipt-tabs" role="tablist" aria-label="Prompt receipt view">
+              <button type="button" class="prompt-receipt-tab ${promptReceiptTab === 'receipt' ? 'active' : ''}" data-prompt-receipt-tab="receipt" role="tab" aria-selected="${promptReceiptTab === 'receipt' ? 'true' : 'false'}">Receipt</button>
+              <button type="button" class="prompt-receipt-tab ${promptReceiptTab === 'raw' ? 'active' : ''}" data-prompt-receipt-tab="raw" role="tab" aria-selected="${promptReceiptTab === 'raw' ? 'true' : 'false'}">Payload preview</button>
+            </div>
+            ${promptReceiptTab === 'receipt' ? `
+              <div class="prompt-receipt-list">${receiptItems}</div>
+              ${selectedReceiptItem ? `
+                <div class="prompt-receipt-detail" role="status">
+                  <span class="prompt-receipt-detail-mark ${selectedReceiptItem.state}" aria-hidden="true">${selectedReceiptItem.state === 'ready' ? '✓' : selectedReceiptItem.state === 'attention' ? '!' : '·'}</span>
+                  <span>${escapeHtml(selectedReceiptItem.confirmation)}</span>
+                </div>
+              ` : ''}
             ` : `
-              <div class="prompt-preview-empty">No provider will launch until this preview is generated.</div>
+              ${preview ? `
+                <div class="prompt-receipt-preview-shell">
+                  <button type="button" class="prompt-receipt-copy-btn" id="copy-prompt-preview-btn" title="Copy payload preview" aria-label="Copy payload preview">
+                    <svg class="copy-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <rect x="7" y="5" width="11" height="11" rx="2"></rect>
+                      <rect x="10" y="8" width="11" height="11" rx="2"></rect>
+                    </svg>
+                  </button>
+                  ${prettyPromptPreviewHtml(preview.prompt)}
+                </div>
+                <div class="prompt-receipt-raw-foot">
+                  <span>${preview.prompt.length.toLocaleString()} characters · ${preview.screenshotPaths.size} screenshot path${preview.screenshotPaths.size === 1 ? '' : 's'}</span>
+                  ${promptPreviewCopyToast ? `<strong>${escapeHtml(promptPreviewCopyToast)}</strong>` : ''}
+                </div>
+              ` : `
+                <div class="prompt-receipt-raw-empty">${promptPreviewPreparing ? sandclockMarkup('Preparing payload preview…') : `Preparing the exact payload that will be passed to ${providerLabel(target)}.`}</div>
+              `}
             `}
           </div>
           <button class="send-btn" id="send-btn" ${isSending || !preview ? 'disabled' : ''}>
@@ -2535,9 +2648,57 @@ function renderWorkspacePanel() {
       });
     });
 
+    document.querySelectorAll<HTMLButtonElement>('[data-prompt-receipt-tab]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const nextTab = button.dataset.promptReceiptTab;
+        if (nextTab !== 'receipt' && nextTab !== 'raw') return;
+        promptReceiptTab = nextTab;
+        renderSession();
+      });
+    });
+
+    document.querySelectorAll<HTMLButtonElement>('[data-receipt-item]').forEach((button) => {
+      button.addEventListener('click', () => {
+        selectedPromptReceiptItem = button.dataset.receiptItem || 'Screens';
+        renderSession();
+      });
+    });
+
     document.getElementById('prepare-prompt-preview-btn')?.addEventListener('click', () => {
       void preparePromptPreview(session);
     });
+
+    document.getElementById('copy-prompt-preview-btn')?.addEventListener('click', async () => {
+      const latestPreview = currentPromptPreview(session);
+      if (!latestPreview) return;
+      try {
+        await invoke('copy_to_clipboard', { text: latestPreview.prompt });
+        promptPreviewCopyToast = 'Copied';
+        logUi('workspace_prompt_preview_copied', { sessionId: session.id, target });
+      } catch (error) {
+        promptPreviewCopyToast = 'Copy failed';
+        logUi('workspace_prompt_preview_copy_failed', { sessionId: session.id, target, error: safeErrorMessage(error) });
+      }
+      if (promptPreviewCopyTimer !== null) window.clearTimeout(promptPreviewCopyTimer);
+      promptPreviewCopyTimer = window.setTimeout(() => {
+        promptPreviewCopyToast = '';
+        promptPreviewCopyTimer = null;
+        renderSession();
+      }, 1800);
+      renderSession();
+    });
+
+    if (isReady && !preview && !promptPreviewPreparing) {
+      const autoKey = `${session.id}:${target}:${promptPreviewFingerprint(session, target)}`;
+      if (promptPreviewAutoKey !== autoKey) {
+        promptPreviewAutoKey = autoKey;
+        window.setTimeout(() => {
+          if (activeSession()?.id !== session.id) return;
+          if (currentPromptPreview(session) || promptPreviewPreparing) return;
+          void preparePromptPreview(session);
+        }, 0);
+      }
+    }
 
     // Send
     document.getElementById('send-btn')?.addEventListener('click', () => void sendSession());
@@ -3734,6 +3895,7 @@ async function listenForAnnotations() {
     localFolder?: string | null;
     githubRepo?: string;
     screenshotUrl?: string;
+    saveTraceId?: string;
   }>('annotations-saved', async (event) => {
     const saveTraceId = typeof event.payload.saveTraceId === 'string'
       ? event.payload.saveTraceId
