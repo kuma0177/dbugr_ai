@@ -3,7 +3,10 @@ import Link from 'next/link';
 
 export const metadata: Metadata = {
   title: 'Privacy | Dbugr.ai',
-  description: 'Privacy notice for Dbugr.ai.',
+  description: 'Privacy notice for Dbugr.ai, the local-first screenshot annotation app for AI coding workflows.',
+  alternates: {
+    canonical: '/privacy',
+  },
 };
 
 export default function PrivacyPage() {

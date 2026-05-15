@@ -3,7 +3,10 @@ import Link from 'next/link';
 
 export const metadata: Metadata = {
   title: 'Terms | Dbugr.ai',
-  description: 'Terms of use for Dbugr.ai.',
+  description: 'Terms of use for Dbugr.ai, the macOS screenshot feedback tool for AI coding workflows.',
+  alternates: {
+    canonical: '/terms',
+  },
 };
 
 export default function TermsPage() {

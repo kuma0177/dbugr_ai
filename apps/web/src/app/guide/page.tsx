@@ -132,8 +132,19 @@ const PROMPT_RULES = [
 ] as const;
 
 export const metadata: Metadata = {
-  title: 'How to use Debugr.ai',
-  description: 'A step-by-step visual guide for linking the Mac app, annotating screens, connecting AI providers, and sending sessions to Claude, Codex, or Cursor.',
+  title: 'How to Use Dbugr.ai with Claude Code, Codex, and Cursor',
+  description:
+    'A step-by-step guide for linking the Dbugr macOS app, annotating screenshots, connecting AI providers, and sending repo-aware prompts to Claude Code, Codex, or Cursor.',
+  alternates: {
+    canonical: '/guide',
+  },
+  openGraph: {
+    title: 'How to Use Dbugr.ai',
+    description:
+      'Link the Mac app, annotate screenshots, connect AI providers, and send repo-aware prompts to Claude Code, Codex, or Cursor.',
+    url: '/guide',
+    type: 'article',
+  },
 };
 
 export default function GuidePage() {

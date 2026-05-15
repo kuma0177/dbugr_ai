@@ -9,22 +9,67 @@ const MAC_DMG_DOWNLOAD_URL = process.env.NEXT_PUBLIC_MAC_DMG_URL ?? DEFAULT_MAC_
 const GITHUB_RELEASE_URL = `${GITHUB_REPO_URL}/releases/tag/${GITHUB_RELEASE_TAG}`;
 
 export const metadata: Metadata = {
-  title: 'Dbugr.ai | Capture feedback. Ship it to AI.',
+  title: 'Screenshot Feedback Tool for Claude Code, Codex, and Cursor',
   description:
-    'Annotate any screen on your Mac and send a structured, repo-aware feedback session to Claude Code, Codex, or Cursor — in under 30 seconds.',
+    'Capture screenshots, annotate product feedback on macOS, and send repo-aware prompts to Claude Code, Codex, or Cursor in under 30 seconds.',
+  alternates: {
+    canonical: '/',
+  },
   openGraph: {
-    title: 'Dbugr.ai | Capture feedback. Ship it to AI.',
+    title: 'Dbugr.ai | Screenshot Feedback for AI Coding Agents',
     description:
-      'Annotate any screen on your Mac and send a structured, repo-aware feedback session to Claude Code, Codex, or Cursor — in under 30 seconds.',
+      'Capture screenshots, annotate product feedback on macOS, and send repo-aware prompts to Claude Code, Codex, or Cursor in under 30 seconds.',
+    url: '/',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Dbugr.ai | Capture feedback. Ship it to AI.',
+    title: 'Dbugr.ai | Screenshot Feedback for AI Coding Agents',
     description:
-      'Annotate any screen on your Mac and send a structured, repo-aware feedback session to Claude Code, Codex, or Cursor.',
+      'Capture annotated screenshots and send repo-aware prompts to Claude Code, Codex, or Cursor.',
   },
 };
+
+const HOME_STRUCTURED_DATA = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'Organization',
+      '@id': 'https://www.dbugr.ai/#organization',
+      name: 'Dbugr.ai',
+      url: 'https://www.dbugr.ai/',
+      logo: 'https://www.dbugr.ai/brand/icon-nav-1024.png',
+      sameAs: [GITHUB_REPO_URL],
+    },
+    {
+      '@type': 'WebSite',
+      '@id': 'https://www.dbugr.ai/#website',
+      url: 'https://www.dbugr.ai/',
+      name: 'Dbugr.ai',
+      description:
+        'A macOS screenshot annotation tool for turning product feedback into AI coding agent prompts.',
+      publisher: { '@id': 'https://www.dbugr.ai/#organization' },
+      inLanguage: 'en-US',
+    },
+    {
+      '@type': 'SoftwareApplication',
+      '@id': 'https://www.dbugr.ai/#software',
+      name: 'Dbugr.ai',
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'macOS 13+',
+      url: 'https://www.dbugr.ai/',
+      downloadUrl: MAC_DMG_DOWNLOAD_URL,
+      codeRepository: GITHUB_REPO_URL,
+      description:
+        'Dbugr.ai captures annotated screenshots on macOS and routes structured, repo-aware feedback to Claude Code, Codex, and Cursor.',
+      offers: {
+        '@type': 'Offer',
+        price: '0',
+        priceCurrency: 'USD',
+      },
+    },
+  ],
+} as const;
 
 const FLOW_STEPS = [
   { n: '01', title: 'Capture',  body: 'Press ⌃⌘Z from any app. Pick the region.',           phase: 'blue'  },
@@ -120,6 +165,10 @@ function AnnotationPreview() {
 export default function HomePage() {
   return (
     <div className="hv2">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(HOME_STRUCTURED_DATA) }}
+      />
 
       {/* ── Hero ───────────────────────────────────── */}
       <section className="hv2-hero">
@@ -130,12 +179,12 @@ export default function HomePage() {
               Now with Claude, Codex &amp; Cursor
             </div>
             <h1 className="hv2-title">
-              Capture feedback.<br />Ship it to{' '}
+              Screenshot feedback<br />for{' '}
               <span className="hv2-title-accent">AI.</span>
             </h1>
             <p className="hv2-lede">
-              Annotate any screen on your Mac and send a structured, repo-aware
-              feedback session to Claude Code, Codex, or Cursor — in under 30 seconds.
+              Capture and annotate any screen on your Mac, then send structured,
+              repo-aware product feedback to Claude Code, Codex, or Cursor in under 30 seconds.
             </p>
             <div className="hv2-hero-actions" aria-label="Get Dbugr">
               <a className="hv2-hero-download" href={MAC_DMG_DOWNLOAD_URL}>
@@ -165,7 +214,7 @@ export default function HomePage() {
       <section className="hv2-flow">
         <div className="hv2-section-inner">
           <div className="hv2-section-label">How it works</div>
-          <h2 className="hv2-section-title">From screen to agent in 6 steps.</h2>
+          <h2 className="hv2-section-title">From annotated screenshot to AI coding agent in 6 steps.</h2>
           <div className="hv2-flow-grid">
             <div className="hv2-flow-connector" aria-hidden="true" />
             {FLOW_STEPS.map((s) => (
@@ -185,11 +234,11 @@ export default function HomePage() {
           <div className="hv2-targets-header">
             <div className="hv2-section-label">AI targets</div>
             <h2 className="hv2-section-title large">
-              Connect once.<br />Route anywhere.
+              Connect Claude Code, Codex,<br />or Cursor once.
             </h2>
             <p className="hv2-targets-desc">
-              Your API keys stay on your Mac. Dbugr opens the right CLI in Terminal
-              and hands off the annotated session. No cloud middleman.
+              Your API keys stay on your Mac. Dbugr opens the right CLI or Cursor workspace
+              and hands off annotated screenshot context without a cloud middleman.
             </p>
           </div>
           <div className="hv2-targets-list">
@@ -219,7 +268,7 @@ export default function HomePage() {
         <div className="hv2-section-inner">
           <div className="hv2-features-header">
             <div className="hv2-section-label">Features</div>
-            <h2 className="hv2-section-title">Built for fast-moving teams.</h2>
+            <h2 className="hv2-section-title">Built for developers, designers, and AI-assisted teams.</h2>
           </div>
           <div className="hv2-features-grid">
             {FEATURES.map((f) => (
@@ -261,7 +310,7 @@ export default function HomePage() {
         <div className="hv2-cta-inner">
           <h2 className="hv2-cta-title">Ship feedback faster.</h2>
           <p className="hv2-cta-body">
-            Download the Mac app, connect your AI in under a minute, and start capturing.
+            Download the Mac app, connect your AI coding tool, and turn visual bugs into actionable prompts.
           </p>
           <div className="hv2-cta-buttons">
             <a className="hv2-cta-btn-primary" href="/onboarding?flow=sign-up&auth=google">
