@@ -3,6 +3,7 @@ import './globals.css';
 import { NavShell } from './nav-shell';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.dbugr.ai';
+const GOOGLE_TAG_ID = 'G-G7HJPDERL5';
 const SITE_DESCRIPTION =
   'Dbugr.ai is a macOS screenshot annotation tool that turns product feedback into repo-aware prompts for Claude Code, Codex, and Cursor.';
 
@@ -70,6 +71,19 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        <script async src={`https://www.googletagmanager.com/gtag/js?id=${GOOGLE_TAG_ID}`} />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){dataLayer.push(arguments);}
+              gtag('js', new Date());
+              gtag('config', '${GOOGLE_TAG_ID}');
+            `,
+          }}
+        />
+      </head>
       <body>
         <NavShell />
         <main className="main">{children}</main>
