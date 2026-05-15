@@ -97,7 +97,6 @@ export function NavShell() {
             <Link className="nav-auth-button nav-auth-button-secondary" href="/public">Public Feed</Link>
             <Link className="nav-auth-button nav-auth-button-secondary" href="/guide">Guide</Link>
             <Link className="nav-auth-button nav-auth-button-secondary" href="/onboarding?flow=sign-in">Sign in</Link>
-            <Link className="nav-auth-button nav-auth-button-primary" href="/onboarding?flow=sign-up">Get started free</Link>
           </>
         )}
       </div>
