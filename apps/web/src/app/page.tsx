@@ -121,6 +121,27 @@ const HERO_BULLETS = [
   { emoji: '🧭', text: 'Ship without the ticket archaeology.' },
 ] as const;
 
+const PROOF_POINTS = [
+  {
+    title: 'Context beats guesswork.',
+    body: 'Developers keep asking for clear reproduction steps and useful context. Dbugr captures both while the moment is fresh.',
+    sourceLabel: 'Bug report quality study',
+    sourceHref: 'https://www.st.cs.uni-saarland.de/publications/details/bettenburg-tr-2008/',
+  },
+  {
+    title: 'Screenshots are signal.',
+    body: 'Visual evidence is not just an attachment anymore. Research is exploring screenshots as input for automated bug reproduction.',
+    sourceLabel: 'Screenshot reproduction research',
+    sourceHref: 'https://2025.msrconf.org/details/msr-2025-technical-papers/26/An-Empirical-Study-on-Leveraging-Images-in-Automated-Bug-Report-Reproduction',
+  },
+  {
+    title: 'Agents need receipts.',
+    body: 'AI coding tools are strongest when the prompt includes what changed, where it happened, and why it matters.',
+    sourceLabel: 'AI developer productivity research',
+    sourceHref: 'https://www.microsoft.com/en-us/research/publication/the-impact-of-ai-on-developer-productivity-evidence-from-github-copilot/',
+  },
+] as const;
+
 function AnnotationPreview() {
   return (
     <div className="hv2-preview" aria-label="Annotation capture preview">
@@ -197,26 +218,6 @@ export default function HomePage() {
                 </li>
               ))}
             </ul>
-            <div className="hv2-proof-note">
-              <span>Why this matters</span>
-              <p>
-                Bug-report research shows developers need clear reproduction steps and context,
-                while reporters often struggle to provide them. Newer research on automated bug
-                reproduction also points to screenshots as useful visual evidence. Dbugr captures
-                that context at the source and turns it into an agent-ready coding prompt.
-              </p>
-              <div className="hv2-proof-links" aria-label="Research references">
-                <a href="https://www.st.cs.uni-saarland.de/publications/details/bettenburg-tr-2008/" rel="noreferrer" target="_blank">
-                  Bug report quality study
-                </a>
-                <a href="https://link.springer.com/article/10.1007/s10664-020-09882-z" rel="noreferrer" target="_blank">
-                  Debugging context study
-                </a>
-                <a href="https://2025.msrconf.org/details/msr-2025-technical-papers/26/An-Empirical-Study-on-Leveraging-Images-in-Automated-Bug-Report-Reproduction" rel="noreferrer" target="_blank">
-                  Screenshot reproduction research
-                </a>
-              </div>
-            </div>
             <div className="hv2-hero-actions" aria-label="Get Dbugr">
               <a className="hv2-hero-download" href={MAC_DMG_DOWNLOAD_URL}>
                 Download for macOS
@@ -238,6 +239,27 @@ export default function HomePage() {
             </div>
           </div>
           <AnnotationPreview />
+        </div>
+      </section>
+
+      {/* ── Proof ─────────────────────────────────── */}
+      <section className="hv2-proof-band" aria-labelledby="proof-title">
+        <div className="hv2-proof-band-inner">
+          <div className="hv2-proof-band-head">
+            <div className="hv2-section-label">Why it works</div>
+            <h2 id="proof-title">Less explaining. More shipping.</h2>
+          </div>
+          <div className="hv2-proof-grid">
+            {PROOF_POINTS.map((point) => (
+              <article className="hv2-proof-card" key={point.title}>
+                <h3>{point.title}</h3>
+                <p>{point.body}</p>
+                <a href={point.sourceHref} rel="noreferrer" target="_blank">
+                  Source: {point.sourceLabel}
+                </a>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
 
