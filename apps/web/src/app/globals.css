@@ -3915,6 +3915,7 @@ select:focus {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  width: min(100%, 452px);
   margin: 0 0 18px;
 }
 
@@ -3923,7 +3924,8 @@ select:focus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 220px;
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 48px;
   padding: 0 20px;
   border-radius: 999px;
@@ -3931,6 +3933,7 @@ select:focus {
   font-weight: 700;
   letter-spacing: 0;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .hv2-hero-download {
@@ -4753,7 +4756,7 @@ body:has(.home-signed-in-empty) .hv2-features {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: 420px;
+  width: 452px;
   max-width: 100%;
   margin: 0;
   align-self: flex-start;
