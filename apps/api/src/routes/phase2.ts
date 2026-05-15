@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { prisma } from '@feedbackagent/db';
+import { Prisma, prisma } from '@feedbackagent/db';
 import { z } from 'zod';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -11,6 +11,7 @@ export const phase2Router = Router();
 
 const DEMO_USER_ID = 'user_demo';
 const SVG_PLACEHOLDER = 'image/svg+xml; charset=utf-8';
+type DbTransaction = Prisma.TransactionClient;
 
 function logPhase2(event: string, details: Record<string, unknown> = {}) {
   const stamp = new Date().toISOString();
@@ -203,6 +204,86 @@ function handleContextError(error: unknown, res: Response) {
     return res.status(403).json({ error: error.message });
   }
   throw error;
+}
+
+async function collectCommentTree(tx: DbTransaction, seedIds: string[]) {
+  const levels: string[][] = [];
+  let current = Array.from(new Set(seedIds)).filter(Boolean);
+  while (current.length > 0) {
+    levels.push(current);
+    const children = await tx.feedbackComment.findMany({
+      where: { parentCommentId: { in: current } },
+      select: { id: true },
+    });
+    current = children.map((comment) => comment.id);
+  }
+  return levels;
+}
+
+async function deleteCommentsByIds(tx: DbTransaction, seedIds: string[]) {
+  const levels = await collectCommentTree(tx, seedIds);
+  const allIds = levels.flat();
+  if (allIds.length === 0) return 0;
+
+  await tx.curationDecision.deleteMany({ where: { contributionId: { in: allIds } } });
+  await tx.feedbackVote.deleteMany({ where: { feedbackCommentId: { in: allIds } } });
+
+  for (const level of [...levels].reverse()) {
+    await tx.feedbackComment.deleteMany({ where: { id: { in: level } } });
+  }
+
+  return allIds.length;
+}
+
+async function deleteCommentsByWhere(tx: DbTransaction, where: Prisma.FeedbackCommentWhereInput) {
+  const comments = await tx.feedbackComment.findMany({ where, select: { id: true } });
+  return deleteCommentsByIds(tx, comments.map((comment) => comment.id));
+}
+
+async function deleteSessionsByIds(tx: DbTransaction, sessionIds: string[]) {
+  const ids = Array.from(new Set(sessionIds)).filter(Boolean);
+  if (ids.length === 0) return 0;
+
+  const summaries = await tx.aIReviewSummary.findMany({
+    where: { feedbackSessionId: { in: ids } },
+    select: { id: true },
+  });
+  const summaryIds = summaries.map((summary) => summary.id);
+
+  await tx.submission.deleteMany({
+    where: {
+      OR: [
+        { feedbackSessionId: { in: ids } },
+        ...(summaryIds.length ? [{ aiReviewSummaryId: { in: summaryIds } }] : []),
+      ],
+    },
+  });
+  await tx.curationDecision.deleteMany({ where: { feedbackSessionId: { in: ids } } });
+  await deleteCommentsByWhere(tx, { feedbackSessionId: { in: ids } });
+  await tx.aIReviewSummary.deleteMany({ where: { feedbackSessionId: { in: ids } } });
+  await tx.improvementTask.deleteMany({ where: { feedbackSessionId: { in: ids } } });
+  await tx.feedbackFrame.deleteMany({ where: { feedbackSessionId: { in: ids } } });
+  await tx.feedbackSession.deleteMany({ where: { id: { in: ids } } });
+
+  return ids.length;
+}
+
+async function deleteSessionsByWhere(tx: DbTransaction, where: Prisma.FeedbackSessionWhereInput) {
+  const sessions = await tx.feedbackSession.findMany({ where, select: { id: true } });
+  return deleteSessionsByIds(tx, sessions.map((session) => session.id));
+}
+
+async function deleteOrganizationData(tx: DbTransaction, organizationId: string) {
+  await deleteSessionsByWhere(tx, { project: { organizationId } });
+  await tx.providerCredential.deleteMany({ where: { organizationId } });
+  await tx.integration.deleteMany({ where: { organizationId } });
+  await tx.desktopLink.deleteMany({ where: { organizationId } });
+  await tx.invite.deleteMany({ where: { organizationId } });
+  await tx.organizationMembership.deleteMany({ where: { organizationId } });
+  await tx.team.deleteMany({ where: { organizationId } });
+  await tx.auditLog.deleteMany({ where: { organizationId } });
+  await tx.project.deleteMany({ where: { organizationId } });
+  await tx.organization.deleteMany({ where: { id: organizationId } });
 }
 
 function canManageSession(role: string, sessionOwnerId: string, actorId: string) {
@@ -830,6 +911,95 @@ phase2Router.get('/phase2/bootstrap', async (req: Request, res: Response) => {
       },
     },
   });
+});
+
+phase2Router.delete('/phase2/account', async (req: Request, res: Response) => {
+  const email = typeof req.headers['x-dbugr-user-email'] === 'string'
+    ? req.headers['x-dbugr-user-email'].trim().toLowerCase()
+    : '';
+
+  if (!email) {
+    return res.status(401).json({ error: 'Sign in before deleting an account.' });
+  }
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    return res.status(404).json({ error: 'No Dbugr account exists for this email.' });
+  }
+  if (user.id === DEMO_USER_ID) {
+    return res.status(400).json({ error: 'The demo account cannot be deleted.' });
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const memberships = await tx.organizationMembership.findMany({
+      where: { userId: user.id },
+      include: { organization: true },
+    });
+    const ownedOrganizationIds = memberships
+      .filter((membership) => membership.organization.createdByUserId === user.id)
+      .map((membership) => membership.organizationId);
+    const organizationsToDelete: string[] = [];
+
+    for (const organizationId of ownedOrganizationIds) {
+      const otherActiveMembers = await tx.organizationMembership.count({
+        where: {
+          organizationId,
+          userId: { not: user.id },
+          status: 'active',
+        },
+      });
+      if (otherActiveMembers === 0) organizationsToDelete.push(organizationId);
+    }
+
+    const deletedSessions = await deleteSessionsByWhere(tx, { createdBy: user.id });
+    const deletedAuthoredComments = await deleteCommentsByWhere(tx, { authorId: user.id });
+
+    const summaries = await tx.aIReviewSummary.findMany({
+      where: { createdByUserId: user.id },
+      select: { id: true },
+    });
+    const summaryIds = summaries.map((summary) => summary.id);
+    await tx.submission.deleteMany({
+      where: {
+        OR: [
+          { submittedByUserId: user.id },
+          ...(summaryIds.length ? [{ aiReviewSummaryId: { in: summaryIds } }] : []),
+        ],
+      },
+    });
+    await tx.aIReviewSummary.deleteMany({ where: { createdByUserId: user.id } });
+    await tx.curationDecision.deleteMany({ where: { decidedByUserId: user.id } });
+    await tx.feedbackVote.deleteMany({ where: { userId: user.id } });
+    await tx.desktopLink.deleteMany({ where: { userId: user.id } });
+    await tx.invite.deleteMany({ where: { invitedByUserId: user.id } });
+    await tx.auditLog.deleteMany({ where: { actorId: user.id } });
+
+    for (const organizationId of organizationsToDelete) {
+      await deleteOrganizationData(tx, organizationId);
+    }
+
+    await tx.organization.updateMany({
+      where: { createdByUserId: user.id },
+      data: { createdByUserId: null },
+    });
+    await tx.organizationMembership.deleteMany({ where: { userId: user.id } });
+    await tx.user.delete({ where: { id: user.id } });
+
+    return {
+      deletedSessions,
+      deletedAuthoredComments,
+      deletedOrganizations: organizationsToDelete.length,
+    };
+  });
+
+  logPhase2('account.deleted', {
+    userId: user.id,
+    deletedSessions: result.deletedSessions,
+    deletedAuthoredComments: result.deletedAuthoredComments,
+    deletedOrganizations: result.deletedOrganizations,
+  });
+
+  return res.json({ data: { deleted: true, ...result } });
 });
 
 phase2Router.post('/phase2/onboarding', async (req: Request, res: Response) => {

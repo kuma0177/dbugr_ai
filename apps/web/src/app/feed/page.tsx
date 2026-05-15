@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, apiAssetUrl, apiBaseUrl } from '@/lib/api';
 import { displayOnboardingName, readOnboardingState } from '@/lib/onboarding';
 import type { AIReviewSummary, FeedbackComment, FeedbackFrame, FeedbackSession, Submission } from '@feedbackagent/shared';
+import { LogoutButton } from '../logout-button';
 
 type Scope = 'private' | 'organization' | 'public';
 type ProviderTarget = 'claude' | 'codex' | 'cursor';
@@ -342,7 +343,9 @@ export default function FeedPage() {
           </div>
           <a href="/sessions">Sessions</a>
           <a href="/admin">Admin</a>
+          <a href="/profile">Profile</a>
           <a href="/onboarding">Mac Link</a>
+          <LogoutButton className="review-nav-button" />
         </nav>
         <a className="review-new" href="/onboarding">New Annotation</a>
       </aside>

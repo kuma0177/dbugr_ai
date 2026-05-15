@@ -2,6 +2,7 @@ import type {
   FeedbackSession,
   FeedbackComment,
   ImprovementTask,
+  User,
   Organization,
   OrganizationMembership,
   WorkspaceSummary,
@@ -151,7 +152,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
     ensureIdentity: (body: { email: string; name?: string; authProvider: 'email' | 'google' }) => apiFetch<{
-      user: { id: string; name: string; email: string };
+      user: User;
       created: boolean;
       welcomeEmailSent: boolean;
       workspace?: WorkspaceSummary | null;
@@ -160,13 +161,21 @@ export const api = {
       body: JSON.stringify(body),
     }),
     bootstrap: () => apiFetch<{
-      user: { id: string; name: string; email: string };
+      user: User;
       organization: Organization;
       membership: OrganizationMembership;
       members: OrganizationMembership[];
       invites: Invite[];
       policies: Record<string, unknown>;
     }>('/phase2/bootstrap'),
+    deleteAccount: () => apiFetch<{
+      deleted: boolean;
+      deletedSessions: number;
+      deletedAuthoredComments: number;
+      deletedOrganizations: number;
+    }>('/phase2/account', {
+      method: 'DELETE',
+    }),
     adminOverview: () => apiFetch<AdminOverview>('/phase2/admin/overview'),
     platformAdminOverview: (params?: { q?: string; organizationId?: string }) => {
       const search = new URLSearchParams();

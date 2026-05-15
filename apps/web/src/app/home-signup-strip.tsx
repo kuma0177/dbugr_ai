@@ -49,13 +49,13 @@ export function HomeSignupStrip() {
         onClick={() => goToOnboarding('google')}
       >
         <img src="/brand/google-g.svg" alt="" width={18} height={18} aria-hidden="true" />
-        Continue with Google
+        Sign up with Google
       </button>
 
       {/* OR divider */}
       <div className="hv2-or-divider" aria-hidden="true">
         <span />
-        <span>or</span>
+        <span>or sign up with email</span>
         <span />
       </div>
 

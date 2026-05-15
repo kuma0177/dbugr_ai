@@ -266,7 +266,7 @@ export default function HomePage() {
           <div className="hv2-cta-buttons">
             <a className="hv2-cta-btn-primary" href="/onboarding?flow=sign-up&auth=google">
               <img src="/brand/google-g.svg" alt="" width={18} height={18} aria-hidden="true" />
-              Continue with Google
+              Sign up with Google
             </a>
             <a className="hv2-cta-btn-secondary" href={MAC_DMG_DOWNLOAD_URL}>
               Download Mac app

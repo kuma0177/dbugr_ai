@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, apiAssetUrl } from '@/lib/api';
 import { displayOnboardingName, readOnboardingState } from '@/lib/onboarding';
 import type { FeedbackFrame, FeedbackSession } from '@feedbackagent/shared';
+import { LogoutButton } from '../logout-button';
 
 function initials(value?: string | null) {
   const source = value?.trim() || 'Dbugr';
@@ -131,8 +132,17 @@ export default function PublicFeedPage() {
         <nav className="review-nav">
           <a className="active" href="/public">Public discovery</a>
           <a href="/feed?scope=public">Creator review feed</a>
-          <a href="/onboarding?flow=sign-in">Sign in</a>
-          <a href="/onboarding?flow=sign-up">Sign up</a>
+          {viewerName ? (
+            <>
+              <a href="/profile">Profile</a>
+              <LogoutButton className="review-nav-button" />
+            </>
+          ) : (
+            <>
+              <a href="/onboarding?flow=sign-in">Sign in</a>
+              <a href="/onboarding?flow=sign-up">Sign up</a>
+            </>
+          )}
         </nav>
       </aside>
 

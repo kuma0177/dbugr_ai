@@ -55,6 +55,7 @@ Before editing any of these files, read this ledger and update it when a new reg
 - Small-screen review feed must not bury the feed below duplicate/global and sidebar navigation; the primary content and scope controls must be reachable before secondary workspace links.
 - Mobile global navigation must reset tablet/narrow-desktop flex sizing so top-nav pills stay compact and do not create large vertical whitespace.
 - Web dev startup must not reuse a partial `.next` route cache that can leave review-feed routes without server `page.js` files.
+- Signed-in web review/admin surfaces must always expose account exit and profile access; users must be able to view membership details and initiate account deletion without returning to onboarding.
 
 ## Known Regression Cases
 
@@ -95,6 +96,7 @@ Before editing any of these files, read this ledger and update it when a new reg
 | DSK-033 | Team/Public flow cards could not stay selected while the local web API was down because selection attempted sync immediately and rolled back to Direct. | Flow card clicks must commit the local selection without API calls; Start collaboration performs the required web sync and reports API errors without losing the selected flow. |
 | DSK-034 | Production desktop links could fall back to `localhost:3001/api` and expose local-dev port/pid diagnostics to downloaded app users. | Web-created desktop links must advertise a public API URL from env or request origin, and desktop builds must ignore localhost candidates unless local API discovery is explicitly enabled. |
 | DSK-035 | Opening `/feed` in local dev could throw `ENOENT ... .next/server/app/feed/page.js` after `.next` contained only a partial client manifest for that route. | Web dev startup must clear `.next` before launching so Next regenerates server and client route artifacts together. |
+| DSK-036 | Signed-in users could reach Admin or Notes Feed without any visible way to sign out, inspect their profile, review their organization/team membership, or delete their account. | Global signed-in navigation, review sidebars, and the profile route must keep Profile, Sign out, team/member details, admin summary access, and account deletion wired together. |
 
 ## Required Checks
 

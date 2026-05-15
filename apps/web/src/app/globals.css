@@ -226,6 +226,8 @@ a:hover { color: var(--blue-hover); }
   font-size: 17px;
   font-weight: 500;
   letter-spacing: -0.18px;
+  border: 0;
+  cursor: pointer;
   transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
 .nav-auth-button:hover {
@@ -1833,8 +1835,26 @@ a:hover { color: var(--blue-hover); }
   font-weight: 700;
 }
 
+.review-nav-button {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  width: 100%;
+  border: 0;
+  border-radius: var(--db-r-pill);
+  padding: 0 16px;
+  background: transparent;
+  color: var(--db-text-sec);
+  cursor: pointer;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  text-align: left;
+}
+
 .review-nav a.active,
-.review-nav a:hover {
+.review-nav a:hover,
+.review-nav-button:hover {
   background: var(--db-blue-soft);
   color: var(--db-blue);
 }
@@ -2509,6 +2529,158 @@ a:hover { color: var(--blue-hover); }
 .dashboard-profile p {
   margin: 2px 0 0;
   font-size: 14px;
+}
+
+.profile-page {
+  display: grid;
+  gap: 22px;
+}
+
+.profile-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.profile-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.profile-panel {
+  padding: 24px;
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow-subtle);
+}
+
+.profile-detail-list {
+  display: grid;
+  gap: 16px;
+  margin: 18px 0 0;
+}
+
+.profile-detail-list div,
+.profile-member-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--stone);
+}
+
+.profile-detail-list div:last-child,
+.profile-member-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.profile-detail-list dt {
+  color: var(--ash);
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.profile-detail-list dd {
+  margin: 0;
+  max-width: 60%;
+  text-align: right;
+  color: var(--text);
+  font-weight: 750;
+}
+
+.profile-section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.profile-section-heading h2 {
+  margin: 4px 0 0;
+  font-size: 28px;
+  letter-spacing: -0.02em;
+}
+
+.profile-section-heading > span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.profile-member-list {
+  display: grid;
+  gap: 14px;
+}
+
+.profile-member-row strong {
+  display: block;
+  font-size: 17px;
+}
+
+.profile-member-row p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.profile-member-meta {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  color: var(--text);
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.profile-member-meta small {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.profile-metrics {
+  margin-bottom: 0;
+}
+
+.profile-danger-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid #ffc7c0;
+  background: #fff7f5;
+}
+
+.profile-danger-panel h2 {
+  margin: 4px 0 8px;
+}
+
+.profile-danger-panel p {
+  margin: 0;
+  color: var(--muted);
+  max-width: 720px;
+}
+
+.profile-danger-button {
+  background: #d62512;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.profile-danger-button:hover:not(:disabled) {
+  background: #b91f10;
+  color: #fff;
 }
 
 .metric-grid {
@@ -4513,6 +4685,34 @@ body:has(.home-signed-in-empty) .hv2-features {
 }
 
 @media (max-width: 768px) {
+  .profile-hero,
+  .profile-danger-panel,
+  .profile-section-heading {
+    flex-direction: column;
+  }
+
+  .profile-hero-actions {
+    justify-content: flex-start;
+  }
+
+  .profile-grid,
+  .profile-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-detail-list div,
+  .profile-member-row {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .profile-detail-list dd,
+  .profile-member-meta {
+    max-width: none;
+    text-align: left;
+    justify-items: start;
+  }
+
   .hv2-hero { padding: 48px 24px 56px; }
   .hv2-flow,
   .hv2-targets,

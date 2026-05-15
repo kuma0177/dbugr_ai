@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { displayOnboardingName, readOnboardingState, writeOnboardingState } from '@/lib/onboarding';
+import { LogoutButton } from './logout-button';
 
 export function NavShell() {
   const [signedInEmail, setSignedInEmail] = useState('');
@@ -86,7 +87,9 @@ export function NavShell() {
             </div>
             <Link className="nav-auth-button nav-auth-button-secondary" href="/public">Public Feed</Link>
             <Link className="nav-auth-button nav-auth-button-secondary" href="/feed">Notes Feed</Link>
+            <Link className="nav-auth-button nav-auth-button-secondary" href="/profile">Profile</Link>
             <Link className="nav-auth-button nav-auth-button-primary" href="/admin">Admin</Link>
+            <LogoutButton />
           </>
         ) : (
           <>
