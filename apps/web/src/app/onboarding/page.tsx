@@ -12,8 +12,8 @@ type OnboardingStep = 'sign-in' | 'workspace' | 'link';
 type AuthFlow = 'sign-in' | 'sign-up';
 const MAX_INVITE_EMAILS = 10;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const GITHUB_REPO_URL = 'https://github.com/kuma0177/debgr_ai';
-const GITHUB_RELEASE_TAG = 'pre-open-source-ready-stable';
+const GITHUB_REPO_URL = 'https://github.com/kuma0177/dbugr_ai';
+const GITHUB_RELEASE_TAG = 'stable-ga-v0.1-prompt-receipt';
 const DEFAULT_MAC_DMG_URL = `${GITHUB_REPO_URL}/releases/download/${GITHUB_RELEASE_TAG}/dbugr-ai-0.0.1-macos-aarch64.dmg`;
 const MAC_DMG_DOWNLOAD_URL = process.env.NEXT_PUBLIC_MAC_DMG_URL ?? DEFAULT_MAC_DMG_URL;
 

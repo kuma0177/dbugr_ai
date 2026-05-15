@@ -21,7 +21,7 @@ You do not need Node, pnpm, Rust, Xcode, or Terminal for the normal DMG install.
 
 Download link:
 
-https://github.com/kuma0177/debgr_ai/releases/download/pre-open-source-ready-stable/dbugr-ai-0.0.1-macos-aarch64.dmg
+https://github.com/kuma0177/dbugr_ai/releases/download/stable-ga-v0.1-prompt-receipt/dbugr-ai-0.0.1-macos-aarch64.dmg
 
 ## Link the App to Your Account
 
@@ -61,7 +61,7 @@ If you do not have an AI tool connected yet, you can still capture and review se
 If you are comfortable pasting one command into Terminal, this installs the DMG from GitHub Releases:
 
 ```bash
-curl -L https://raw.githubusercontent.com/kuma0177/debgr_ai/main/scripts/install-macos.sh | bash
+curl -L https://raw.githubusercontent.com/kuma0177/dbugr_ai/main/scripts/install-macos.sh | bash
 ```
 
 This script downloads the DMG, copies Dbugr into Applications, and opens the app. It does not bypass macOS security prompts.
