@@ -28,6 +28,13 @@ type ExistingWorkspace = {
   };
 };
 
+type AuthSession = {
+  user?: {
+    name?: string | null;
+    email?: string | null;
+  };
+};
+
 function deriveWorkspaceName(userName: string) {
   const firstName = userName.trim().split(/\s+/)[0] || 'My';
   return `${firstName}'s workspace`;
@@ -74,6 +81,60 @@ export default function OnboardingPage() {
   const authActionTitle = authFlow === 'sign-in' ? 'Sign in' : 'Sign up';
   const authActionGerund = authFlow === 'sign-in' ? 'signing in' : 'signing up';
 
+  async function completeGoogleIdentity(normalizedEmail: string, resolvedName?: string | null) {
+    const displayName = resolvedName?.trim() || name || normalizedEmail.split('@')[0] || 'Dbugr user';
+    const result = await api.phase2.ensureIdentity({
+      email: normalizedEmail,
+      name: displayName,
+      authProvider: 'google',
+    });
+    const finalName = result.user.name || displayName;
+    const resolvedFlow: AuthFlow = result.created ? 'sign-up' : 'sign-in';
+    setAuthFlow(resolvedFlow);
+    setName(finalName);
+    setEmail(result.user.email);
+    if (result.workspace) {
+      continueExistingWorkspace(result.workspace, { name: finalName, email: result.user.email });
+      return;
+    }
+    if (!organizationName.trim() || organizationName === 'Demo Organization') {
+      setOrganizationName(deriveWorkspaceName(finalName));
+    }
+    setAuthMethod('google');
+    setIdentityConnected(true);
+    setCurrentStep('workspace');
+    setStatus(
+      result.created
+        ? `Google sign up connected as ${normalizedEmail}. Your Dbugr account is now created${result.welcomeEmailSent ? ' and a welcome email is on the way.' : '.'}`
+        : `Google sign in connected as ${normalizedEmail}. We matched it to your existing Dbugr account.`
+    );
+    console.info('[phase2-web] onboarding.google_identity_connected', { email: normalizedEmail, created: result.created });
+  }
+
+  async function completeGoogleOAuthSession() {
+    setLoading(true);
+    setStatus('Finishing Google sign in...');
+    try {
+      const response = await fetch('/api/auth/session', { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`Google session failed with ${response.status}`);
+      }
+      const session = await response.json() as AuthSession;
+      const sessionEmail = session.user?.email?.trim().toLowerCase();
+      if (!sessionEmail) {
+        throw new Error('Google did not return an email address for this account.');
+      }
+      await completeGoogleIdentity(sessionEmail, session.user?.name);
+    } catch (error) {
+      setStatus(`Could not complete Google sign in: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn('[phase2-web] onboarding.google_oauth_session_failed', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const incomingInvite = params.get('invite') ?? '';
@@ -90,6 +151,9 @@ export default function OnboardingPage() {
       setStatus(incomingAuth === 'google'
         ? `Continue to Google ${incomingFlow === 'sign-in' ? 'sign-in' : 'sign-up'}, then continue to your workspace.`
         : `Request an email ${incomingFlow === 'sign-in' ? 'sign-in' : 'sign-up'} code, enter it here, then continue to your workspace.`);
+      if (incomingAuth === 'google') {
+        void completeGoogleOAuthSession();
+      }
     }
     if (incomingInvite) {
       setInviteToken(incomingInvite);
@@ -243,48 +307,8 @@ export default function OnboardingPage() {
   }
 
   function connectGooglePreview() {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail) {
-      setStatus('Enter your email first so Google sign-in can resolve to the correct Dbugr account.');
-      return;
-    }
-
-    setLoading(true);
-    api.phase2.ensureIdentity({
-      email: normalizedEmail,
-      name,
-      authProvider: 'google',
-    })
-      .then((result) => {
-        const resolvedName = result.user.name || name;
-        const resolvedFlow: AuthFlow = result.created ? 'sign-up' : 'sign-in';
-        setAuthFlow(resolvedFlow);
-        setName(resolvedName);
-        setEmail(result.user.email);
-        if (result.workspace) {
-          continueExistingWorkspace(result.workspace, { name: resolvedName, email: result.user.email });
-          return;
-        }
-        if (!organizationName.trim() || organizationName === 'Demo Organization') {
-          setOrganizationName(deriveWorkspaceName(resolvedName));
-        }
-        setAuthMethod('google');
-        setIdentityConnected(true);
-        setCurrentStep('workspace');
-        setStatus(
-          result.created
-            ? `Google sign up connected as ${normalizedEmail}. Your Dbugr account is now created${result.welcomeEmailSent ? ' and a welcome email is on the way.' : '.'}`
-            : `Google sign in connected as ${normalizedEmail}. We matched it to your existing Dbugr account.`
-        );
-        console.info('[phase2-web] onboarding.google_preview_connected', { email: normalizedEmail, created: result.created });
-      })
-      .catch((error) => {
-        setStatus(`Could not complete Google ${authAction}: ${error instanceof Error ? error.message : String(error)}`);
-        console.warn('[phase2-web] onboarding.google_preview_failed', { message: error instanceof Error ? error.message : String(error) });
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+    const callbackUrl = `/onboarding?flow=${authFlow}&auth=google`;
+    window.location.href = `/api/auth/signin/google?callbackUrl=${encodeURIComponent(callbackUrl)}`;
   }
 
   function requestEmailCodePreview() {
