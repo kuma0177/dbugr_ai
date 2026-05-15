@@ -2,7 +2,7 @@
   "name": "@feedbackagent/web",
   "version": "0.0.1",
   "scripts": {
-    "dev": "next dev -p 3000",
+    "dev": "rm -rf .next && next dev -p 3000",
     "build": "pnpm --filter @feedbackagent/shared build && DEBUGR_NEXT_DIST_DIR=.next-build next build",
     "start": "DEBUGR_NEXT_DIST_DIR=.next-build next start",
     "test:regression": "node ./scripts/check-dev-build-isolation.mjs"

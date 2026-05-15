@@ -6,6 +6,9 @@ dist
 .env.local
 *.tsbuildinfo
 .turbo
+.claude/
+.codex/
+.agents/
 prisma/dev.db
 prisma/dev.db-journal
 packages/db/.env

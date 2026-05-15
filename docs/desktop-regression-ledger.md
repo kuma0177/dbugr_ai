@@ -54,6 +54,7 @@ Before editing any of these files, read this ledger and update it when a new reg
 - Review and public feed layouts must keep navigation, hero, and cards readable at desktop, split-screen, tablet, and mobile widths with aligned content columns.
 - Small-screen review feed must not bury the feed below duplicate/global and sidebar navigation; the primary content and scope controls must be reachable before secondary workspace links.
 - Mobile global navigation must reset tablet/narrow-desktop flex sizing so top-nav pills stay compact and do not create large vertical whitespace.
+- Web dev startup must not reuse a partial `.next` route cache that can leave review-feed routes without server `page.js` files.
 
 ## Known Regression Cases
 
@@ -93,6 +94,7 @@ Before editing any of these files, read this ledger and update it when a new reg
 | DSK-032 | Sending to Cursor appeared to do nothing because no CLI opens for Cursor and Debugr did not switch to a visible confirmation/failure state. | Cursor sends must copy the prompt without swallowing failures, open Cursor.app, switch to Insights with clear paste instructions, and include native stderr when launch fails. |
 | DSK-033 | Team/Public flow cards could not stay selected while the local web API was down because selection attempted sync immediately and rolled back to Direct. | Flow card clicks must commit the local selection without API calls; Start collaboration performs the required web sync and reports API errors without losing the selected flow. |
 | DSK-034 | Production desktop links could fall back to `localhost:3001/api` and expose local-dev port/pid diagnostics to downloaded app users. | Web-created desktop links must advertise a public API URL from env or request origin, and desktop builds must ignore localhost candidates unless local API discovery is explicitly enabled. |
+| DSK-035 | Opening `/feed` in local dev could throw `ENOENT ... .next/server/app/feed/page.js` after `.next` contained only a partial client manifest for that route. | Web dev startup must clear `.next` before launching so Next regenerates server and client route artifacts together. |
 
 ## Required Checks
 
