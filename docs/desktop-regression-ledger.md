@@ -50,6 +50,7 @@ Before editing any of these files, read this ledger and update it when a new reg
 - Web review frame images must authorize with the same local viewer identity as the feed JSON request; image tags cannot send custom auth headers.
 - Public visibility controls shown in the review feed must have a working API path for session owners/org admins, including older org rows created before public sharing was enabled by default.
 - Publicly published sessions must have a discoverable web URL that can be read without login, while public comments require sign-in/sign-up and never fall back to `Demo User`.
+- Public feed and public frame-image reads must not depend on seeded demo records; production databases may start without `user_demo`.
 - Public feed responses must not expose private viewer/creator emails to unauthenticated readers.
 - Review and public feed layouts must keep navigation, hero, and cards readable at desktop, split-screen, tablet, and mobile widths with aligned content columns.
 - Small-screen review feed must not bury the feed below duplicate/global and sidebar navigation; the primary content and scope controls must be reachable before secondary workspace links.
@@ -97,6 +98,7 @@ Before editing any of these files, read this ledger and update it when a new reg
 | DSK-034 | Production desktop links could fall back to `localhost:3001/api` and expose local-dev port/pid diagnostics to downloaded app users. | Web-created desktop links must advertise a public API URL from env or request origin, and desktop builds must ignore localhost candidates unless local API discovery is explicitly enabled. |
 | DSK-035 | Opening `/feed` in local dev could throw `ENOENT ... .next/server/app/feed/page.js` after `.next` contained only a partial client manifest for that route. | Web dev startup must clear `.next` before launching so Next regenerates server and client route artifacts together. |
 | DSK-036 | Signed-in users could reach Admin or Notes Feed without any visible way to sign out, inspect their profile, review their organization/team membership, or delete their account. | Global signed-in navigation, review sidebars, and the profile route must keep Profile, Sign out, team/member details, admin summary access, and account deletion wired together. |
+| DSK-037 | Production public feed crashed with `No User found` because anonymous `/phase2/feed?scope=public` tried to load seeded demo context in a database without `user_demo`. | Public feed and public frame image endpoints must use anonymous public-safe reads when no viewer identity is present, and only load request context for signed-in/private/org access. |
 
 ## Required Checks
 

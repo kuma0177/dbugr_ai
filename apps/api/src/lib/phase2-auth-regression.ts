@@ -71,6 +71,15 @@ type DesktopLinkRedeemResponse = {
   organization: { name: string };
 };
 
+type PublicFeedResponse = {
+  scope: string;
+  sessions: Array<{
+    id: string;
+    creator?: { email?: string | null };
+    comments?: Array<{ author?: { email?: string | null } }>;
+  }>;
+};
+
 type RequestOptions = RequestInit & {
   expectedStatus?: number;
   allowFailure?: boolean;
@@ -303,6 +312,21 @@ async function scenarioPlatformAdminIsProtected(email: string) {
   log('scenario.passed', { scenario: 'platform_admin_is_protected' });
 }
 
+async function scenarioAnonymousPublicFeedDoesNotRequireDemoContext() {
+  log('scenario.started', { scenario: 'anonymous_public_feed_does_not_require_demo_context' });
+  const result = await request<PublicFeedResponse>('anonymous public feed', '/phase2/feed?scope=public');
+
+  assert(result.data.scope === 'public', 'Anonymous public feed should return the public scope');
+  for (const session of result.data.sessions) {
+    assert(!session.creator?.email, 'Anonymous public feed should not expose creator email addresses');
+    for (const comment of session.comments ?? []) {
+      assert(!comment.author?.email, 'Anonymous public feed should not expose comment author email addresses');
+    }
+  }
+
+  log('scenario.passed', { scenario: 'anonymous_public_feed_does_not_require_demo_context' });
+}
+
 async function scenarioDesktopLinkHandshakePersistsAfterCodeExpiry(email: string) {
   log('scenario.started', { scenario: 'desktop_link_handshake_persists_after_code_expiry', email: redactEmail(email) });
 
@@ -360,6 +384,7 @@ async function main() {
   await scenarioDesktopLinkHandshakePersistsAfterCodeExpiry(primary.email);
   await scenarioAdminOwnerCanInspectWorkspace(primary.email);
   await scenarioPlatformAdminIsProtected(primary.email);
+  await scenarioAnonymousPublicFeedDoesNotRequireDemoContext();
   log('suite.passed', { baseUrl: BASE });
 }
 

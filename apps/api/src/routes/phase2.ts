@@ -2170,19 +2170,23 @@ phase2Router.post('/phase2/desktop-sessions/sync', async (req: Request, res: Res
 
 phase2Router.get('/phase2/feed', async (req: Request, res: Response) => {
   const scope = feedScopeSchema.parse(req.query.scope || 'organization');
-  let context;
-  try {
-    context = await requestContext(req);
-  } catch (error) {
-    return handleContextError(error, res);
+  let context: Awaited<ReturnType<typeof requestContext>> | null = null;
+  if (scope !== 'public' || hasWebViewerIdentity(req)) {
+    try {
+      context = await requestContext(req);
+    } catch (error) {
+      if (scope !== 'public') return handleContextError(error, res);
+      logPhase2('feed.public_viewer_context_skipped', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
-  const { user, organization } = context;
 
   const where = scope === 'private'
-    ? { createdBy: user.id, visibility: 'private' }
+    ? { createdBy: context!.user.id, visibility: 'private' }
     : scope === 'public'
       ? { visibility: 'public' }
-      : { project: { organizationId: organization.id }, visibility: { in: ['org', 'public'] } };
+      : { project: { organizationId: context!.organization.id }, visibility: { in: ['org', 'public'] } };
 
   const sessions = await prisma.feedbackSession.findMany({
     where,
@@ -2203,8 +2207,8 @@ phase2Router.get('/phase2/feed', async (req: Request, res: Response) => {
 
   logPhase2('feed.loaded', {
     scope,
-    organizationId: organization.id,
-    userId: user.id,
+    organizationId: context?.organization.id ?? 'public',
+    userId: context?.user.id ?? 'anonymous',
     resultCount: sessions.length,
   });
 
@@ -2223,22 +2227,26 @@ phase2Router.get('/phase2/feed', async (req: Request, res: Response) => {
 });
 
 phase2Router.get('/phase2/frames/:id/image', async (req: Request, res: Response) => {
-  let context;
+  let context: Awaited<ReturnType<typeof requestContext>> | null = null;
   try {
     context = await requestContext(req, { allowQueryEmail: true });
   } catch (error) {
-    return handleContextError(error, res);
+    logPhase2('frame_image.viewer_context_skipped', {
+      frameId: req.params.id,
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
-  const { user, organization } = context;
 
   const frame = await prisma.feedbackFrame.findFirst({
     where: {
       id: req.params.id,
       session: {
         OR: [
-          { createdBy: user.id },
           { visibility: 'public' },
-          { project: { organizationId: organization.id }, visibility: { in: ['org', 'public'] } },
+          ...(context ? [
+            { createdBy: context.user.id },
+            { project: { organizationId: context.organization.id }, visibility: { in: ['org', 'public'] } },
+          ] : []),
         ],
       },
     },
