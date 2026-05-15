@@ -123,18 +123,21 @@ const HERO_BULLETS = [
 
 const PROOF_POINTS = [
   {
+    emoji: '🧠',
     title: 'Context beats guesswork.',
     body: 'Developers keep asking for clear reproduction steps and useful context. Dbugr captures both while the moment is fresh.',
     sourceLabel: 'Bug report quality study',
     sourceHref: 'https://www.st.cs.uni-saarland.de/publications/details/bettenburg-tr-2008/',
   },
   {
+    emoji: '📸',
     title: 'Screenshots are signal.',
     body: 'Visual evidence is not just an attachment anymore. Research is exploring screenshots as input for automated bug reproduction.',
     sourceLabel: 'Screenshot reproduction research',
     sourceHref: 'https://2025.msrconf.org/details/msr-2025-technical-papers/26/An-Empirical-Study-on-Leveraging-Images-in-Automated-Bug-Report-Reproduction',
   },
   {
+    emoji: '🧾',
     title: 'Agents need receipts.',
     body: 'AI coding tools are strongest when the prompt includes what changed, where it happened, and why it matters.',
     sourceLabel: 'AI developer productivity research',
@@ -252,6 +255,7 @@ export default function HomePage() {
           <div className="hv2-proof-grid">
             {PROOF_POINTS.map((point) => (
               <article className="hv2-proof-card" key={point.title}>
+                <div className="hv2-proof-icon" aria-hidden="true">{point.emoji}</div>
                 <h3>{point.title}</h3>
                 <p>{point.body}</p>
                 <a href={point.sourceHref} rel="noreferrer" target="_blank">

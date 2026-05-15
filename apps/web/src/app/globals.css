@@ -4013,10 +4013,11 @@ body:has(.home-signed-in-empty) .hv2-features {
 
 .hv2-proof-band-head {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 20px;
+  align-items: center;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 24px;
+  text-align: center;
 }
 
 .hv2-proof-band-head .hv2-section-label {
@@ -4031,7 +4032,7 @@ body:has(.home-signed-in-empty) .hv2-features {
   line-height: 1.1;
   font-weight: 700;
   letter-spacing: -0.8px;
-  text-align: right;
+  text-align: center;
 }
 
 .hv2-proof-grid {
@@ -4046,6 +4047,19 @@ body:has(.home-signed-in-empty) .hv2-features {
   border: 1px solid var(--hv2-chalk);
   border-radius: 8px;
   background: #fff;
+}
+
+.hv2-proof-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 14px;
+  border-radius: 999px;
+  background: var(--hv2-blue-soft);
+  box-shadow: inset 0 0 0 1px rgba(47, 100, 246, 0.12);
+  font-size: 18px;
 }
 
 .hv2-proof-card h3 {
@@ -4834,8 +4848,6 @@ body:has(.home-signed-in-empty) .hv2-features {
   .hv2-footer-links { flex-wrap: wrap; justify-content: center; }
 
   .hv2-title { font-size: 40px; letter-spacing: -1.2px; }
-  .hv2-proof-band-head { align-items: start; flex-direction: column; }
-  .hv2-proof-band-head h2 { text-align: left; }
   .hv2-proof-grid { grid-template-columns: 1fr; }
   .hv2-section-title.large { font-size: 32px; }
   .hv2-cta-title { font-size: 36px; }
