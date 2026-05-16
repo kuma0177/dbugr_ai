@@ -2262,7 +2262,6 @@ fn main() {
             let tray = TrayIconBuilder::new()
                 .icon(tray_template_icon())
                 .icon_as_template(true) // renders correctly in both light & dark menu bar
-                .title("Debugr")
                 .menu(&menu)
                 .tooltip("Debugr — ⌃⌘Z to annotate")
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -2290,7 +2289,7 @@ fn main() {
                 })
                 .build(app)?;
             app.manage(tray);
-            log_backend("tray.ready", "title=Debugr menu_items=4");
+            log_backend("tray.ready", "title=icon-only menu_items=4");
 
             // ── Global shortcut ⌃⌘Z (Control + Command + Z) ───────────────
             let handle = app.handle().clone();

@@ -147,49 +147,17 @@ const PROOF_POINTS = [
 
 function AnnotationPreview() {
   return (
-    <div className="hv2-preview" aria-label="Annotation capture preview">
-      <div className="hv2-preview-browser">
-        <div className="hv2-preview-dots">
-          <span style={{ background: '#FF5F57' }} />
-          <span style={{ background: '#FFBD2E' }} />
-          <span style={{ background: '#28C840' }} />
-        </div>
-        <div className="hv2-preview-urlbar" />
-      </div>
-      <div className="hv2-preview-screen">
-        <div className="hv2-preview-nav">
-          <div className="hv2-preview-nav-logo" />
-          <div className="hv2-preview-nav-links">
-            <div className="hv2-preview-nav-link" />
-            <div className="hv2-preview-nav-link" />
-          </div>
-          <div className="hv2-preview-nav-cta" />
-        </div>
-        <div className="hv2-preview-body">
-          <div className="hv2-preview-card">
-            <div className="hv2-preview-line" style={{ width: '75%', height: 9 }} />
-            <div className="hv2-preview-line" style={{ width: '55%', height: 7, marginTop: 8 }} />
-            <div className="hv2-preview-line" style={{ width: '40%', height: 7, marginTop: 6 }} />
-          </div>
-          <div className="hv2-preview-card hv2-preview-card--annotated">
-            <div className="hv2-preview-line" style={{ width: '80%', height: 9 }} />
-            <div className="hv2-preview-line" style={{ width: '60%', height: 7, marginTop: 8 }} />
-            <div className="hv2-preview-annotation-box">
-              <span className="hv2-preview-annotation-pin">1</span>
-            </div>
-          </div>
-        </div>
-        <div className="hv2-preview-footer">
-          <div className="hv2-preview-footer-status">
-            <span className="hv2-preview-dot ember" />
-            Annotation added
-          </div>
-          <div className="hv2-preview-footer-actions">
-            <span className="hv2-preview-ghost-btn">Discard</span>
-            <span className="hv2-preview-send-btn">Send to AI →</span>
-          </div>
-        </div>
-      </div>
+    <div className="hv2-preview hv2-preview--video" aria-label="Dbugr product demo preview">
+      <video
+        className="hv2-preview-video"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+      >
+        <source src="/hero/dbugr-homepage-demo.mp4" type="video/mp4" />
+      </video>
     </div>
   );
 }
