@@ -4,10 +4,13 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
+const packageJson = JSON.parse(readFileSync(resolve(testDir, '../../package.json'), 'utf8'));
+const tauriConfig = JSON.parse(readFileSync(resolve(testDir, '../../src-tauri/tauri.conf.json'), 'utf8'));
 const mainSource = readFileSync(resolve(testDir, '../main.tsx'), 'utf8');
 const overlaySource = readFileSync(resolve(testDir, '../overlay.ts'), 'utf8');
 const rustMainSource = readFileSync(resolve(testDir, '../../src-tauri/src/main.rs'), 'utf8');
 const screenCaptureKitSource = readFileSync(resolve(testDir, '../../src-tauri/src/macos_screencapturekit.m'), 'utf8');
+const macosInstallScript = readFileSync(resolve(testDir, '../../../../scripts/install-macos.sh'), 'utf8');
 
 function sourceBlock(startPattern: RegExp, nextPattern: RegExp) {
   const start = mainSource.search(startPattern);
@@ -74,6 +77,39 @@ function stripBlockComments(source: string) {
 }
 
 describe('macOS screen-recording permission flow', () => {
+  it('builds an installable DMG with an Applications folder target', () => {
+    expect(tauriConfig.bundle.targets).toContain('dmg');
+    expect(packageJson.scripts.build).toContain('tauri build');
+    expect(packageJson.scripts.build).not.toContain('--bundles app');
+    expect(packageJson.scripts.build).not.toContain('postbundle-macos');
+    expect(packageJson.scripts['build:app']).toContain('--bundles app');
+    expect(packageJson.scripts['build:app']).toContain('postbundle-macos');
+    expect(packageJson.scripts['install:macos']).toContain('--dmg');
+    expect(packageJson.scripts['install:macos']).toContain('bundle/dmg');
+    expect(tauriConfig.productName).toBe('Dbugr');
+    expect(tauriConfig.bundle.macOS.dmg.applicationFolderPosition).toEqual(
+      expect.objectContaining({
+        x: expect.any(Number),
+        y: expect.any(Number),
+      }),
+    );
+  });
+
+  it('copies a mounted local DMG app into Applications during scripted install', () => {
+    expect(macosInstallScript).toContain('DMG_PATH');
+    expect(macosInstallScript).toContain('--dmg');
+    expect(macosInstallScript).toContain('Dbugr.app into /Applications');
+    expect(macosInstallScript).toContain('hdiutil attach');
+    expect(macosInstallScript).toContain('find "$mount_dir"');
+    expect(macosInstallScript).toContain('target_app="$INSTALL_DIR/$(basename "$app_path")"');
+    expect(macosInstallScript).toContain('ditto "$app_path" "$target_app"');
+    expect(macosInstallScript).toContain('BUNDLE_ID');
+    expect(macosInstallScript).toContain('codesign --sign - --deep --force --identifier "$BUNDLE_ID" "$target_app"');
+    expect(macosInstallScript).toContain('open "$target_app"');
+    expect(macosInstallScript).toContain('--request-screen-recording-permission');
+    expect(macosInstallScript).toContain('click + and choose /Applications/Dbugr.app');
+  });
+
   it('does not request Screen Recording permission when the desktop shell boots', () => {
     const initBlock = functionBlock(/async function init\(\)/);
 
@@ -149,6 +185,7 @@ describe('macOS screen-recording permission flow', () => {
   it('restores the overlay before enabling current-screen annotation controls', () => {
     const currentScreenBlock = overlayFunctionBlock(/async function beginCurrentScreenCapture\(\)/);
     const readyControlsBlock = overlayFunctionBlock(/function ensureAnnotatingControlsReady/);
+    const showOverlayWindowBlock = rustFunctionBlock('show_overlay_window');
 
     expect(currentScreenBlock).not.toContain("invoke<string>('capture_current_screen_snapshot')");
     expect(currentScreenBlock).toContain('transparent_live_overlay=true');
@@ -162,9 +199,13 @@ describe('macOS screen-recording permission flow', () => {
     expect(readyControlsBlock).toContain("root.style.pointerEvents = 'auto'");
     expect(readyControlsBlock).toContain("root.classList.add('cursor-annotating')");
     expect(readyControlsBlock).toContain('overlay.annotating_controls.ready');
+
+    expect(showOverlayWindowBlock).toContain('macos_activate()');
+    expect(showOverlayWindowBlock.indexOf('macos_activate()')).toBeLessThan(showOverlayWindowBlock.indexOf('ov.show()'));
+    expect(showOverlayWindowBlock).not.toMatch(/\.set_focus\(/);
   });
 
-  it('hides the main Debugr window before automatic current-screen capture', () => {
+  it('hides the main Dbugr window before automatic current-screen capture', () => {
     const currentScreenCommandBlock = rustFunctionBlock('capture_current_screen_snapshot');
 
     expect(currentScreenCommandBlock).toContain('get_webview_window("main")');
@@ -214,6 +255,8 @@ describe('macOS screen-recording permission flow', () => {
 
   it('preserves the runtime grant result after macOS permission prompts complete', () => {
     const requestBlock = rustFunctionBlock('request_screen_capture_permission');
+    const startupRegistrationBlock = rustFunctionBlock('launched_for_screen_recording_registration');
+    const mainBlock = rustFunctionBlock('main');
     const overlayGateBlock = rustFunctionBlock('ensure_screen_recording_permission_before_overlay');
     const repairBlock = rustFunctionBlock('repair_screen_capture_permission');
     const resetBlock = rustFunctionBlock('reset_screen_capture_permission_record');
@@ -235,6 +278,18 @@ describe('macOS screen-recording permission flow', () => {
     expect(resetBlock).toContain('ScreenCapture');
     expect(repairBlock).toContain('request_screen_recording_permission_with_runtime_result');
     expect(repairBlock).toContain('effective_granted = runtime_requested || preflight_granted');
+
+    expect(startupRegistrationBlock).toContain('--request-screen-recording-permission');
+    expect(startupRegistrationBlock).toContain('--request-permissions');
+    const registrationStart = mainBlock.indexOf('if launched_for_screen_recording_registration()');
+    expect(registrationStart).toBeGreaterThanOrEqual(0);
+    const registrationEnd = mainBlock.indexOf('// ── Tray menu', registrationStart);
+    expect(registrationEnd).toBeGreaterThan(registrationStart);
+    const registrationBlock = mainBlock.slice(registrationStart, registrationEnd);
+    expect(registrationBlock).toContain('permission.startup_registration.start');
+    expect(registrationBlock).toContain('request_screen_recording_permission_with_runtime_result');
+    expect(registrationBlock).toContain('app_handle.exit(0)');
+    expect(registrationBlock).not.toContain('capture_native_png_bytes');
   });
 
   it('stops blocked annotation requests before showing annotation overlay UI', () => {

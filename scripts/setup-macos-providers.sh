@@ -10,7 +10,7 @@ YES=0
 SKIP_CLAUDE=0
 SKIP_CODEX=0
 SKIP_CURSOR=0
-APP_PATH="${APP:-/Applications/dbugr.ai.app}"
+APP_PATH="${APP:-/Applications/Dbugr.app}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,7 +34,7 @@ Options:
   --app PATH       Dbugr app bundle path for Screen Recording registration.
 
 Environment:
-  APP=/Applications/dbugr.ai.app can also set the app bundle path.
+  APP=/Applications/Dbugr.app can also set the app bundle path.
 EOF
       exit 0
       ;;
@@ -190,7 +190,7 @@ check_debugr_permissions() {
     info "Opening Dbugr once so macOS can list it under Screen Recording."
     open "$APP_PATH" >/dev/null 2>&1 || true
   else
-    warn "Dbugr app bundle not found at $APP_PATH. Set APP=/path/to/dbugr.ai.app or use --app PATH."
+    warn "Dbugr app bundle not found at $APP_PATH. Set APP=/path/to/Dbugr.app or use --app PATH."
   fi
   info "Opening macOS Screen Recording settings."
   open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" >/dev/null 2>&1 || true

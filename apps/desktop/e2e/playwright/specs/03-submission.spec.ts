@@ -169,7 +169,7 @@ test.describe('07 — AI submission UI', () => {
     await page.locator('#prepare-prompt-preview-btn').click();
     await waitForTauriCall(page, 'save_screenshot');
 
-    await expect(page.locator('#prompt-preview-text')).toContainText('# Debugr session: Submission test session');
+    await expect(page.locator('#prompt-preview-text')).toContainText('# Dbugr session: Submission test session');
     await expect(page.locator('#prompt-preview-text')).toContainText('Project folder: /Users/kumar/myapp');
     await expect(page.locator('#prompt-preview-text')).toContainText('Screenshot: /tmp/debugr/capture_1.png');
     await expect(page.locator('#send-btn')).toBeEnabled();

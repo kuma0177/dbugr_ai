@@ -198,6 +198,11 @@ fn request_screen_recording_permission_with_runtime_result() -> bool {
     unsafe { CGRequestScreenCaptureAccess() }
 }
 
+fn launched_for_screen_recording_registration() -> bool {
+    std::env::args()
+        .any(|arg| arg == "--request-screen-recording-permission" || arg == "--request-permissions")
+}
+
 fn log_screen_capture_permission_state(event: &str, bundle_identifier: impl AsRef<str>) -> bool {
     let preflight = check_screen_recording_permission_via_plugin();
     let executable_path = std::env::current_exe()
@@ -362,9 +367,9 @@ fn repair_screen_capture_permission(app: AppHandle) -> Result<ScreenCaptureRepai
     let message = if effective_granted {
         "Screen Recording is ready. Restarting annotation.".to_string()
     } else if reset_succeeded {
-        "macOS still has not granted Screen Recording to this Debugr build. Turn on dbugr.ai in System Settings, then click New Annotation again.".to_string()
+        "macOS still has not granted Screen Recording to this Dbugr build. Turn on dbugr.ai in System Settings, then click New Annotation again.".to_string()
     } else {
-        "Debugr could not reset the macOS permission record automatically. Open Screen Recording settings, turn on dbugr.ai, then click New Annotation again.".to_string()
+        "Dbugr could not reset the macOS permission record automatically. Open Screen Recording settings, turn on dbugr.ai, then click New Annotation again.".to_string()
     };
     log_backend(
         "permission.repair.result",
@@ -1331,7 +1336,7 @@ fn hide_overlay(app: AppHandle) -> Result<(), String> {
     }
     // Do not call main.show() / set_focus here. Cancelling the overlay should return the user to
     // whatever was under the fullscreen overlay (browser, IDE, etc.). Forcing the workspace
-    // forward matches tray "Open Debugr" behavior and steals focus from the app they were
+    // forward matches tray "Open Dbugr" behavior and steals focus from the app they were
     // annotating. Users can open the workspace from the menu bar tray when needed.
     Ok(())
 }
@@ -1747,7 +1752,7 @@ fn finalize_capture_screenshot(capture_id: String, pending_path: String) -> Resu
                 base_canon.display(),
             ),
         );
-        return Err("Screenshot path is outside the Debugr screenshots folder".into());
+        return Err("Screenshot path is outside the Dbugr screenshots folder".into());
     }
 
     let dest = base_canon.join(format!("{}.png", capture_id.trim()));
@@ -1806,7 +1811,7 @@ fn save_screenshot(capture_id: String, data_url: String) -> Result<String, Strin
 
 /// Load a persisted screenshot file back into a data URL for reliable WebView rendering.
 /// This avoids relying on file/asset URL behavior in the frontend when a capture already
-/// lives on disk under Debugr's screenshots directory.
+/// lives on disk under Dbugr's screenshots directory.
 #[tauri::command]
 fn load_screenshot_data_url(path: String) -> Result<String, String> {
     let base = debugr_screenshots_dir();
@@ -1829,7 +1834,7 @@ fn load_screenshot_data_url(path: String) -> Result<String, String> {
                 base_canon.display(),
             ),
         );
-        return Err("Screenshot path is outside the Debugr screenshots folder".into());
+        return Err("Screenshot path is outside the Dbugr screenshots folder".into());
     }
 
     let bytes = fs::read(&incoming_canon).map_err(|e| format!("Failed to read screenshot: {e}"))?;
@@ -2038,6 +2043,7 @@ fn show_overlay_window(app: &AppHandle) {
             let Some(ov) = app2.get_webview_window("overlay") else {
                 return;
             };
+            macos_activate();
             if let Some((lw, lh, lx, ly)) = bounds {
                 let _ = ov.set_size(tauri::LogicalSize::new(lw, lh));
                 let _ = ov.set_position(tauri::LogicalPosition::new(lx, ly));
@@ -2045,9 +2051,9 @@ fn show_overlay_window(app: &AppHandle) {
             if let Err(e) = ov.show() {
                 log_backend("overlay.window.show_failed", e.to_string());
             }
-            // Deliberately avoid set_focus / app activation here. This matches
-            // the older overlay behavior that left other apps interactive until
-            // the user intentionally clicks into Debugr's controls.
+            // Deliberately avoid set_focus here. LSUIElement menu-bar builds
+            // still need app activation before show(), especially immediately
+            // after the macOS Screen Recording prompt releases focus.
         });
     }
 }
@@ -2162,7 +2168,7 @@ fn trigger_overlay(app: &AppHandle, source: &str, launch: Option<OverlayLaunchPa
             "overlay.trigger.permission_blocked",
             format!("source={source} overlay_not_shown=true reason=screen_recording_permission_required"),
         );
-        let message = "New Annotation is blocked because macOS has not granted Screen Recording to this exact Debugr build. Open Screen Recording settings, enable dbugr.ai for the path shown here, then quit and reopen Debugr.";
+        let message = "New Annotation is blocked because macOS has not granted Screen Recording to this exact Dbugr build. Open Screen Recording settings, enable dbugr.ai for the path shown here, then quit and reopen Dbugr.";
         if let Some(main) = app.get_webview_window("main") {
             let _ = main.emit("screen-capture-permission-needed", message);
         } else if let Ok(main) = main_window(app) {
@@ -2242,13 +2248,39 @@ fn main() {
                 "permission.startup",
                 app.config().identifier.as_str(),
             );
+            if launched_for_screen_recording_registration() {
+                log_backend(
+                    "permission.startup_registration.start",
+                    "triggering_runtime_request=true",
+                );
+                macos_activate();
+                let requested = request_screen_recording_permission_with_runtime_result();
+                let granted = check_screen_recording_permission_via_plugin();
+                let effective_granted = requested || granted;
+                if effective_granted {
+                    SCREEN_RECORDING_GRANTED_THIS_RUN.store(true, Ordering::SeqCst);
+                } else {
+                    let _ = open_screen_capture_settings();
+                }
+                log_backend(
+                    "permission.startup_registration.result",
+                    format!(
+                        "runtime_requested={requested} preflight_granted={granted} effective_granted={effective_granted}"
+                    ),
+                );
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(1200)).await;
+                    app_handle.exit(0);
+                });
+            }
             // ── Tray menu ──────────────────────────────────────────────────
-            let home = MenuItemBuilder::new("Open Debugr").id("home").build(app)?;
+            let home = MenuItemBuilder::new("Open Dbugr").id("home").build(app)?;
             let annotate = MenuItemBuilder::new("New Annotation  ⌃⌘Z")
                 .id("annotate")
                 .build(app)?;
             let sessions = MenuItemBuilder::new("Sessions").id("sessions").build(app)?;
-            let quit = MenuItemBuilder::new("Quit Debugr").id("quit").build(app)?;
+            let quit = MenuItemBuilder::new("Quit Dbugr").id("quit").build(app)?;
 
             let menu = MenuBuilder::new(app)
                 .item(&home)
@@ -2263,7 +2295,7 @@ fn main() {
                 .icon(tray_template_icon())
                 .icon_as_template(true) // renders correctly in both light & dark menu bar
                 .menu(&menu)
-                .tooltip("Debugr — ⌃⌘Z to annotate")
+                .tooltip("Dbugr — ⌃⌘Z to annotate")
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "home" => {
                         let _ = show_home_window(app.clone());

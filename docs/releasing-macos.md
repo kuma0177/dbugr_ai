@@ -1,6 +1,6 @@
 # Releasing the macOS DMG
 
-Dbugr distributes packaged macOS builds through GitHub Releases.
+Dbugr distributes packaged macOS builds through the public web app and can also mirror them to GitHub Releases.
 
 ## Automated Release
 
@@ -25,10 +25,10 @@ Dbugr distributes packaged macOS builds through GitHub Releases.
 3. GitHub Actions runs `.github/workflows/release-desktop.yml`, builds the DMG on macOS, and uploads:
 
    ```text
-   dbugr-ai-0.0.1-macos-aarch64.dmg
+   Dbugr_0.0.1_aarch64.dmg
    ```
 
-4. Set `NEXT_PUBLIC_MAC_DMG_URL` in the hosted web app to either the versioned release asset or the latest download URL.
+4. Copy the DMG to `apps/web/public/downloads/Dbugr_0.0.1_aarch64.dmg` before deploying the hosted web app. Set `NEXT_PUBLIC_MAC_DMG_URL` only when overriding that public download path.
 
 ## Manual Release
 
@@ -42,7 +42,7 @@ Upload the generated DMG:
 
 ```bash
 gh release create <tag> \
-  apps/desktop/src-tauri/target/release/bundle/macos/dbugr-ai-0.0.1-macos-aarch64.dmg \
+  apps/desktop/src-tauri/target/release/bundle/dmg/Dbugr_0.0.1_aarch64.dmg \
   --repo kuma0177/debgr_ai \
   --title "Dbugr macOS <tag>" \
   --notes "Packaged macOS build for local use."
@@ -52,7 +52,7 @@ If the release already exists:
 
 ```bash
 gh release upload <tag> \
-  apps/desktop/src-tauri/target/release/bundle/macos/dbugr-ai-0.0.1-macos-aarch64.dmg \
+  apps/desktop/src-tauri/target/release/bundle/dmg/Dbugr_0.0.1_aarch64.dmg \
   --repo kuma0177/debgr_ai \
   --clobber
 ```

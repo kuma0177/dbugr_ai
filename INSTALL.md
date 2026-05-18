@@ -53,13 +53,13 @@ Restart your terminal after installing Rust.
 
 Download the current DMG:
 
-- [Dbugr for macOS](https://github.com/kuma0177/debgr_ai/releases/download/pre-open-source-ready-stable/dbugr-ai-0.0.1-macos-aarch64.dmg)
+- [Dbugr for macOS](https://www.dbugr.ai/downloads/Dbugr_0.0.1_aarch64.dmg)
 
 Then:
 
 1. Open the `.dmg`.
-2. Drag `Dbugr.ai` into `Applications`.
-3. Launch `Dbugr.ai` from `Applications`.
+2. Drag `Dbugr` into `Applications`.
+3. Launch `Dbugr` from `Applications`.
 4. If macOS shows a first-run warning, choose `Open`.
 5. Grant Screen Recording permission when prompted.
 
@@ -256,8 +256,9 @@ Screen capture requires Screen Recording permission.
 If capture is blank or fails:
 
 1. Open `System Settings -> Privacy & Security -> Screen Recording`.
-2. Enable permission for `Dbugr.ai`, Terminal, iTerm, or the shell app used to launch Dbugr.
-3. Restart the desktop app after granting permission.
+2. Enable permission for `Dbugr`, Terminal, iTerm, or the shell app used to launch Dbugr.
+3. If Dbugr is not listed, click `+` and choose `/Applications/Dbugr.app`.
+4. Restart the desktop app after granting permission.
 
 Some shortcut/focus workflows may also need Accessibility permission:
 

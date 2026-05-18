@@ -1,5 +1,5 @@
 /**
- * Debugr — Unit tests for core.ts pure functions
+ * Dbugr — Unit tests for core.ts pure functions
  *
  * Covers spec sections:
  *  1  App launch (state shape)
@@ -179,7 +179,7 @@ describe('flowLabel()', () => {
 
 describe('sectionLabel()', () => {
   it('maps all six workspace sections', () => {
-    expect(sectionLabel('notes')).toBe('Annotate & note');
+    expect(sectionLabel('notes')).toBe('Capture context');
     expect(sectionLabel('flow')).toBe('Choose flow');
     expect(sectionLabel('collab')).toBe('Collaborate');
     expect(sectionLabel('review')).toBe('Review & curate');
@@ -760,7 +760,7 @@ describe('buildSessionPrompt()', () => {
           icon: '📋',
           label: 'Handoff',
           detail: 'Copies prompt for Cursor chat',
-          confirmation: 'Debugr will copy the prompt and open Cursor. Paste it into Cursor chat to continue.',
+          confirmation: 'Dbugr will copy the prompt and open Cursor. Paste it into Cursor chat to continue.',
           state: 'ready',
         }),
       ]),

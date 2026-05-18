@@ -4,7 +4,7 @@ import { HomeSignupStrip } from './home-signup-strip';
 
 const GITHUB_REPO_URL = 'https://github.com/kuma0177/dbugr_ai';
 const GITHUB_RELEASE_TAG = 'stable-ga-v0.1-prompt-receipt';
-const DEFAULT_MAC_DMG_URL = `${GITHUB_REPO_URL}/releases/download/${GITHUB_RELEASE_TAG}/dbugr-ai-0.0.1-macos-aarch64.dmg`;
+const DEFAULT_MAC_DMG_URL = '/downloads/Dbugr_0.0.1_aarch64.dmg';
 const MAC_DMG_DOWNLOAD_URL = process.env.NEXT_PUBLIC_MAC_DMG_URL ?? DEFAULT_MAC_DMG_URL;
 const GITHUB_RELEASE_URL = `${GITHUB_REPO_URL}/releases/tag/${GITHUB_RELEASE_TAG}`;
 
@@ -147,17 +147,12 @@ const PROOF_POINTS = [
 
 function AnnotationPreview() {
   return (
-    <div className="hv2-preview hv2-preview--video" aria-label="Dbugr product demo preview">
-      <video
-        className="hv2-preview-video"
-        autoPlay
-        loop
-        muted
-        playsInline
-        preload="metadata"
-      >
-        <source src="/hero/dbugr-homepage-demo.mp4" type="video/mp4" />
-      </video>
+    <div className="hv2-preview hv2-preview--demo" aria-label="Dbugr product demo preview">
+      <img
+        className="hv2-preview-demo"
+        src="/hero/dbugr-homepage-demo.gif"
+        alt="Dbugr menu bar annotation workflow demo"
+      />
     </div>
   );
 }

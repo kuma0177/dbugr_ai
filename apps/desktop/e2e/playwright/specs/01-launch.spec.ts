@@ -23,7 +23,7 @@ test.describe('01 — App launch', () => {
     await expect(page.locator('#app')).toBeVisible();
   });
 
-  test('shows the Debugr branding on the welcome card', async ({ page }) => {
+  test('shows the Dbugr branding on the welcome card', async ({ page }) => {
     await expect(page.locator('.welcome-card').first()).toBeVisible();
   });
 

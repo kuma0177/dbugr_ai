@@ -32,7 +32,7 @@ function functionBlock(source: string, startPattern: RegExp) {
 }
 
 describe('phase 2 team/public web handoff', () => {
-  it('makes the Start collaboration button await web sync before opening the review feed', () => {
+  it('makes the feedback submit button await web sync before opening the review feed', () => {
     const renderWorkspacePanel = functionBlock(mainSource, /function renderWorkspacePanel\(/);
 
     expect(renderWorkspacePanel).toContain("id=\"flow-next-btn\"");
@@ -42,7 +42,8 @@ describe('phase 2 team/public web handoff', () => {
     expect(renderWorkspacePanel).toContain('openWebReviewForSession(session)');
     expect(renderWorkspacePanel).toContain("session.submissionFlow === 'direct'");
     expect(renderWorkspacePanel).toContain('flowGateError');
-    expect(renderWorkspacePanel).toContain('Finish in web review');
+    expect(renderWorkspacePanel).toContain('Ready for feedback');
+    expect(renderWorkspacePanel).toContain('feedbackSubmitButtonLabel(session.submissionFlow)');
     expect(renderWorkspacePanel).not.toContain('Seed the review queue');
   });
 
@@ -56,6 +57,36 @@ describe('phase 2 team/public web handoff', () => {
     expect(flowClickBlock).toContain('persistAppState()');
     expect(flowClickBlock).not.toContain('syncSessionToWeb');
     expect(flowClickBlock).not.toContain('session.submissionFlow = previousFlow');
+  });
+
+  it('keeps submission progress in the right panel with completed checks', () => {
+    const renderSession = functionBlock(mainSource, /function renderSession\(/);
+    const visibleJourneySections = functionBlock(mainSource, /function visibleJourneySections\(/);
+    const journeyStepSubtext = functionBlock(mainSource, /function journeyStepSubtext\(/);
+    const isJourneyStepComplete = functionBlock(mainSource, /function isJourneyStepComplete\(/);
+    const journeyStepState = functionBlock(mainSource, /function journeyStepState\(/);
+    const renderJourneyProgress = functionBlock(mainSource, /function renderJourneyProgress\(/);
+    const renderWorkspacePanel = functionBlock(mainSource, /function renderWorkspacePanel\(/);
+
+    expect(renderSession).not.toContain('journey-tabs');
+    expect(visibleJourneySections).toContain("return ['notes', 'flow', 'submit']");
+    expect(visibleJourneySections).toContain("return ['notes', 'flow', 'collab', 'review', 'submit']");
+    expect(visibleJourneySections).not.toContain('insights');
+    expect(journeyStepSubtext).toContain('Screenshot, markup, and notes');
+    expect(journeyStepSubtext).toContain('Submit solo or share');
+    expect(isJourneyStepComplete).toContain("if (section === 'notes') return session.captures.length > 0 || totalAnnotations(session) > 0 || journeyMaxIndex(session) > sectionIndex");
+    expect(isJourneyStepComplete).toContain('journeySubmittedSessionIds.has(session.id)');
+    expect(isJourneyStepComplete).toContain("workspaceSection === 'insights'");
+    expect(isJourneyStepComplete).toContain("return submittedInThisFlow && (session.status === 'sent' || session.status === 'responded')");
+    expect(isJourneyStepComplete).toContain('journeyMaxIndex(session) > sectionIndex');
+    expect(isJourneyStepComplete).not.toContain("session.collaborationReady || activeIndex > sectionIndex");
+    expect(journeyStepState).toContain('if (isJourneyStepComplete(section, session)) return');
+    expect(renderJourneyProgress).toContain('journey-progress');
+    expect(renderJourneyProgress).toContain("complete ? '✓' : index + 1");
+    expect(renderWorkspacePanel).toContain('${progressMarkup}');
+    expect(renderWorkspacePanel).toContain('feedbackSubmitButtonLabel(session.submissionFlow)');
+    expect(renderWorkspacePanel).not.toContain('Skip to submit');
+    expect(renderWorkspacePanel).not.toContain('Sync and open web review →');
   });
 
   it('shows production-safe recovery copy when hosted web sync cannot reach the API', () => {
@@ -281,6 +312,9 @@ describe('phase 2 team/public web handoff', () => {
     expect(renderWorkspacePanel).toContain('copy-prompt-preview-btn');
     expect(renderWorkspacePanel).toContain('workspace_prompt_preview_copied');
     expect(renderWorkspacePanel).toContain('preparePromptPreview(session)');
+    expect(mainSource).toContain('function renderSessionPreservingRightPanelScroll()');
+    expect(mainSource).toContain("document.querySelector<HTMLElement>('.right-panel-body')");
+    expect(renderWorkspacePanel).toContain('renderSessionPreservingRightPanelScroll()');
     expect(renderWorkspacePanel).toContain('Locked at ${fmtTime(preview.generatedAt)}');
     expect(renderWorkspacePanel).toContain('Review payload first');
     expect(renderWorkspacePanel).not.toContain('>Generate<');

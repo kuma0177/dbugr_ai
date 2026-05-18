@@ -19,5 +19,6 @@ apps/desktop/src-tauri/gen
 apps/desktop-native-mac/.build
 apps/**/test-results
 apps/web/public/downloads/*.dmg
+!apps/web/public/downloads/Dbugr_0.0.1_aarch64.dmg
 uploads/
 dev.db

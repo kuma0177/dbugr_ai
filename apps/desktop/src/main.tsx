@@ -131,6 +131,8 @@ let activeAnnotationId: string | null = null;
 let editingAnnotationId: string | null = null;
 let activePreviewCaptureId: string | null = null;
 let workspaceSection: WorkspaceSection = 'notes';
+const journeyProgressMaxIndexBySession = new Map<string, number>();
+const journeySubmittedSessionIds = new Set<string>();
 let target: Target = 'claude';
 let feedback: AgentFeedback | null = null;
 let isSending = false;
@@ -793,7 +795,7 @@ function bindPermissionNoteActions(executablePath: string) {
         await invoke('show_overlay', { launch: overlayLaunchForSession(activeSession()) });
       }
     } catch (error) {
-      permissionAttentionMessage = `Debugr could not repair Screen Recording automatically: ${safeErrorMessage(error)}`;
+      permissionAttentionMessage = `Dbugr could not repair Screen Recording automatically: ${safeErrorMessage(error)}`;
       lastPermissionMarkup = '';
       await checkPermission();
     } finally {
@@ -806,7 +808,7 @@ function bindPermissionNoteActions(executablePath: string) {
   });
   document.getElementById('open-screen-settings-btn')?.addEventListener('click', async () => {
     // Do not request TCC permission from the session window. Opening settings
-    // keeps the Apple modal from blocking Debugr's own chooser/sidebar.
+    // keeps the Apple modal from blocking Dbugr's own chooser/sidebar.
     await win.hide().catch(() => {});
     await invoke('open_screen_capture_settings').catch(() => {});
   });
@@ -1158,7 +1160,7 @@ function renderWelcome() {
     <div class="welcome-shell">
       <div class="welcome-card welcome-journey-card">
         <div class="welcome-hero">
-          <img class="app-icon" src="${brandIconUrl}" alt="Debugr logo" />
+          <img class="app-icon" src="${brandIconUrl}" alt="Dbugr logo" />
           <div class="welcome-hero-copy">
             <h1>dbugr.ai</h1>
             <p>A desktop-first capture flow for sign-in, MCP setup, session notes, review, and AI submission.</p>
@@ -1168,10 +1170,10 @@ function renderWelcome() {
         <div class="welcome-grid">
           <section class="welcome-panel">
             <div class="panel-kicker">Launch & sign in</div>
-            <h2>${authState.authenticated ? `Welcome back, ${escapeHtml(authState.name)}` : 'Sign in to Debugr'}</h2>
+            <h2>${authState.authenticated ? `Welcome back, ${escapeHtml(authState.name)}` : 'Sign in to Dbugr'}</h2>
             <p class="panel-copy">
               ${authState.authenticated
-                ? 'This Mac is linked to your Debugr workspace. Captures, session notes, and AI handoffs can now stay attached to your profile.'
+                ? 'This Mac is linked to your Dbugr workspace. Captures, session notes, and AI handoffs can now stay attached to your profile.'
                 : 'Continue in your browser to sign in, choose your workspace, and link this Mac back to the desktop app.'}
             </p>
             <button class="btn-primary" id="web-auth-btn" ${authState.authenticated || isAuthenticating ? 'disabled' : ''}>
@@ -1310,7 +1312,7 @@ function renderWelcome() {
           <section class="welcome-panel">
             <div class="panel-kicker">Start capturing</div>
             <h2>Always one shortcut away</h2>
-            <p class="panel-copy">Debugr stays in the background. Press <strong>Control + Command + Z</strong> from any app to open the annotation overlay.</p>
+            <p class="panel-copy">Dbugr stays in the background. Press <strong>Control + Command + Z</strong> from any app to open the annotation overlay.</p>
             <div class="shortcut-row large-shortcut">
               <span class="shortcut-label">Global shortcut</span>
               <kbd>⌃</kbd><kbd>⌘</kbd><kbd>Z</kbd>
@@ -1352,7 +1354,7 @@ function renderWelcome() {
       logUi('desktop_web_auth_open_completed', { url });
     } catch (error) {
       logUi('desktop_web_auth_open_failed', { error: safeErrorMessage(error).slice(0, 300) });
-      window.alert(`Could not open Debugr in your browser.\n\n${safeErrorMessage(error)}`);
+      window.alert(`Could not open Dbugr in your browser.\n\n${safeErrorMessage(error)}`);
     } finally {
       isAuthenticating = false;
       renderWelcome();
@@ -1429,16 +1431,16 @@ function renderWelcome() {
     connectVerifyError = '';
     renderWelcome();
     const script = [
-      `echo "=== Connecting Debugr to Claude CLI ==="`,
+      `echo "=== Connecting Dbugr to Claude CLI ==="`,
       `echo ""`,
-      `echo "Complete the Claude CLI login flow, then come back to Debugr and click Done."`,
+      `echo "Complete the Claude CLI login flow, then come back to Dbugr and click Done."`,
       `echo ""`,
       `claude /login`,
     ].join(' && ');
     await invoke('open_command_in_terminal', {
       cwd: process.env['HOME'] || '~',
       command: script,
-      title: 'Connect Debugr to Claude CLI',
+      title: 'Connect Dbugr to Claude CLI',
     }).catch(() => {
       claudeConnecting = false;
       connectVerifyError = 'Could not open Claude CLI login automatically. Open Terminal, run `claude /login`, finish the login flow, then return here and click Done.';
@@ -1505,7 +1507,7 @@ function renderWelcome() {
     renderWelcome();
     await invoke('open_auth_popup', {
       url: 'https://platform.openai.com/api-keys',
-      title: 'Connect Debugr to Codex',
+      title: 'Connect Dbugr to Codex',
       label: 'auth-codex-key',
     }).catch(() => {});
   });
@@ -1632,20 +1634,11 @@ function renderSession() {
         </div>
         <div class="topbar-title">
           <img class="topbar-brand-icon" src="${brandIconUrl}" alt="" />
-          <span>Debugr</span>
+          <span>Dbugr</span>
         </div>
         <div class="topbar-actions">
           <button class="btn-new-capture" id="new-ann-btn">+ New Capture</button>
         </div>
-      </div>
-
-      <div class="journey-tabs">
-        ${(['notes', 'flow', 'collab', 'review', 'submit', 'insights'] as WorkspaceSection[]).map((section) => `
-          <button class="journey-tab ${workspaceSection === section ? 'active' : ''}" data-section="${section}">
-            <span class="journey-step">${section === 'insights' ? 6 : ['notes', 'flow', 'collab', 'review', 'submit'].indexOf(section) + 1}</span>
-            <span>${sectionLabel(section)}</span>
-          </button>
-        `).join('')}
       </div>
 
       <div class="app-body">
@@ -1765,7 +1758,7 @@ function renderSession() {
             <div class="empty-state">
               <div class="empty-icon">📋</div>
               <div class="empty-title">No session selected</div>
-              <div class="empty-copy">Create a capture or pick a saved session to continue the Debugr journey.</div>
+              <div class="empty-copy">Create a capture or pick a saved session to continue the Dbugr journey.</div>
             </div>
           `}
         </main>
@@ -1788,6 +1781,97 @@ function renderSession() {
   renderWorkspacePanel();
   bindSessionActions();
   checkPermission();
+}
+
+function visibleJourneySections(session: Session): WorkspaceSection[] {
+  if (session.submissionFlow === 'direct') return ['notes', 'flow', 'submit'];
+  return ['notes', 'flow', 'collab', 'review', 'submit'];
+}
+
+function journeyStepSubtext(section: WorkspaceSection, session: Session): string {
+  if (section === 'notes') return 'Screenshot, markup, and notes';
+  if (section === 'flow') return 'Submit solo or share';
+  if (section === 'collab') {
+    return session.submissionFlow === 'public' ? 'Gather public signal' : 'Collect team notes';
+  }
+  if (section === 'review') return 'Curate final context';
+  if (section === 'submit') return 'Send to AI';
+  return '';
+}
+
+function journeyActiveSection(): WorkspaceSection {
+  return workspaceSection === 'insights' ? 'submit' : workspaceSection;
+}
+
+function journeyMaxIndex(session: Session): number {
+  const sections = visibleJourneySections(session);
+  const activeIndex = sections.indexOf(journeyActiveSection());
+  const previousIndex = journeyProgressMaxIndexBySession.get(session.id) ?? -1;
+  const maxIndex = Math.max(previousIndex, activeIndex);
+  journeyProgressMaxIndexBySession.set(session.id, maxIndex);
+  return maxIndex;
+}
+
+function isJourneyStepComplete(section: WorkspaceSection, session: Session): boolean {
+  const sections = visibleJourneySections(session);
+  const activeSection = journeyActiveSection();
+  const sectionIndex = sections.indexOf(section);
+  const activeIndex = sections.indexOf(activeSection);
+  if (sectionIndex < 0 || activeIndex < 0) return false;
+  if (section === 'notes') return session.captures.length > 0 || totalAnnotations(session) > 0 || journeyMaxIndex(session) > sectionIndex;
+  if (section === 'submit') {
+    const submittedInThisFlow = journeySubmittedSessionIds.has(session.id) || workspaceSection === 'insights';
+    return submittedInThisFlow && (session.status === 'sent' || session.status === 'responded');
+  }
+  if (section === 'flow' || section === 'collab' || section === 'review') {
+    return journeyMaxIndex(session) > sectionIndex;
+  }
+  return false;
+}
+
+function journeyStepState(section: WorkspaceSection, session: Session): 'complete' | 'active' | 'pending' {
+  const activeSection = journeyActiveSection();
+  if (isJourneyStepComplete(section, session)) return 'complete';
+  if (section === activeSection) return 'active';
+  return 'pending';
+}
+
+function renderJourneyProgress(session: Session): string {
+  const sections = visibleJourneySections(session);
+  journeyMaxIndex(session);
+  return `
+    <div class="journey-progress" aria-label="Submission progress">
+      ${sections.map((section, index) => {
+        const state = journeyStepState(section, session);
+        const complete = state === 'complete';
+        return `
+          <button class="journey-progress-step ${state}" data-section="${section}">
+            <span class="journey-progress-marker" aria-hidden="true">${complete ? '✓' : index + 1}</span>
+            <span class="journey-progress-copy">
+              <strong>${sectionLabel(section)}</strong>
+              <span>${escapeHtml(journeyStepSubtext(section, session))}</span>
+            </span>
+          </button>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function feedbackSubmitButtonLabel(flow: SubmissionFlow): string {
+  if (flow === 'team') return 'Send to team review →';
+  if (flow === 'public') return 'Send to public feed →';
+  return 'Submit →';
+}
+
+function renderSessionPreservingRightPanelScroll() {
+  const rightPanelBody = document.querySelector<HTMLElement>('.right-panel-body');
+  const scrollTop = rightPanelBody?.scrollTop ?? 0;
+  renderSession();
+  window.requestAnimationFrame(() => {
+    const nextRightPanelBody = document.querySelector<HTMLElement>('.right-panel-body');
+    if (nextRightPanelBody) nextRightPanelBody.scrollTop = scrollTop;
+  });
 }
 
 function renderSessionList() {
@@ -2220,9 +2304,11 @@ function renderWorkspacePanel() {
     target,
     status: session.status,
   });
+  const progressMarkup = renderJourneyProgress(session);
 
   if (workspaceSection === 'notes') {
     panel.innerHTML = `
+      ${progressMarkup}
       <div class="right-panel-head">
         <div class="right-panel-title">Annotate & session notes</div>
         <div class="right-panel-sub">Stage 4 of the journey: add annotations, title the session clearly, and write the context the AI needs.</div>
@@ -2252,6 +2338,7 @@ function renderWorkspacePanel() {
 
   if (workspaceSection === 'flow') {
     panel.innerHTML = `
+      ${progressMarkup}
       <div class="right-panel-head">
         <div class="right-panel-title">Choose submission flow</div>
         <div class="right-panel-sub">Decide whether this session goes straight to AI, through your team, or through a public curation pass.</div>
@@ -2288,7 +2375,7 @@ function renderWorkspacePanel() {
               ? 'Teammates can add notes and annotations before you submit it.'
               : 'Community feedback will be curated before the final submission.'}</span>
         </div>
-        <button class="send-btn" id="flow-next-btn" ${pendingFlowSelection ? 'disabled' : ''}>${session.submissionFlow === 'direct' ? 'Skip to submit →' : 'Start collaboration →'}</button>
+        <button class="send-btn" id="flow-next-btn" ${pendingFlowSelection ? 'disabled' : ''}>${feedbackSubmitButtonLabel(session.submissionFlow)}</button>
       </div>
     `;
     document.querySelectorAll<HTMLButtonElement>('[data-flow]').forEach((button) => {
@@ -2343,6 +2430,7 @@ function renderWorkspacePanel() {
   if (workspaceSection === 'collab') {
     const reviewFlowLabel = session.submissionFlow === 'public' ? 'public feed' : 'team review';
     panel.innerHTML = `
+      ${progressMarkup}
       <div class="right-panel-head">
         <div class="right-panel-title">Collaborate / gather feedback</div>
         <div class="right-panel-sub">${session.submissionFlow === 'public' ? 'Community members' : 'Team members'} can add more context before you curate the final packet.</div>
@@ -2358,7 +2446,7 @@ function renderWorkspacePanel() {
                 : `Sync this session to ${reviewFlowLabel} before collecting feedback.`}</p>
             </div>
             ${session.webSyncError ? `<div class="submit-gate-error" role="alert">${escapeHtml(session.webSyncError)}</div>` : ''}
-            <button class="send-btn" id="open-web-review-btn">${session.webSyncStatus === 'synced' ? 'Open web review →' : 'Sync and open web review →'}</button>
+            <button class="send-btn" id="open-web-review-btn">${session.webSyncStatus === 'synced' ? `Open ${reviewFlowLabel} →` : feedbackSubmitButtonLabel(session.submissionFlow)}</button>
           `}
         <button class="btn-secondary wide-btn" id="collab-next-btn">${session.submissionFlow === 'direct' ? 'Go to submit' : 'Back to flow'}</button>
       </div>
@@ -2388,6 +2476,7 @@ function renderWorkspacePanel() {
   if (workspaceSection === 'review') {
     if (session.submissionFlow !== 'direct') {
       panel.innerHTML = `
+        ${progressMarkup}
         <div class="right-panel-head">
           <div class="right-panel-title">Review & curate</div>
           <div class="right-panel-sub">Team and public feedback is curated in the web app so accepted notes become the frozen AI prompt.</div>
@@ -2409,6 +2498,7 @@ function renderWorkspacePanel() {
       return;
     }
     panel.innerHTML = `
+      ${progressMarkup}
       <div class="right-panel-head">
         <div class="right-panel-title">Review & curate</div>
         <div class="right-panel-sub">Accept or reject the context that should travel to the AI.</div>
@@ -2454,17 +2544,18 @@ function renderWorkspacePanel() {
   if (workspaceSection === 'submit') {
     if (session.submissionFlow !== 'direct') {
       panel.innerHTML = `
+        ${progressMarkup}
         <div class="right-panel-head submit-panel-head">
-          <div class="right-panel-title">Send session</div>
-          <div class="right-panel-sub">${flowLabel(session.submissionFlow)} uses the web review handoff.</div>
+          <div class="right-panel-title">Send for feedback</div>
+          <div class="right-panel-sub">${session.submissionFlow === 'public' ? 'Share this session on the public feed.' : 'Submit this session for team review.'}</div>
         </div>
         <div class="right-panel-body stacked-panel submit-panel-body">
           <div class="journey-card">
-            <strong>Finish in web review</strong>
-            <p>Accept the useful feedback in the web feed, generate the AI-ready prompt, then click Freeze and send snapshot. That opens Dbugr on this Mac and sends the accepted prompt to ${providerLabel(target)}.</p>
+            <strong>Ready for feedback</strong>
+            <p>Dbugr will publish the screenshot, markup, and notes to ${session.submissionFlow === 'public' ? 'the public feed' : 'team review'} so feedback can be collected before the final AI prompt is sent.</p>
           </div>
           ${session.webSyncError ? `<div class="submit-gate-error" role="alert">${escapeHtml(session.webSyncError)}</div>` : ''}
-          <button class="send-btn" id="open-web-review-btn">${session.webSyncStatus === 'synced' ? 'Open web review →' : 'Sync and open web review →'}</button>
+          <button class="send-btn" id="open-web-review-btn">${feedbackSubmitButtonLabel(session.submissionFlow)}</button>
         </div>
       `;
       document.getElementById('open-web-review-btn')?.addEventListener('click', async () => {
@@ -2537,6 +2628,7 @@ function renderWorkspacePanel() {
     `;
 
     panel.innerHTML = `
+      ${progressMarkup}
       <div class="right-panel-head submit-panel-head">
         <div class="right-panel-title">Send session</div>
         <div class="right-panel-sub">${annCount} capture${session.captures.length !== 1 ? 's' : ''} · ${annCount} annotation${annCount !== 1 ? 's' : ''}</div>
@@ -2623,7 +2715,7 @@ function renderWorkspacePanel() {
               : preview ? `Send to ${providerLabel(target)} ⌘↵` : `Review payload first`}
           </button>
           <div class="send-tip">${target === 'cursor'
-            ? 'Debugr opens Cursor.app and copies the prompt. Cursor does not open a CLI window.'
+            ? 'Dbugr opens Cursor.app and copies the prompt. Cursor does not open a CLI window.'
             : 'Tip: set a project folder so the agent can navigate your code.'}</div>
           ${session.projectFolder
             ? `<div class="context-folder">📁 ${escapeHtml(session.projectFolder)}</div>`
@@ -2653,14 +2745,14 @@ function renderWorkspacePanel() {
         const nextTab = button.dataset.promptReceiptTab;
         if (nextTab !== 'receipt' && nextTab !== 'raw') return;
         promptReceiptTab = nextTab;
-        renderSession();
+        renderSessionPreservingRightPanelScroll();
       });
     });
 
     document.querySelectorAll<HTMLButtonElement>('[data-receipt-item]').forEach((button) => {
       button.addEventListener('click', () => {
         selectedPromptReceiptItem = button.dataset.receiptItem || 'Screens';
-        renderSession();
+        renderSessionPreservingRightPanelScroll();
       });
     });
 
@@ -2716,16 +2808,16 @@ function renderWorkspacePanel() {
       renderSession();
       // Also try Terminal for the Claude CLI auth step
       const script = [
-        `echo "=== Connecting Debugr to Claude CLI ==="`,
+        `echo "=== Connecting Dbugr to Claude CLI ==="`,
         `echo ""`,
-        `echo "Complete the Claude CLI login flow, then come back to Debugr and click Done."`,
+        `echo "Complete the Claude CLI login flow, then come back to Dbugr and click Done."`,
         `echo ""`,
         `claude /login`,
       ].join(' && ');
       await invoke('open_command_in_terminal', {
         cwd: process.env['HOME'] || '~',
         command: script,
-        title: 'Connect Debugr to Claude CLI',
+        title: 'Connect Dbugr to Claude CLI',
       }).catch(() => {
         claudeConnecting = false;
         connectVerifyError = 'Could not open Claude CLI login automatically. Open Terminal, run `claude /login`, finish the login flow, then return here and click Done.';
@@ -2758,7 +2850,7 @@ function renderWorkspacePanel() {
       renderSession();
       await invoke('open_auth_popup', {
         url: 'https://platform.openai.com/api-keys',
-        title: 'Connect Debugr to Codex',
+        title: 'Connect Dbugr to Codex',
         label: 'auth-codex-key',
       }).catch(() => {});
     });
@@ -2806,6 +2898,7 @@ function renderWorkspacePanel() {
 
   const targetName = providerLabel(target);
   panel.innerHTML = `
+    ${progressMarkup}
     <div class="right-panel-head">
       <div class="right-panel-title">AI insights & next steps</div>
       <div class="right-panel-sub">${session.status === 'responded' ? `${targetName} has responded.` : 'Send the session to an AI provider to see the response here.'}</div>
@@ -3055,7 +3148,7 @@ function syncRepoContextChips(session: Session) {
   if (repoChip) repoChip.textContent = session.githubRepo?.trim() ? 'GitHub repo linked' : 'GitHub optional';
 }
 
-function renderPermissionReady(note: HTMLElement, detail = 'Debugr can capture your screen and create new annotations.') {
+function renderPermissionReady(note: HTMLElement, detail = 'Dbugr can capture your screen and create new annotations.') {
   note.innerHTML = `
     <strong>Screen capture ready</strong>
     <span>${escapeHtml(detail)}</span>
@@ -3100,10 +3193,12 @@ async function checkPermission() {
       }
       const executable = diagnostics.executable_path ?? '';
       lastPermissionExecutablePath = executable;
-      const isInstalledApp = executable.includes('/Applications/dbugr.ai.app/');
-      const runtimeName = isInstalledApp ? 'dbugr.ai' : 'this Debugr build';
+      const isInstalledApp =
+        executable.includes('/Applications/Dbugr.app/') ||
+        executable.includes('/Applications/dbugr.ai.app/');
+      const runtimeName = isInstalledApp ? 'Dbugr' : 'this Dbugr build';
       const runtimeHint = isInstalledApp
-        ? 'If you already turned it on, quit Debugr completely and reopen it from Applications so macOS applies the permission.'
+        ? 'If you already turned it on, quit Dbugr completely and reopen it from Applications so macOS applies the permission.'
         : 'macOS grants Screen Recording per app build. If you switch between the dev build and the packaged app, each one may need its own Screen Recording entry.';
       const attention = permissionAttentionMessage
         ? `<span class="perm-attention">${escapeHtml(permissionAttentionMessage)}</span>`
@@ -3111,8 +3206,8 @@ async function checkPermission() {
       note.innerHTML = `
       <strong>Screen capture status needs a refresh</strong>
       ${attention}
-      <span>macOS says ${escapeHtml(runtimeName)} is not currently cleared for Screen Recording. If screenshots are working, this is a stale macOS permission check and you can keep using Debugr.</span>
-      <span>If captures fail, open Screen Recording settings, turn on <strong>dbugr.ai</strong>, then quit and reopen Debugr.</span>
+      <span>macOS says ${escapeHtml(runtimeName)} is not currently cleared for Screen Recording. If screenshots are working, this is a stale macOS permission check and you can keep using Dbugr.</span>
+      <span>If captures fail, open Screen Recording settings, turn on <strong>Dbugr</strong>, then quit and reopen Dbugr.</span>
       <span>${escapeHtml(runtimeHint)}</span>
       <span class="perm-runtime-detail"><strong>Current app:</strong> ${escapeHtml(diagnostics.bundle_identifier || 'Unknown')}<br /><strong>Path:</strong> <code>${escapeHtml(diagnostics.executable_path || executable || 'Unknown')}</code></span>
       <span class="perm-runtime-detail"><strong>Not listed?</strong> Click <strong>+</strong>, press <strong>⌘⇧G</strong>, then paste the path above.</span>
@@ -3130,7 +3225,7 @@ async function checkPermission() {
       logUi('workspace_permission_check_failed');
       note.innerHTML = `
       <strong>Screen capture status unavailable</strong>
-      <span>Debugr could not check macOS screen-recording permissions right now. Try reopening the app, then open System Settings if capture still fails.</span>
+      <span>Dbugr could not check macOS screen-recording permissions right now. Try reopening the app, then open System Settings if capture still fails.</span>
     `;
       note.className = 'perm-note warn';
       lastPermissionMarkup = note.innerHTML;
@@ -3622,7 +3717,7 @@ async function pushPendingSessions() {
         cliName,
         prompt,
         apiKey: cliName === 'codex' ? codexApiKey : claudeApiKey,
-        title: `Debugr → ${providerLabel(target)}: ${titleSuffix}`,
+        title: `Dbugr → ${providerLabel(target)}: ${titleSuffix}`,
       });
     }
 
@@ -3630,7 +3725,7 @@ async function pushPendingSessions() {
     persistAppState();
     renderSession();
   } catch (err) {
-    console.error('[Debugr] pushPendingSessions failed:', err);
+    console.error('[Dbugr] pushPendingSessions failed:', err);
     const hint = target === 'codex'
       ? 'Go to Submit tab → Connect Codex CLI to enter your API key'
       : 'Go to Submit tab → Connect Claude CLI to log in';
@@ -3786,7 +3881,7 @@ async function sendSession() {
   const cwd = target === 'cursor'
     ? normalizeProjectFolderInput(session.projectFolder) || ''
     : normalizeProjectFolderInput(session.projectFolder) || normalizeProjectFolderInput(await invoke<string>('pick_folder').catch(() => '')) || '';
-  const title = `Debugr → ${providerLabel(target)}: ${session.title}`;
+  const title = `Dbugr → ${providerLabel(target)}: ${session.title}`;
 
   try {
     if (target === 'cursor') {
@@ -3802,7 +3897,7 @@ async function sendSession() {
         promptText: prompt,
         nextSteps: [
           'Open Cursor chat and paste the copied session prompt',
-          cwd ? 'Cursor should already be focused on the linked project folder' : 'Use Add project folder in Debugr before sending when this needs repo context',
+          cwd ? 'Cursor should already be focused on the linked project folder' : 'Use Add project folder in Dbugr before sending when this needs repo context',
           'No CLI window opens for Cursor; the handoff uses Cursor.app plus your clipboard',
         ],
       };
@@ -3849,6 +3944,7 @@ async function sendSession() {
     };
   }
 
+  journeySubmittedSessionIds.add(session.id);
   session.status = 'responded';
   workspaceSection = 'insights';
   logUi('workspace_send_complete', { sessionId: session.id, target, status: session.status });
@@ -4024,7 +4120,7 @@ async function listenForAnnotations() {
           pendingPathChars: rawShot.length,
           error: String(err).slice(0, 300),
         });
-        console.warn('[Debugr] finalize_capture_screenshot failed:', err);
+        console.warn('[Dbugr] finalize_capture_screenshot failed:', err);
         screenshotStored = rawShot;
       }
     } else if (rawShot) {
@@ -4176,7 +4272,7 @@ async function listenForAnnotations() {
   await listen<string | undefined>('screen-capture-permission-needed', async (event) => {
     permissionAttentionMessage = typeof event.payload === 'string' && event.payload.trim()
       ? event.payload.trim()
-      : 'New Annotation is blocked because macOS has not granted Screen Recording to this exact Debugr build.';
+      : 'New Annotation is blocked because macOS has not granted Screen Recording to this exact Dbugr build.';
     lastPermissionMarkup = '';
     if (!authState.authenticated) {
       appMode = 'welcome';
@@ -4190,7 +4286,7 @@ async function listenForAnnotations() {
   await listen<string>('screen-capture-failed', async (event) => {
     await checkPermission();
     window.alert(
-      event.payload || 'Debugr could not capture your screen. Use the permission card on the left to inspect which runtime is blocked, then try a new capture again.',
+      event.payload || 'Dbugr could not capture your screen. Use the permission card on the left to inspect which runtime is blocked, then try a new capture again.',
     );
   });
 }

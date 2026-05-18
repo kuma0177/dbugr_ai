@@ -205,13 +205,13 @@ export function providerConnectionPendingCopy(
   method: ProviderConnectionMethod,
 ): string {
   if (provider === 'claude' && method === 'api_key') {
-    return 'Paste your Anthropic API key below and click Verify & Save. Debugr verifies it before saving it locally, then uses Claude CLI in Terminal when you send.';
+    return 'Paste your Anthropic API key below and click Verify & Save. Dbugr verifies it before saving it locally, then uses Claude CLI in Terminal when you send.';
   }
   if (provider === 'claude') {
-    return 'Debugr will open a Terminal window and run `claude /login`. Finish the Claude CLI login flow, then click Done to verify it worked.';
+    return 'Dbugr will open a Terminal window and run `claude /login`. Finish the Claude CLI login flow, then click Done to verify it worked.';
   }
   if (provider === 'codex') {
-    return 'Open the OpenAI API keys page, then paste your key below and click Verify & Save. When you send, Debugr will launch Codex CLI in Terminal.';
+    return 'Open the OpenAI API keys page, then paste your key below and click Verify & Save. When you send, Dbugr will launch Codex CLI in Terminal.';
   }
   return 'Install Cursor to open the project in Cursor and paste the session prompt there. No API key is required.';
 }
@@ -221,15 +221,15 @@ export function providerConnectionReadyCopy(
   method: ProviderConnectionMethod | null,
 ): string {
   if (provider === 'claude' && method === 'api_key') {
-    return 'Your Anthropic API key is stored locally on this Mac. When you click Send, Debugr will open Claude CLI in Terminal and hand off the session there.';
+    return 'Your Anthropic API key is stored locally on this Mac. When you click Send, Dbugr will open Claude CLI in Terminal and hand off the session there.';
   }
   if (provider === 'claude') {
     return 'You can now send any session straight to Claude CLI from the Submit tab. Terminal will open, Claude CLI will read your screenshots and annotations, and reply with a diagnosis.';
   }
   if (provider === 'codex') {
-    return 'Your OpenAI API key is stored locally on this Mac. When you click Send, Debugr will open Codex CLI in Terminal and hand off the session there.';
+    return 'Your OpenAI API key is stored locally on this Mac. When you click Send, Dbugr will open Codex CLI in Terminal and hand off the session there.';
   }
-  return 'No login needed. Debugr will open Cursor.app and copy the session prompt so you can paste it into chat. No CLI window opens for Cursor.';
+  return 'No login needed. Dbugr will open Cursor.app and copy the session prompt so you can paste it into chat. No CLI window opens for Cursor.';
 }
 
 export function shellSingleQuote(value: string): string {
@@ -255,7 +255,7 @@ export function flowLabel(flow: SubmissionFlow): string {
 }
 
 export function sectionLabel(section: WorkspaceSection): string {
-  if (section === 'notes') return 'Annotate & note';
+  if (section === 'notes') return 'Capture context';
   if (section === 'flow') return 'Choose flow';
   if (section === 'collab') return 'Collaborate';
   if (section === 'review') return 'Review & curate';
@@ -400,7 +400,7 @@ export function buildSessionPrompt(
   const sessionNote = session.about?.trim() || session.sessionNote?.trim();
   const projectFolder = normalizeProjectFolderInput(session.projectFolder);
   const githubRepo = normalizeGithubRepoInput(session.githubRepo);
-  lines.push(`# Debugr session: ${session.title}`);
+  lines.push(`# Dbugr session: ${session.title}`);
   if (sessionNote) lines.push(`\nSession note: ${sessionNote}`);
   if (projectFolder) lines.push(`\nProject folder: ${projectFolder}`);
   if (githubRepo) lines.push(`\nGitHub repo: ${githubRepo}`);
@@ -494,7 +494,7 @@ export function buildPromptReceipt(
 
   return {
     headline: `Ready for ${destinationLabel}`,
-    summary: `${modeLabel} receipt for the exact prompt Debugr will hand off.`,
+    summary: `${modeLabel} receipt for the exact prompt Dbugr will hand off.`,
     modeLabel,
     destinationLabel,
     items: [
@@ -543,8 +543,8 @@ export function buildPromptReceipt(
           ? 'Copies prompt for Cursor chat'
           : `Launches ${destinationLabel} with this prompt`,
         confirmation: provider === 'cursor'
-          ? 'Debugr will copy the prompt and open Cursor. Paste it into Cursor chat to continue.'
-          : `Debugr will open ${destinationLabel} and pass the reviewed prompt to the CLI.`,
+          ? 'Dbugr will copy the prompt and open Cursor. Paste it into Cursor chat to continue.'
+          : `Dbugr will open ${destinationLabel} and pass the reviewed prompt to the CLI.`,
         state: 'ready',
       },
     ],
@@ -565,7 +565,7 @@ export function buildCombinedPrompt(
   if (sessions.length === 1) return buildSessionPrompt(sessions[0]!, screenshotPaths);
 
   const lines: string[] = [
-    `# Debugr — ${sessions.length} pending sessions\n`,
+    `# Dbugr — ${sessions.length} pending sessions\n`,
     `You have ${sessions.length} unsent annotation sessions. Please work through each one.\n`,
   ];
   sessions.forEach((session, i) => {

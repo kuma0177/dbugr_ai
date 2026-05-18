@@ -783,7 +783,7 @@ async function sendWelcomeEmail(email: string, name: string, authProvider: 'emai
   const authLabel = authProvider === 'google' ? 'Google' : 'email verification';
   const downloadUrl =
     process.env.NEXT_PUBLIC_MAC_DMG_URL ??
-    `${webBaseUrl}/downloads/dbugr-ai-0.0.1-macos-aarch64.dmg`;
+    `${webBaseUrl}/downloads/Dbugr_0.0.1_aarch64.dmg`;
 
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',

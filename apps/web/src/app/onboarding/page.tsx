@@ -12,9 +12,7 @@ type OnboardingStep = 'sign-in' | 'workspace' | 'link';
 type AuthFlow = 'sign-in' | 'sign-up';
 const MAX_INVITE_EMAILS = 10;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const GITHUB_REPO_URL = 'https://github.com/kuma0177/dbugr_ai';
-const GITHUB_RELEASE_TAG = 'stable-ga-v0.1-prompt-receipt';
-const DEFAULT_MAC_DMG_URL = `${GITHUB_REPO_URL}/releases/download/${GITHUB_RELEASE_TAG}/dbugr-ai-0.0.1-macos-aarch64.dmg`;
+const DEFAULT_MAC_DMG_URL = '/downloads/Dbugr_0.0.1_aarch64.dmg';
 const MAC_DMG_DOWNLOAD_URL = process.env.NEXT_PUBLIC_MAC_DMG_URL ?? DEFAULT_MAC_DMG_URL;
 
 type ExistingWorkspace = {
@@ -815,11 +813,11 @@ export default function OnboardingPage() {
                 <span>a</span>
                 <div>
                   <h3>Download Dbugr for macOS</h3>
-                  <p>Download the Mac installer, open it from Downloads, then drag Dbugr.ai into Applications.</p>
+                  <p>Download the Mac installer, open it from Downloads, then drag Dbugr into Applications.</p>
                   <ul className="mac-link-step-list">
                     <li>Click <strong>Download macOS DMG</strong>.</li>
                     <li>Open the downloaded file from your Downloads folder.</li>
-                    <li>Drag <strong>Dbugr.ai</strong> into <strong>Applications</strong>.</li>
+                    <li>Drag <strong>Dbugr</strong> into <strong>Applications</strong>.</li>
                   </ul>
                   <a className="btn btn-primary" href={MAC_DMG_DOWNLOAD_URL}>Download macOS DMG</a>
                 </div>
@@ -828,7 +826,7 @@ export default function OnboardingPage() {
                 <span>b</span>
                 <div>
                   <h3>Open the installed app</h3>
-                  <p>Open Dbugr.ai from Applications. If macOS shows a safety prompt the first time, choose Open.</p>
+                  <p>Open Dbugr from Applications. If macOS shows a safety prompt the first time, choose Open.</p>
                 </div>
               </div>
               <div className="mac-link-step">

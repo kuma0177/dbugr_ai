@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "tauri dev",
-    "build": "bash src-tauri/scripts/prebundle-macos.sh && tauri build --bundles app && bash src-tauri/scripts/postbundle-macos.sh",
-    "bundle": "bash src-tauri/scripts/prebundle-macos.sh && tauri build && bash src-tauri/scripts/postbundle-macos.sh",
+    "build": "bash src-tauri/scripts/prebundle-macos.sh && tauri build",
+    "build:app": "bash src-tauri/scripts/prebundle-macos.sh && tauri build --bundles app && bash src-tauri/scripts/postbundle-macos.sh",
+    "bundle": "bash src-tauri/scripts/prebundle-macos.sh && tauri build",
+    "install:macos": "pnpm build && bash ../../scripts/install-macos.sh --dmg \"$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)\"",
     "vite": "vite",
     "preview": "vite preview",
     "test": "vitest run",

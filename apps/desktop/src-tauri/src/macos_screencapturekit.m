@@ -333,7 +333,7 @@ bool debugr_list_capture_sources_json(char **out_json, char **out_error) {
      * Never request Screen Recording access from source listing.
      *
      * This path runs during normal chooser/session flow, so requesting Screen
-     * Recording here can summon Apple's blocking modal over Debugr even when
+     * Recording here can summon Apple's blocking modal over Dbugr even when
      * the user only expected to pick a session or refresh a list.
      *
      * Do not hard-fail on CGPreflightScreenCaptureAccess() either. On unsigned

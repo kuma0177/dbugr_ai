@@ -216,7 +216,7 @@ root.innerHTML = `
 
         <label class="setup-label" style="margin-top:10px;">GitHub repo <span class="setup-optional">(optional)</span></label>
         <input class="setup-input" id="setup-github" placeholder="owner/repo" />
-        <div class="setup-help">Add the repo when the work maps cleanly to GitHub. It helps Debugr reference the right project on the way out.</div>
+        <div class="setup-help">Add the repo when the work maps cleanly to GitHub. It helps Dbugr reference the right project on the way out.</div>
 
         <button class="setup-start-btn" id="setup-start" disabled>Use this session →</button>
       </div>
@@ -663,7 +663,7 @@ function renderCaptureSourcesScreenRecordingOff(kind: 'plugin' | 'generic') {
       : 'macOS did not share the screen/window list with Dbugr.';
   const detail =
     kind === 'plugin'
-      ? `<p class="capture-perm-detail">macOS has not released Screen Recording access to the running Dbugr process yet. If you just enabled <strong>dbugr.ai.app</strong> in System Settings, quit Dbugr completely and reopen it once so macOS applies the change.</p>
+      ? `<p class="capture-perm-detail">macOS has not released Screen Recording access to the running Dbugr process yet. If you just enabled <strong>Dbugr</strong> in System Settings, quit Dbugr completely and reopen it once so macOS applies the change.</p>
         <p class="capture-perm-tip"><strong>Need to change the permission?</strong> Use the buttons below. Dbugr will get out of the way before macOS opens the prompt or settings screen.</p>
         <p class="capture-perm-tip"><strong>Advanced dev build note:</strong> macOS treats a local dev binary separately from the installed app. Only add the dev binary when you are intentionally running from source.</p>`
       : `<p class="capture-perm-detail">Tap <strong>Refresh list</strong> first. If the list still stays empty, quit and reopen Dbugr once so macOS refreshes the Screen Recording grant for this installed app.</p>
@@ -758,8 +758,8 @@ function renderCaptureSourcesSckEmptyFailure(
       <div class="capture-perm-panel">
         <p class="capture-perm-lead">ScreenCaptureKit returned no displays or windows.</p>
         ${diagHtml}
-        <p class="capture-perm-detail">Enabling a row in System Settings only helps if it matches <strong>this exact path</strong>. Open <strong>Activity Monitor</strong>, find Debugr, double‑click → <strong>Open Files and Ports</strong> — the path must match the binary you added with <strong>+</strong>.</p>
-        <p class="capture-perm-tip">If <strong>CGPreflight</strong> is still false: quit Debugr (⌘Q), reboot once, or run the bundled <code>dbugr.ai.app</code> from <code>target/release/bundle/macos/</code> (after <code>pnpm build</code>) instead of <code>target/debug</code>.</p>
+        <p class="capture-perm-detail">Enabling a row in System Settings only helps if it matches <strong>this exact path</strong>. Open <strong>Activity Monitor</strong>, find Dbugr, double‑click → <strong>Open Files and Ports</strong> — the path must match the binary you added with <strong>+</strong>.</p>
+        <p class="capture-perm-tip">If <strong>CGPreflight</strong> is still false: quit Dbugr (⌘Q), reboot once, or run the bundled <code>Dbugr.app</code> from <code>target/release/bundle/macos/</code> (after <code>pnpm build</code>) instead of <code>target/debug</code>.</p>
         <div class="capture-perm-actions">
           <button type="button" class="capture-perm-primary" id="capture-retry-after-perm">Refresh list</button>
           <button type="button" class="capture-perm-secondary" id="capture-request-access">Ask macOS for screen capture…</button>
@@ -815,7 +815,7 @@ function renderCaptureSourcesError(
         ? `<p class="capture-perm-detail"><strong>CGPreflight</strong> is what ScreenCaptureKit checks; yours is still <strong>false</strong>, so listing screens/windows is blocked. Privacy can show toggles on before this flag updates for <code>target/debug</code> builds.</p>
            <p class="capture-perm-detail"><strong>Probe</strong> only tests a CoreGraphics display read — it can be true while CGPreflight is still catching up.</p>
            <p class="capture-perm-tip">Tap <strong>Ask macOS…</strong> (runs Apple’s request API), then <strong>Refresh</strong>. Still stuck? ⌘Q, reopen; toggle <strong>feedbackagent-desktop</strong> off/on in Screen Recording; or reboot once.</p>`
-        : `<p class="capture-perm-detail">Quit Debugr completely (⌘Q), reopen, then Refresh. If CGPreflight is true but this still appears, it may be a non-permission bug — note the error text.</p>`;
+        : `<p class="capture-perm-detail">Quit Dbugr completely (⌘Q), reopen, then Refresh. If CGPreflight is true but this still appears, it may be a non-permission bug — note the error text.</p>`;
       const lead = preflightFalseProbeTrue
         ? 'ScreenCaptureKit is waiting on CGPreflight for this binary.'
         : 'Screen Recording checks passed, but ScreenCaptureKit still refused.';
@@ -868,7 +868,7 @@ async function loadCaptureSources() {
     // Hide the overlay only when macOS/ScreenCaptureKit likely opened a blocking
     // permission UI. Our own ERR_SCREEN_RECORDING_NOT_GRANTED sentinel is
     // preflight-only and does not open a system dialog, so keep the recovery UI
-    // visible inside Debugr instead of making the app appear to disappear.
+    // visible inside Dbugr instead of making the app appear to disappear.
     if (isLikelyMacScreenRecordingDenied(errMsg) && !errMsg.includes('ERR_SCREEN_RECORDING_NOT_GRANTED')) {
       addDebugLog('capture_sources.permission_denied — hiding overlay for TCC dialog');
       await hideOverlayForMacosPermissionUi('load_capture_sources_permission_denied');
@@ -985,7 +985,7 @@ async function captureSourceRow(row: CaptureSourceRow) {
     const msg = String(err);
     if (isLikelyMacScreenRecordingDenied(msg)) {
       setToast(
-        'Screen Recording blocked capture. Enable dbugr.ai (and the dev binary if needed) in Privacy → Screen Recording, then choose the source again.',
+        'Screen Recording blocked capture. Enable Dbugr (and the dev binary if needed) in Privacy → Screen Recording, then choose the source again.',
       );
     } else {
       setToast(`Capture failed: ${msg}`);
@@ -1084,7 +1084,7 @@ function updateAnnotatingHints() {
     return;
   }
   toastEl.title =
-    'Nothing sent to AI from here — Finish opens Debugr, then Submit for Claude / Codex / Cursor.';
+    'Nothing sent to AI from here — Finish opens Dbugr, then Submit for Claude / Codex / Cursor.';
 }
 
 function updateCounter() {
@@ -1642,7 +1642,7 @@ async function saveAll() {
           result_len: after.len,
         });
       } catch (persistErr) {
-        console.warn('[Debugr] persist_annotation_screenshot failed; falling back to inline payload', persistErr);
+        console.warn('[Dbugr] persist_annotation_screenshot failed; falling back to inline payload', persistErr);
         screenshotForPayload = currentScreenshotDataUrl;
         logAnnotationPipeline('finish_persist_fallback_inline', {
           trace_id: saveTraceId,
@@ -1701,7 +1701,7 @@ async function saveAll() {
     showSavedStep();
   } catch (err) {
     logAnnotationPipeline('save_all_failed', { error: String(err).slice(0, 400) });
-    console.error('[Debugr] Error in saveAll():', err);
+    console.error('[Dbugr] Error in saveAll():', err);
     setToast(`Error: ${err instanceof Error ? err.message : String(err)}`);
     updateAnnotatingHints();
     toolSaveBtn.disabled = false;
@@ -2076,8 +2076,8 @@ function showNotePanel(ann: Annotation) {
     });
     noteTitleEl.textContent = `Annotation ${ann.number}`;
     noteSubtitleEl.textContent = ann.kind === 'region'
-      ? 'Drag handles to resize. Save note closes this panel — Finish opens Debugr.'
-      : 'Save note closes this panel — Finish opens Debugr.';
+      ? 'Drag handles to resize. Save note closes this panel — Finish opens Dbugr.'
+      : 'Save note closes this panel — Finish opens Dbugr.';
     noteBodyEl.innerHTML = `
     <div class="note-label">Notes</div>
     <textarea id="note-ta" placeholder="What should Claude know about this area?">${ann.text}</textarea>
@@ -2090,7 +2090,7 @@ function showNotePanel(ann: Annotation) {
 
     const ta = noteBodyEl.querySelector<HTMLTextAreaElement>('#note-ta');
     if (!ta) {
-      console.error('[Debugr] showNotePanel: #note-ta missing after innerHTML');
+      console.error('[Dbugr] showNotePanel: #note-ta missing after innerHTML');
       return;
     }
     ta.addEventListener('input', () => { ann.text = ta.value; });
@@ -2124,7 +2124,7 @@ function showNotePanel(ann: Annotation) {
       }
     });
   } catch (err) {
-    console.error('[Debugr] showNotePanel failed:', err);
+    console.error('[Dbugr] showNotePanel failed:', err);
   }
 }
 

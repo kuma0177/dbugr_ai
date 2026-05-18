@@ -15,13 +15,13 @@ You do not need Node, pnpm, Rust, Xcode, or Terminal for the normal DMG install.
 1. Open the Dbugr homepage or onboarding page.
 2. Click **Download for macOS** or **Download macOS DMG**.
 3. Open the downloaded `.dmg` file from your Downloads folder.
-4. Drag **Dbugr.ai** into **Applications**.
-5. Open **Dbugr.ai** from Applications.
+4. Drag **Dbugr** into **Applications**.
+5. Open **Dbugr** from Applications.
 6. If macOS asks whether you are sure you want to open it, choose **Open**.
 
 Download link:
 
-https://github.com/kuma0177/dbugr_ai/releases/download/stable-ga-v0.1-prompt-receipt/dbugr-ai-0.0.1-macos-aarch64.dmg
+https://www.dbugr.ai/downloads/Dbugr_0.0.1_aarch64.dmg
 
 ## Link the App to Your Account
 
@@ -39,8 +39,9 @@ Dbugr needs Screen Recording permission so it can capture the part of the screen
 1. Open **System Settings**.
 2. Go to **Privacy & Security**.
 3. Open **Screen Recording**.
-4. Turn on **Dbugr.ai**.
-5. Quit and reopen Dbugr after changing the permission.
+4. Turn on **Dbugr**.
+5. If Dbugr is not listed, click **+**, choose **Applications**, then select **Dbugr.app**.
+6. Quit and reopen Dbugr after changing the permission.
 
 If the capture is blank, Screen Recording permission is usually the reason.
 
@@ -74,11 +75,11 @@ Open Dbugr from Applications again and choose **Open** if macOS shows a first-ru
 
 ### Capture is blank
 
-Turn on Screen Recording permission for Dbugr.ai, then quit and reopen the app.
+Turn on Screen Recording permission for Dbugr, then quit and reopen the app.
 
 ### Link this Mac does not work
 
-Open Dbugr.ai first, then return to web onboarding and click **Relink Mac app**.
+Open Dbugr first, then return to web onboarding and click **Relink Mac app**.
 
 ### Cursor opens but no prompt appears
 

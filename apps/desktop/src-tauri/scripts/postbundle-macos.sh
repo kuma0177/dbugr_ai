@@ -3,10 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE_DIR="$SCRIPT_DIR/../target/release/bundle/macos"
-APP_NAME="dbugr.ai.app"
+APP_NAME="Dbugr.app"
 APP_PATH="$BUNDLE_DIR/$APP_NAME"
 BUNDLE_ID="com.feedbackagent.desktop"
-LEGACY_APP_PATHS=("$BUNDLE_DIR/debugr.ai.app")
+LEGACY_APP_PATHS=("$BUNDLE_DIR/debugr.ai.app" "$BUNDLE_DIR/dbugr.ai.app" "$BUNDLE_DIR/Dbugr.ai.app")
 
 for legacy_app_path in "${LEGACY_APP_PATHS[@]}"; do
   if [[ -d "$legacy_app_path" ]]; then

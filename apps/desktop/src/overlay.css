@@ -1215,7 +1215,7 @@ html, body {
   transform: translateY(-1px);
 }
 
-/* ElevenLabs-inspired Debugr final theme layer */
+/* ElevenLabs-inspired Dbugr final theme layer */
 .source-picker,
 .note-panel,
 .session-switcher,
@@ -1316,7 +1316,7 @@ select:focus {
   box-shadow: 0 0 0 9999px rgba(6, 27, 49, 0.12);
 }
 
-/* Final typography pass: mirror Debugr typography v2. */
+/* Final typography pass: mirror Dbugr typography v2. */
 body,
 button,
 input,

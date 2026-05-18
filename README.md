@@ -172,7 +172,7 @@ See [apps/desktop-native-mac/README.md](apps/desktop-native-mac/README.md) and [
 
 If you want to try the current packaged macOS build instead of running from source:
 
-- [Download Dbugr for macOS](https://github.com/kuma0177/dbugr_ai/releases/download/stable-ga-v0.1-prompt-receipt/dbugr-ai-0.0.1-macos-aarch64.dmg)
+- [Download Dbugr for macOS](https://www.dbugr.ai/downloads/Dbugr_0.0.1_aarch64.dmg)
 - [Release page](https://github.com/kuma0177/dbugr_ai/releases/tag/stable-ga-v0.1-prompt-receipt)
 - [Non-technical install guide](docs/install-for-mac-users.md)
 

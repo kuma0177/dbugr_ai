@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Debugr Playwright E2E config.
+ * Dbugr Playwright E2E config.
  *
  * Runs against the Vite dev server (http://localhost:5173).
  * Tauri invoke() calls are intercepted by a window.__TAURI_MOCK__ shim

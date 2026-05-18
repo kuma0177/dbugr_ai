@@ -4100,12 +4100,12 @@ body:has(.home-signed-in-empty) .hv2-features {
   background: var(--hv2-bg);
 }
 
-.hv2-preview--video {
+.hv2-preview--demo {
   aspect-ratio: 800 / 518;
   background: #ffffff;
 }
 
-.hv2-preview-video {
+.hv2-preview-demo {
   display: block;
   width: 100%;
   height: 100%;
